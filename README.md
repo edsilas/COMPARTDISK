@@ -16,7 +16,7 @@
 
 **Assistente de Reparo para Windows 10 e Windows 11**
 
-Versão 1.2.0 · Desenvolvido por Edsilas
+> Desenvolvido por Edsilas
 
 [Instalação](docs/INSTALACAO.md) ·
 [Manual do Usuário](docs/MANUAL-DO-USUARIO.md) ·
