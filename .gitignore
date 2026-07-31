@@ -1,0 +1,17 @@
+# Saidas geradas pela propria ferramenta
+Relatorio_Manutencao.txt
+COMPARTDISK_Relatorios/
+COMPARTDISK_Bootstrap.log
+Auditoria_Sistema.txt
+Relatorio_Bateria.html
+Firewall_Backup.wfw
+
+# Arquivos temporarios
+*.tmp
+*.log.old
+compartdisk_elevate_*.vbs
+
+# Sistema operacional
+Thumbs.db
+desktop.ini
+.DS_Store

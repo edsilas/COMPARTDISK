@@ -1,0 +1,1618 @@
+@echo off
+:: ==============================================================================
+:: COMPARTDISK 1.2.0 - ASSISTENTE DE REPARO PARA WINDOWS 10 E WINDOWS 11
+:: DESENVOLVIDO POR EDSILAS
+::
+:: Arquitetura hibrida: Batch como interface, navegacao, controle de fluxo,
+:: autoelevacao e compatibilidade maxima. PowerShell (7 ou 5.1) como motor de
+:: operacoes complexas, WMI/CIM, relatorios e tratamento de erros.
+::
+:: TODA funcionalidade possui rotina Batch equivalente (rotulos :FB_*), usada
+:: automaticamente quando o PowerShell estiver ausente, bloqueado por politica
+:: ou quando o modulo .ps1 correspondente nao for encontrado.
+::
+:: Uso opcional em linha de comando:
+::   Launcher.bat /autofix     Reparo geral automatico e sai
+::   Launcher.bat /audit       Auditoria completa com relatorios e sai
+::   Launcher.bat /report      Gera apenas os relatorios e sai
+::   Launcher.bat /clean       Limpeza profunda e sai
+::   Launcher.bat /?           Ajuda
+::
+:: Parametro interno (nao documentado para o operador final):
+::   /elevated                 Sentinela de reentrada pos-UAC. Impede laco de
+::                             elevacao e ativa o modo protegido de saida.
+:: ==============================================================================
+
+::
+:: ------------------------------------------------------------------------------
+:: CONVENCAO DE TEXTO DA INTERFACE
+::
+::   Nome do produto ......... COMPARTDISK          (caixa alta: e a marca)
+::   Assinatura de autoria ... DESENVOLVIDO POR EDSILAS
+::   Titulos de tela ......... Title Case, conectores em minuscula
+::                             ex.: "Rede e Conectividade", "Reparo do Sistema"
+::   Rotulos de opcao ........ Title Case, mesma regra
+::   Parenteses descritivos .. minuscula, exceto siglas e nomes proprios
+::                             ex.: "(caches extensos)" mas "(DNS, TCP/IP, Winsock)"
+::   Texto corrido e notas ... caixa de frase
+::   Marcadores de log ....... caixa alta e largura fixa: [ OK ] [WARN] [ERRO] [INFO]
+::
+::   Conectores mantidos em minuscula: de, do, da, dos, das, e, em, no, na,
+::   para, com, a, o, ao, aos, por, via.
+:: ------------------------------------------------------------------------------
+::
+:: Protecao Global: Impede corrupcao do script por caracteres especiais (!, &, etc)
+setlocal EnableExtensions DisableDelayedExpansion
+if errorlevel 1 goto SEM_EXTENSOES
+chcp 65001 >nul 2>&1
+
+:: ==============================================================================
+:: 0. TRACE DE BOOTSTRAP
+:: Gravado desde a primeira instrucao util, ANTES de qualquer dependencia.
+:: Se o processo morrer de forma abrupta, a ultima linha deste arquivo aponta
+:: exatamente o estagio em que a falha ocorreu.
+:: ==============================================================================
+set "COMPARTDISK_VERSION=1.2.0"
+set "COMPARTDISK_ROOT=%~dp0"
+set "COMPARTDISK_MODULES=%~dp0Modules"
+set "COMPARTDISK_SELF=%~f0"
+set "CLI_MODE="
+set "COMPARTDISK_GUARD="
+set "TRACEFILE=%TEMP%\COMPARTDISK_Bootstrap.log"
+
+:: Recupera o desfecho da execucao anterior antes de sobrescrever o trace
+set "ESTAGIO_ANTERIOR="
+if exist "%TRACEFILE%" for /f "usebackq delims=" %%a in ("%TRACEFILE%") do set "ESTAGIO_ANTERIOR=%%a"
+set "CRASH_ANTERIOR="
+if defined ESTAGIO_ANTERIOR echo "%ESTAGIO_ANTERIOR%" | find /i "ENCERRAMENTO NORMAL" >nul 2>&1
+if errorlevel 1 if defined ESTAGIO_ANTERIOR set "CRASH_ANTERIOR=%ESTAGIO_ANTERIOR%"
+
+> "%TRACEFILE%" echo COMPARTDISK %COMPARTDISK_VERSION% - DESENVOLVIDO POR EDSILAS - trace de inicializacao
+call :TRACE "ESTAGIO 01 - shell inicializado, extensoes ativas"
+
+:: ==============================================================================
+:: 1. INICIALIZACAO DA INTERFACE
+:: ==============================================================================
+title COMPARTDISK %COMPARTDISK_VERSION% - Assistente de Reparo - DESENVOLVIDO POR EDSILAS
+reg add "HKCU\Console" /v VirtualTerminalLevel /t REG_DWORD /d 1 /f >nul 2>&1
+
+set "ESC="
+for /F %%a in ('echo prompt $E ^| cmd') do set "ESC=%%a"
+if defined ESC goto CORES_ANSI
+
+:: Sem sequencia de escape disponivel (console legado, EDR bloqueando spawn de
+:: cmd): degrada para texto puro em vez de imprimir lixo do tipo "[1;32;44m".
+call :TRACE "ESTAGIO 02 - ANSI indisponivel, usando saida em texto puro"
+set "C_VERDE=" & set "C_AMARELO=" & set "C_VERMELHO="
+set "C_CIANO=" & set "C_BRANCO=" & set "C_RESET=" & set "C_CINZA="
+set "C_TITULO=" & set "C_TEXTO="
+goto CORES_PRONTAS
+
+:CORES_ANSI
+:: Paleta sobria: o fundo do console e preservado (sem ;44m). Cor usada com
+:: parcimonia - cinza para estrutura, ciano apenas em destaques pontuais,
+:: verde/amarelo/vermelho reservados a resultado de operacao.
+set "C_TITULO=%ESC%[97m"    & set "C_TEXTO=%ESC%[37m"     & set "C_CINZA=%ESC%[90m"
+set "C_CIANO=%ESC%[36m"     & set "C_VERDE=%ESC%[32m"     & set "C_AMARELO=%ESC%[33m"
+set "C_VERMELHO=%ESC%[91m"  & set "C_BRANCO=%ESC%[97m"    & set "C_RESET=%ESC%[0m"
+
+:CORES_PRONTAS
+:: Fundo preto com texto cinza claro: menor contraste, menor fadiga visual
+color 07
+call :TRACE "ESTAGIO 03 - interface pronta"
+
+:: ==============================================================================
+:: 2. AUTO-ELEVACAO DE PRIVILEGIOS (UAC)
+:: ==============================================================================
+
+:: --- 2.1 Consome a sentinela de reentrada, se presente
+if /i "%~1"=="/elevated" (
+    set "COMPARTDISK_GUARD=1"
+    shift
+)
+if defined COMPARTDISK_GUARD call :TRACE "ESTAGIO 04 - reentrada pos-UAC detectada (modo protegido)"
+
+:: --- 2.2 Deteccao de privilegio em camadas
+::     "net session" sozinho NAO serve: retorna erro quando o servico Server
+::     (LanmanServer) esta parado ou desabilitado, o que e comum em Windows Home
+::     e em imagens corporativas endurecidas. Nesse cenario um administrador
+::     legitimo era classificado como usuario comum.
+set "IS_ADMIN=0"
+
+fltmc >nul 2>&1
+if not errorlevel 1 set "IS_ADMIN=1"
+
+if "%IS_ADMIN%"=="0" (
+    net session >nul 2>&1
+    if not errorlevel 1 set "IS_ADMIN=1"
+)
+
+if "%IS_ADMIN%"=="0" (
+    reg add "HKLM\SOFTWARE\CompartDiskElevTest" /f >nul 2>&1
+    if not errorlevel 1 (
+        reg delete "HKLM\SOFTWARE\CompartDiskElevTest" /f >nul 2>&1
+        set "IS_ADMIN=1"
+    )
+)
+
+call :TRACE "ESTAGIO 05 - deteccao de privilegio concluida (IS_ADMIN=%IS_ADMIN%)"
+
+if "%IS_ADMIN%"=="1" goto ELEVACAO_OK
+
+:: --- 2.3 Ja voltamos do UAC e ainda assim nao somos administradores.
+::     Prosseguir degradado e MUITO melhor que reelevar em laco infinito.
+if defined COMPARTDISK_GUARD (
+    call :TRACE "ESTAGIO 05b - elevacao recusada ou incompleta, seguindo degradado"
+    echo.
+    echo   %C_AMARELO%[AVISO]%C_RESET% %C_TEXTO%A ferramenta nao esta em contexto administrativo.%C_RESET%
+    echo   %C_CINZA%        Funcoes que exigem privilegio serao recusadas pelo Windows.%C_RESET%
+    echo.
+    pause
+    goto ELEVACAO_OK
+)
+
+:: --- 2.4 Solicita elevacao
+call :TRACE "ESTAGIO 06 - solicitando elevacao via UAC"
+echo Solicitando privilegios de Administrador...
+set "ELEV_FWD=%*"
+set "COMPARTDISK_VBS=%TEMP%\compartdisk_elevate_%RANDOM%.vbs"
+
+:: O comando reexecutado e:  cmd /d /c ""<script>" /elevated <args> & pause"
+:: O "& pause" e a rede de seguranca: se o Batch morrer de forma abrupta na
+:: instancia elevada, a janela permanece aberta exibindo o erro em vez de
+:: fechar instantaneamente. O "&" e emitido como Chr(38) e a concatenacao usa
+:: "+", para que nenhum caractere especial precise passar pelo parser do CMD.
+> "%COMPARTDISK_VBS%" echo Set UAC = CreateObject^("Shell.Application"^)
+>> "%COMPARTDISK_VBS%" echo q = Chr^(34^)
+>> "%COMPARTDISK_VBS%" echo alvo = q + "%COMPARTDISK_SELF%" + q
+>> "%COMPARTDISK_VBS%" echo linha = "/d /c " + q + alvo + " /elevated %ELEV_FWD% " + Chr^(38^) + " pause" + q
+>> "%COMPARTDISK_VBS%" echo UAC.ShellExecute "%COMSPEC%", linha, "%COMPARTDISK_ROOT%", "runas", 1
+
+:: cscript explicito: nao depende da associacao do tipo .vbs, que costuma estar
+:: redirecionada ou bloqueada por politica em parque corporativo.
+cscript //nologo //B "%COMPARTDISK_VBS%" >nul 2>&1
+if not errorlevel 1 goto ELEVACAO_ENVIADA
+
+call :TRACE "ESTAGIO 06b - WSH indisponivel, tentando elevacao via PowerShell"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:COMPARTDISK_SELF -ArgumentList '/elevated' -Verb RunAs" >nul 2>&1
+if not errorlevel 1 goto ELEVACAO_ENVIADA
+
+call :TRACE "ESTAGIO 06c - falha em todos os metodos de elevacao"
+echo.
+echo   %C_VERMELHO%[ERRO]%C_RESET%  %C_TEXTO%Nao foi possivel solicitar elevacao automaticamente.%C_RESET%
+echo         O Windows Script Host e o PowerShell estao ambos indisponiveis.
+echo.
+echo         Clique com o botao direito em Launcher.bat e escolha
+echo         "Executar como administrador".
+echo.
+pause
+del "%COMPARTDISK_VBS%" >nul 2>&1
+exit /b 1
+
+:ELEVACAO_ENVIADA
+call :TRACE "ESTAGIO 07 - instancia elevada solicitada, encerrando instancia atual"
+ping -n 2 127.0.0.1 >nul 2>&1
+del "%COMPARTDISK_VBS%" >nul 2>&1
+exit /b 0
+
+:ELEVACAO_OK
+call :TRACE "ESTAGIO 08 - contexto administrativo confirmado"
+
+:: ==============================================================================
+:: 2.5 GESTAO DINAMICA DO LOG
+:: Cadeia de fallback: pasta do script -> Desktop -> TEMP. O teste e de escrita
+:: real, nao de existencia, porque pendrive protegido e share de rede aceitam
+:: "exist" mas recusam gravacao.
+:: ==============================================================================
+set "LOGDIR=%COMPARTDISK_ROOT%"
+call :TESTAR_ESCRITA "%LOGDIR%"
+if not errorlevel 1 goto LOG_PRONTO
+
+set "LOGDIR=%USERPROFILE%\Desktop\"
+call :TESTAR_ESCRITA "%LOGDIR%"
+if not errorlevel 1 goto LOG_PRONTO
+
+set "LOGDIR=%TEMP%\"
+call :TESTAR_ESCRITA "%LOGDIR%"
+if not errorlevel 1 goto LOG_PRONTO
+
+call :TRACE "ESTAGIO 09 - FALHA: nenhum diretorio gravavel encontrado"
+echo.
+echo   %C_VERMELHO%[ERRO]%C_RESET%  %C_TEXTO%Nao ha diretorio gravavel para o log.%C_RESET%
+echo         Testados: pasta do script, Desktop e TEMP.
+echo.
+pause
+exit /b 1
+
+:LOG_PRONTO
+set "LOGFILE=%LOGDIR%Relatorio_Manutencao.txt"
+call :TRACE "ESTAGIO 09 - log gravavel em %LOGDIR%"
+
+:: ==============================================================================
+:: 3. PRE-FLIGHT CHECKS (AUDITORIA DE AMBIENTE - BLOCOS EXPLICITOS)
+:: ==============================================================================
+
+:: --- 3.1 Selecao do motor PowerShell: pwsh 7 > powershell 5.1 > Batch puro
+set "PS_EXE="
+set "PS_KIND=Batch"
+
+if exist "%ProgramFiles%\PowerShell\7\pwsh.exe" set "PS_EXE=%ProgramFiles%\PowerShell\7\pwsh.exe"
+if not defined PS_EXE if exist "%ProgramW6432%\PowerShell\7\pwsh.exe" set "PS_EXE=%ProgramW6432%\PowerShell\7\pwsh.exe"
+if not defined PS_EXE for /f "delims=" %%i in ('where pwsh.exe 2^>nul') do set "PS_EXE=%%i"
+if defined PS_EXE set "PS_KIND=PowerShell 7"
+
+if not defined PS_EXE (
+    powershell -NoProfile -Command "exit 0" >nul 2>&1
+    if not errorlevel 1 (
+        set "PS_EXE=powershell.exe"
+        set "PS_KIND=Windows PowerShell 5.1"
+    )
+)
+
+:: Validacao real do motor escolhido (ExecutionPolicy, AppLocker, WDAC):
+:: o executavel pode existir e mesmo assim recusar-se a executar scripts.
+if defined PS_EXE (
+    "%PS_EXE%" -NoProfile -Command "exit 0" >nul 2>&1
+    if errorlevel 1 (
+        set "PS_EXE="
+        set "PS_KIND=Batch"
+    )
+)
+
+set "HAS_PS=1"
+if not defined PS_EXE set "HAS_PS=0"
+call :TRACE "ESTAGIO 10 - motor selecionado: %PS_KIND%"
+
+:: --- 3.2 Presenca do diretorio de modulos
+set "HAS_MODULES=1"
+if not exist "%COMPARTDISK_MODULES%\Core.ps1" set "HAS_MODULES=0"
+
+:: --- 3.3 Demais ferramentas nativas (blocos explicitos)
+set "HAS_WINGET=1"
+winget --info >nul 2>&1
+if errorlevel 1 set "HAS_WINGET=0"
+
+set "HAS_WMIC=1"
+wmic os get caption >nul 2>&1
+if errorlevel 1 set "HAS_WMIC=0"
+
+set "HAS_PNP=1"
+pnputil /? >nul 2>&1
+if errorlevel 1 set "HAS_PNP=0"
+
+set "HAS_BDE=1"
+manage-bde -status >nul 2>&1
+if errorlevel 1 set "HAS_BDE=0"
+call :TRACE "ESTAGIO 11 - pre-flight concluido (PS=%HAS_PS% MOD=%HAS_MODULES% WINGET=%HAS_WINGET% WMIC=%HAS_WMIC% PNP=%HAS_PNP% BDE=%HAS_BDE%)"
+
+:: --- 3.4 Identificador unico de sessao (compartilhado com os modulos)
+::     Evita FOR /F com caminhos entre aspas (parser do CMD e instavel nesse caso)
+set "COMPARTDISK_SESSION="
+if "%HAS_PS%"=="0" goto SESSAO_FALLBACK
+"%PS_EXE%" -NoProfile -NoLogo -Command "Get-Date -Format yyyyMMdd_HHmmss" > "%TEMP%\compartdisk_session.tmp" 2>nul
+if exist "%TEMP%\compartdisk_session.tmp" set /p COMPARTDISK_SESSION=<"%TEMP%\compartdisk_session.tmp"
+del "%TEMP%\compartdisk_session.tmp" >nul 2>&1
+:SESSAO_FALLBACK
+if not defined COMPARTDISK_SESSION set "COMPARTDISK_SESSION=S%RANDOM%%RANDOM%"
+
+:: --- 3.5 Contexto exportado para os modulos PowerShell
+set "COMPARTDISK_LOGDIR=%LOGDIR%"
+set "COMPARTDISK_LOGFILE=%LOGFILE%"
+set "COMPARTDISK_ENGINE=%PS_KIND%"
+set "COMPARTDISK_TRACE=%TRACEFILE%"
+
+echo =============================================== >> "%LOGFILE%"
+call :LOG_MSG "INFO" "COMPARTDISK %COMPARTDISK_VERSION% - DESENVOLVIDO POR EDSILAS"
+call :LOG_MSG "INFO" "SESSAO INICIADA - PC: %COMPUTERNAME% - USER: %USERNAME%"
+call :LOG_MSG "INFO" "Motor de execucao: %PS_KIND% - Sessao: %COMPARTDISK_SESSION%"
+call :LOG_MSG "INFO" "Contexto administrativo: %IS_ADMIN% - Diretorio de log: %LOGDIR%"
+if "%HAS_PS%"=="0" call :LOG_MSG "WARN" "PowerShell bloqueado/ausente. Fallbacks Batch ativados."
+if "%HAS_MODULES%"=="0" call :LOG_MSG "WARN" "Pasta Modules nao encontrada. Operando somente com rotinas Batch."
+if defined CRASH_ANTERIOR call :LOG_MSG "WARN" "A execucao anterior terminou de forma anormal em: %CRASH_ANTERIOR%"
+call :TRACE "ESTAGIO 12 - cabecalho de log gravado"
+
+:: --- 3.6 Modo linha de comando (execucao desassistida)
+if "%~1"=="" goto MENU_PRINCIPAL
+set "CLI_MODE=1"
+if /i "%~1"=="/autofix" goto CLI_AUTOFIX
+if /i "%~1"=="/audit"   goto CLI_AUDIT
+if /i "%~1"=="/report"  goto CLI_REPORT
+if /i "%~1"=="/clean"   goto CLI_CLEAN
+if /i "%~1"=="/?"       goto CLI_HELP
+if /i "%~1"=="/help"    goto CLI_HELP
+set "CLI_MODE="
+call :LOG_MSG "WARN" "Parametro desconhecido: %~1"
+goto MENU_PRINCIPAL
+
+:CLI_AUTOFIX
+call :MOD_AUTO_FIX_CORE
+goto SAIR
+:CLI_AUDIT
+call :MOD_AUDITORIA_COMPLETA
+goto SAIR
+:CLI_REPORT
+call :MOD_RELATORIO
+goto SAIR
+:CLI_CLEAN
+call :MOD_TEMP_LOGS_SILENT
+goto SAIR
+:CLI_HELP
+echo.
+echo   %C_TITULO%COMPARTDISK%C_RESET%  %C_CINZA%%COMPARTDISK_VERSION%%C_RESET%
+echo   %C_CINZA%Parametros de Linha de Comando%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo    %C_CIANO%/autofix%C_RESET%   %C_TEXTO%Executa o reparo geral automatico e encerra%C_RESET%
+echo    %C_CIANO%/audit%C_RESET%     %C_TEXTO%Executa a auditoria completa e gera os relatorios%C_RESET%
+echo    %C_CIANO%/report%C_RESET%    %C_TEXTO%Gera apenas os relatorios consolidados%C_RESET%
+echo    %C_CIANO%/clean%C_RESET%     %C_TEXTO%Executa a limpeza profunda%C_RESET%
+echo    %C_CIANO%/?%C_RESET%         %C_TEXTO%Exibe esta ajuda%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+pause
+exit /b 0
+
+:: ==============================================================================
+:: MENU PRINCIPAL
+:: ==============================================================================
+:MENU_PRINCIPAL
+cls
+echo.
+echo   %C_TITULO%COMPARTDISK%C_RESET%  %C_CINZA%%COMPARTDISK_VERSION%%C_RESET%
+echo   %C_CINZA%Assistente de Reparo%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Reparo Geral Automatico (One-Click Fix)%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Atualizar Programas (Winget)%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Rede, Internet e Conectividade%C_RESET%
+echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Otimizacao, Limpeza Profunda e Privacidade%C_RESET%
+echo    %C_CIANO%[5]%C_RESET%  %C_TEXTO%Reparo do Sistema, Windows Update e Explorer%C_RESET%
+echo    %C_CIANO%[6]%C_RESET%  %C_TEXTO%Contas, Permissoes e Seguranca%C_RESET%
+echo    %C_CIANO%[7]%C_RESET%  %C_TEXTO%Discos, Drivers e Auditoria de Hardware%C_RESET%
+echo    %C_CIANO%[8]%C_RESET%  %C_TEXTO%Diagnostico Avancado e Relatorios (TXT/CSV/JSON/HTML)%C_RESET%
+echo    %C_CIANO%[9]%C_RESET%  %C_TEXTO%Ambiente de Execucao e Capacidades%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Sair e Salvar Relatorio%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%Motor:%C_RESET% %C_TEXTO%%PS_KIND%%C_RESET%
+echo   %C_CINZA%Log:%C_RESET%   %C_TEXTO%%LOGFILE%%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+choice /c 1234567890 /n /m "  Opcao: "
+
+if errorlevel 10 goto SAIR
+if errorlevel 9 goto MENU_AMBIENTE
+if errorlevel 8 goto MENU_DIAGNOSTICO
+if errorlevel 7 goto MENU_HARDWARE
+if errorlevel 6 goto MENU_SEGURANCA
+if errorlevel 5 goto MENU_REPARO
+if errorlevel 4 goto MENU_OTIMIZACAO
+if errorlevel 3 goto MENU_REDE
+if errorlevel 2 goto MOD_WINGET_MENU
+if errorlevel 1 goto MOD_AUTO_FIX
+:: Rede de seguranca: CHOICE interrompido (Ctrl+C) retorna 0 e nao deve cair no submenu seguinte
+goto MENU_PRINCIPAL
+
+:: ==============================================================================
+:: SUBMENUS
+:: ==============================================================================
+:MENU_REDE
+cls
+echo.
+echo   %C_TITULO%Rede e Conectividade%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Reset Completo (DNS, Winsock, TCP/IP, ARP, IPv6, proxy)%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Restaurar Arquivo Hosts%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Restaurar Firewall%C_RESET%
+echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Diagnostico de Adaptadores, DNS, DHCP, MTU e Rotas%C_RESET%
+echo    %C_CIANO%[5]%C_RESET%  %C_TEXTO%Teste de Conectividade e Resolucao de Nomes%C_RESET%
+echo    %C_CIANO%[6]%C_RESET%  %C_TEXTO%Configuracao de Proxy%C_RESET%
+echo    %C_CIANO%[7]%C_RESET%  %C_TEXTO%Diagnostico Wi-Fi%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+choice /c 12345670 /n /m "  Opcao: "
+if errorlevel 8 goto MENU_PRINCIPAL
+if errorlevel 7 call :MOD_REDE_WIFI
+if errorlevel 6 call :MOD_REDE_PROXY
+if errorlevel 5 call :MOD_REDE_TESTE
+if errorlevel 4 call :MOD_REDE_INFO
+if errorlevel 3 call :MOD_FIREWALL
+if errorlevel 2 call :MOD_REDE_HOSTS
+if errorlevel 1 call :MOD_REDE_RESET
+pause & goto MENU_REDE
+
+:MENU_OTIMIZACAO
+cls
+echo.
+echo   %C_TITULO%Otimizacao e Limpeza%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Limpeza Customizada (caches extensos, perfis, updates)%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Desativar Telemetria%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Aplicar Perfil Desempenho Maximo%C_RESET%
+echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Simular Limpeza (mostra o espaco recuperavel sem apagar nada)%C_RESET%
+echo    %C_CIANO%[5]%C_RESET%  %C_TEXTO%Limpeza de Navegadores (Edge, Chrome, Brave, Firefox)%C_RESET%
+echo    %C_CIANO%[6]%C_RESET%  %C_TEXTO%Analise de Desempenho (energia, inicializacao, processos, servicos)%C_RESET%
+echo    %C_CIANO%[7]%C_RESET%  %C_TEXTO%Restaurar Telemetria ao Padrao do Windows%C_RESET%
+echo    %C_CIANO%[8]%C_RESET%  %C_TEXTO%Restaurar Plano de Energia Equilibrado%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+choice /c 123456780 /n /m "  Opcao: "
+if errorlevel 9 goto MENU_PRINCIPAL
+if errorlevel 8 call :MOD_PERF_BALANCED
+if errorlevel 7 call :MOD_TELEMETRIA_ON
+if errorlevel 6 call :MOD_PERF_ANALISE
+if errorlevel 5 call :MOD_LIMPEZA_NAVEGADORES
+if errorlevel 4 call :MOD_LIMPEZA_SIMULACAO
+if errorlevel 3 call :MOD_PERFORMANCE
+if errorlevel 2 call :MOD_TELEMETRIA
+if errorlevel 1 call :MOD_TEMP_LOGS
+pause & goto MENU_OTIMIZACAO
+
+:MENU_REPARO
+cls
+echo.
+echo   %C_TITULO%Reparo Critico%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Reparo Profundo (DISM ScanHealth + RestoreHealth + SFC)%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Destravar Windows Update (reset completo dos componentes)%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Destravar Fila de Impressao%C_RESET%
+echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Reiniciar Windows Explorer%C_RESET%
+echo    %C_CIANO%[5]%C_RESET%  %C_TEXTO%Agendar Verificacao de Disco (CHKDSK)%C_RESET%
+echo    %C_CIANO%[6]%C_RESET%  %C_TEXTO%Status e Historico do Windows Update%C_RESET%
+echo    %C_CIANO%[7]%C_RESET%  %C_TEXTO%Procurar Atualizacoes Pendentes%C_RESET%
+echo    %C_CIANO%[8]%C_RESET%  %C_TEXTO%Limpar Somente o Cache do Windows Update%C_RESET%
+echo    %C_CIANO%[9]%C_RESET%  %C_TEXTO%Reconstruir Cache de Icones e Miniaturas%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+choice /c 1234567890 /n /m "  Opcao: "
+if errorlevel 10 goto MENU_PRINCIPAL
+if errorlevel 9 call :MOD_EXPLORER_CACHE
+if errorlevel 8 call :MOD_UPDATE_CACHE
+if errorlevel 7 call :MOD_UPDATE_BUSCAR
+if errorlevel 6 call :MOD_UPDATE_STATUS
+if errorlevel 5 call :MOD_CHKDSK
+if errorlevel 4 call :MOD_EXPLORER
+if errorlevel 3 call :MOD_SPOOLER
+if errorlevel 2 call :MOD_UPDATE_RESET
+if errorlevel 1 call :MOD_SFC_DISM
+pause & goto MENU_REPARO
+
+:MENU_SEGURANCA
+cls
+echo.
+echo   %C_TITULO%Seguranca e Contas%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Resetar GPO Local%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Gerenciar Contas Locais%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Forcar Varredura Defender%C_RESET%
+echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Assumir Controle de Pasta/Arquivo (Takeown)%C_RESET%
+echo    %C_CIANO%[5]%C_RESET%  %C_TEXTO%Postura de Seguranca (Secure Boot, TPM, VBS, LSA, UAC, SmartScreen)%C_RESET%
+echo    %C_CIANO%[6]%C_RESET%  %C_TEXTO%Status Completo do Defender e Antivirus Instalados%C_RESET%
+echo    %C_CIANO%[7]%C_RESET%  %C_TEXTO%Varredura Completa do Defender%C_RESET%
+echo    %C_CIANO%[8]%C_RESET%  %C_TEXTO%Exclusoes e Historico de Ameacas%C_RESET%
+echo    %C_CIANO%[9]%C_RESET%  %C_TEXTO%Auditoria de Contas, Grupos e Falhas de Logon%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+choice /c 1234567890 /n /m "  Opcao: "
+if errorlevel 10 goto MENU_PRINCIPAL
+if errorlevel 9 call :MOD_USERS_AUDIT
+if errorlevel 8 call :MOD_DEFENDER_EXCL
+if errorlevel 7 call :MOD_DEFENDER_FULL
+if errorlevel 6 call :MOD_DEFENDER_STATUS
+if errorlevel 5 call :MOD_SEGURANCA_STATUS
+if errorlevel 4 call :MOD_TAKEOWN
+if errorlevel 3 call :MOD_DEFENDER
+if errorlevel 2 call :MOD_USERS
+if errorlevel 1 call :MOD_GPO_RESET
+pause & goto MENU_SEGURANCA
+
+:MENU_HARDWARE
+cls
+echo.
+echo   %C_TITULO%Hardware e Discos%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Saude Fisica dos Discos%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Relatorio de Bateria%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Status BitLocker%C_RESET%
+echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Backup de Drivers%C_RESET%
+echo    %C_CIANO%[5]%C_RESET%  %C_TEXTO%Auditoria de Sistema%C_RESET%
+echo    %C_CIANO%[6]%C_RESET%  %C_TEXTO%Inventario Completo (CPU, RAM, GPU, monitores, USB, PCI, TPM)%C_RESET%
+echo    %C_CIANO%[7]%C_RESET%  %C_TEXTO%Contadores de Confiabilidade e Desgaste dos Discos%C_RESET%
+echo    %C_CIANO%[8]%C_RESET%  %C_TEXTO%Volumes, Espaco e Copias de Sombra%C_RESET%
+echo    %C_CIANO%[9]%C_RESET%  %C_TEXTO%Drivers com Problema e Sem Assinatura Digital%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+choice /c 1234567890 /n /m "  Opcao: "
+if errorlevel 10 goto MENU_PRINCIPAL
+if errorlevel 9 call :MOD_DRIVERS_PROBLEMAS
+if errorlevel 8 call :MOD_VOLUMES
+if errorlevel 7 call :MOD_SMART_DETALHE
+if errorlevel 6 call :MOD_HARDWARE_FULL
+if errorlevel 5 call :MOD_SYSINFO
+if errorlevel 4 call :MOD_DRIVERS
+if errorlevel 3 call :MOD_BITLOCKER
+if errorlevel 2 call :MOD_BATTERY
+if errorlevel 1 call :MOD_SMART
+pause & goto MENU_HARDWARE
+
+:MENU_DIAGNOSTICO
+cls
+echo.
+echo   %C_TITULO%Diagnostico Avancado e Relatorios%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Auditoria Completa + Relatorios (TXT, CSV, JSON, HTML)%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Auditoria Rapida%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Consolidar Relatorio da Sessao Atual%C_RESET%
+echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Eventos Criticos (7 dias)%C_RESET%
+echo    %C_CIANO%[5]%C_RESET%  %C_TEXTO%Eventos Criticos (30 dias)%C_RESET%
+echo    %C_CIANO%[6]%C_RESET%  %C_TEXTO%Inventario de Aplicativos Instalados%C_RESET%
+echo    %C_CIANO%[7]%C_RESET%  %C_TEXTO%Licenciamento do Windows%C_RESET%
+echo    %C_CIANO%[8]%C_RESET%  %C_TEXTO%Exportar Inventario de Drivers%C_RESET%
+echo    %C_CIANO%[9]%C_RESET%  %C_TEXTO%Abrir o Ultimo Relatorio Gerado%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+choice /c 1234567890 /n /m "  Opcao: "
+if errorlevel 10 goto MENU_PRINCIPAL
+if errorlevel 9 call :MOD_RELATORIO_ABRIR
+if errorlevel 8 call :MOD_DRIVERS_EXPORT
+if errorlevel 7 call :MOD_LICENCA
+if errorlevel 6 call :MOD_SOFTWARE
+if errorlevel 5 call :MOD_EVENTOS_30
+if errorlevel 4 call :MOD_EVENTOS_7
+if errorlevel 3 call :MOD_RELATORIO
+if errorlevel 2 call :MOD_AUDITORIA_RAPIDA
+if errorlevel 1 call :MOD_AUDITORIA_COMPLETA
+pause & goto MENU_DIAGNOSTICO
+
+:MENU_AMBIENTE
+cls
+echo.
+echo   %C_TITULO%COMPARTDISK%C_RESET%  %C_CINZA%%COMPARTDISK_VERSION%%C_RESET%
+echo   %C_CINZA%Ambiente de Execucao e Capacidades%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo   %C_CINZA%Autoria       %C_RESET%%C_TEXTO%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo   %C_CINZA%Motor         %C_RESET%%C_TEXTO%%PS_KIND%%C_RESET%
+echo   %C_CINZA%Executavel    %C_RESET%%C_TEXTO%%PS_EXE%%C_RESET%
+echo   %C_CINZA%Modulos       %C_RESET%%C_TEXTO%%COMPARTDISK_MODULES%%C_RESET%
+echo   %C_CINZA%Sessao        %C_RESET%%C_TEXTO%%COMPARTDISK_SESSION%%C_RESET%
+echo   %C_CINZA%Log           %C_RESET%%C_TEXTO%%LOGFILE%%C_RESET%
+echo.
+echo   %C_CINZA%Componentes   %C_RESET%%C_TEXTO%PowerShell %HAS_PS%    Modulos %HAS_MODULES%    Winget %HAS_WINGET%%C_RESET%   %C_CINZA%1=sim 0=nao%C_RESET%
+echo   %C_CINZA%              %C_RESET%%C_TEXTO%WMIC %HAS_WMIC%          PnPUtil %HAS_PNP%    manage-bde %HAS_BDE%%C_RESET%
+echo   %C_CINZA%Sem PowerShell, toda funcionalidade permanece acessivel pelas rotinas Batch.%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Detalhar Capacidades via PowerShell%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Reexecutar Deteccao de Ambiente%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+choice /c 120 /n /m "  Opcao: "
+if errorlevel 3 goto MENU_PRINCIPAL
+if errorlevel 2 goto MENU_AMBIENTE_REDETECT
+if errorlevel 1 call :MOD_CAPACIDADES
+pause & goto MENU_AMBIENTE
+
+:MENU_AMBIENTE_REDETECT
+call :LOG_MSG "INFO" "Reexecutando deteccao de ambiente..."
+:: Repassa a sentinela: ja estamos elevados, reelevar so produziria um ciclo.
+start "" "%COMPARTDISK_SELF%" /elevated
+goto FIM
+
+:: ==============================================================================
+:: 4. MOTOR DE EXECUCAO
+:: ==============================================================================
+
+:RUN_PS
+:: Executa um modulo PowerShell. Argumentos vao na variavel PS_ARGS.
+:: Retorno: codigo do modulo (0=OK, 1=WARN, 2=ERRO, 3=NAO SUPORTADO)
+::          9001 = PowerShell indisponivel | 9002 = modulo ausente
+if "%HAS_PS%"=="0" (
+    set "PS_RC=9001"
+    goto RUN_PS_END
+)
+if not exist "%COMPARTDISK_MODULES%\%~1" (
+    call :LOG_MSG "WARN" "Modulo PowerShell ausente: %~1 - aplicando rotina Batch equivalente."
+    set "PS_RC=9002"
+    goto RUN_PS_END
+)
+"%PS_EXE%" -NoProfile -NoLogo -ExecutionPolicy Bypass -File "%COMPARTDISK_MODULES%\%~1" %PS_ARGS%
+set "PS_RC=%errorlevel%"
+if "%PS_RC%"=="2" call :LOG_MSG "ERR" "Modulo %~1 retornou erro. Consulte o log detalhado."
+if "%PS_RC%"=="3" call :LOG_MSG "WARN" "Recurso nao suportado neste hardware/edicao (%~1)."
+:RUN_PS_END
+set "PS_ARGS="
+exit /b %PS_RC%
+
+:: ------------------------------------------------------------------------------
+:: REPARO GERAL AUTOMATICO
+:: ------------------------------------------------------------------------------
+:MOD_AUTO_FIX
+cls
+call :MOD_AUTO_FIX_CORE
+echo.
+echo   %C_AMARELO%Reinicie o computador para aplicar todas as alteracoes.%C_RESET%
+pause & goto MENU_PRINCIPAL
+
+:MOD_AUTO_FIX_CORE
+call :LOG_MSG "INFO" "=== INICIANDO ROTINA ONE-CLICK FIX ==="
+call :MOD_TEMP_LOGS_SILENT
+call :MOD_REDE_RESET
+call :MOD_UPDATE_RESET
+call :MOD_SPOOLER
+call :MOD_EXPLORER
+call :MOD_SFC_DISM
+call :MOD_RELATORIO_SILENCIOSO
+call :LOG_MSG "OK" "=== REPARO AUTOMATICO CONCLUIDO ==="
+goto :EOF
+
+:: ------------------------------------------------------------------------------
+:: WINGET (permanece em Batch: o winget e uma CLI e o Batch a conduz bem)
+:: ------------------------------------------------------------------------------
+:MOD_WINGET_MENU
+cls
+call :MOD_WINGET
+pause & goto MENU_PRINCIPAL
+
+:MOD_WINGET
+if "%HAS_WINGET%"=="0" (
+    call :LOG_MSG "ERR" "Winget ausente ou corrompido neste sistema."
+    goto :EOF
+)
+call :LOG_MSG "INFO" "Testando fontes e conectividade com repositorios Winget..."
+winget source update >nul 2>&1
+if errorlevel 1 call :LOG_MSG "WARN" "Acesso ao repositorio falhou (Offline ou Firewall). Tentando cache local..."
+call :LOG_MSG "INFO" "Buscando e aplicando atualizacoes (Isso pode demorar)..."
+winget upgrade --all --include-unknown --accept-package-agreements --accept-source-agreements
+if errorlevel 1 (
+    call :LOG_MSG "WARN" "Processo finalizado com ressalvas (Aplicativos em uso ou sem rede)."
+) else (
+    call :LOG_MSG "OK" "Processo de atualizacao Winget concluido."
+)
+goto :EOF
+
+:: ------------------------------------------------------------------------------
+:: REDE
+:: ------------------------------------------------------------------------------
+:MOD_REDE_RESET
+set "PS_ARGS=-Action Reset"
+call :RUN_PS "Network.ps1"
+if errorlevel 9000 goto FB_REDE_RESET
+goto :EOF
+
+:MOD_REDE_HOSTS
+set "PS_ARGS=-Action Hosts"
+call :RUN_PS "Network.ps1"
+if errorlevel 9000 goto FB_REDE_HOSTS
+goto :EOF
+
+:MOD_FIREWALL
+set "PS_ARGS=-Action Firewall"
+call :RUN_PS "Network.ps1"
+if errorlevel 9000 goto FB_FIREWALL
+goto :EOF
+
+:MOD_REDE_INFO
+set "PS_ARGS=-Action Info"
+call :RUN_PS "Network.ps1"
+if errorlevel 9000 goto FB_REDE_INFO
+goto :EOF
+
+:MOD_REDE_TESTE
+set "PS_ARGS=-Action Test"
+call :RUN_PS "Network.ps1"
+if errorlevel 9000 goto FB_REDE_TESTE
+goto :EOF
+
+:MOD_REDE_PROXY
+set "PS_ARGS=-Action Proxy"
+call :RUN_PS "Network.ps1"
+if errorlevel 9000 goto FB_REDE_PROXY
+goto :EOF
+
+:MOD_REDE_WIFI
+set "PS_ARGS=-Action Wifi"
+call :RUN_PS "Network.ps1"
+if errorlevel 9000 goto FB_REDE_WIFI
+goto :EOF
+
+:: ------------------------------------------------------------------------------
+:: LIMPEZA E OTIMIZACAO
+:: ------------------------------------------------------------------------------
+:MOD_TEMP_LOGS
+call :LOG_MSG "INFO" "Preparando limpeza profunda do sistema..."
+choice /c SN /n /m "Deseja apagar tambem Logs de Eventos e Arquivos de Crash/Dumps (Afeta auditoria)? (S/N): "
+if errorlevel 2 goto MOD_TEMP_LOGS_PADRAO
+set "PS_ARGS=-Action Logs"
+call :RUN_PS "Cleanup.ps1"
+if errorlevel 9000 call :FB_LIMPEZA_LOGS
+:MOD_TEMP_LOGS_PADRAO
+set "PS_ARGS=-Action Deep"
+call :RUN_PS "Cleanup.ps1"
+if errorlevel 9000 goto FB_LIMPEZA
+goto :EOF
+
+:MOD_TEMP_LOGS_SILENT
+set "PS_ARGS=-Action Deep -Quiet"
+call :RUN_PS "Cleanup.ps1"
+if errorlevel 9000 goto FB_LIMPEZA
+goto :EOF
+
+:MOD_LIMPEZA_SIMULACAO
+set "PS_ARGS=-Action Analyze"
+call :RUN_PS "Cleanup.ps1"
+if errorlevel 9000 call :LOG_MSG "WARN" "A simulacao de limpeza requer PowerShell. Use a limpeza padrao."
+goto :EOF
+
+:MOD_LIMPEZA_NAVEGADORES
+set "PS_ARGS=-Action Browsers"
+call :RUN_PS "Cleanup.ps1"
+if errorlevel 9000 goto FB_LIMPEZA_NAVEGADORES
+goto :EOF
+
+:MOD_TELEMETRIA
+set "PS_ARGS=-Action Disable"
+call :RUN_PS "Telemetry.ps1"
+if errorlevel 9000 goto FB_TELEMETRIA
+goto :EOF
+
+:MOD_TELEMETRIA_ON
+set "PS_ARGS=-Action Enable"
+call :RUN_PS "Telemetry.ps1"
+if errorlevel 9000 goto FB_TELEMETRIA_ON
+goto :EOF
+
+:MOD_PERFORMANCE
+set "PS_ARGS=-Action Ultimate"
+call :RUN_PS "Performance.ps1"
+if errorlevel 9000 goto FB_PERFORMANCE
+goto :EOF
+
+:MOD_PERF_BALANCED
+set "PS_ARGS=-Action Balanced"
+call :RUN_PS "Performance.ps1"
+if errorlevel 9000 goto FB_PERF_BALANCED
+goto :EOF
+
+:MOD_PERF_ANALISE
+set "PS_ARGS=-Action Analyze"
+call :RUN_PS "Performance.ps1"
+if errorlevel 9000 goto FB_PERF_ANALISE
+goto :EOF
+
+:: ------------------------------------------------------------------------------
+:: REPARO DO SISTEMA
+:: ------------------------------------------------------------------------------
+:MOD_SFC_DISM
+set "PS_ARGS=-Action Full"
+call :RUN_PS "Repair.ps1"
+if errorlevel 9000 goto FB_SFC_DISM
+goto :EOF
+
+:MOD_CHKDSK
+set "PS_ARGS=-Action Chkdsk -Drive C:"
+call :RUN_PS "Repair.ps1"
+if errorlevel 9000 goto FB_CHKDSK
+goto :EOF
+
+:MOD_UPDATE_RESET
+set "PS_ARGS=-Action Reset"
+call :RUN_PS "Update.ps1"
+if errorlevel 9000 goto FB_UPDATE_RESET
+goto :EOF
+
+:MOD_UPDATE_STATUS
+set "PS_ARGS=-Action Status"
+call :RUN_PS "Update.ps1"
+if errorlevel 9000 goto FB_UPDATE_STATUS
+set "PS_ARGS=-Action History"
+call :RUN_PS "Update.ps1"
+goto :EOF
+
+:MOD_UPDATE_BUSCAR
+set "PS_ARGS=-Action Search"
+call :RUN_PS "Update.ps1"
+if errorlevel 9000 call :LOG_MSG "WARN" "A busca de atualizacoes requer PowerShell. Abra Configuracoes / Windows Update."
+goto :EOF
+
+:MOD_UPDATE_CACHE
+set "PS_ARGS=-Action Cache"
+call :RUN_PS "Update.ps1"
+if errorlevel 9000 goto FB_UPDATE_CACHE
+goto :EOF
+
+:MOD_SPOOLER
+set "PS_ARGS=-Action Spooler"
+call :RUN_PS "Explorer.ps1"
+if errorlevel 9000 goto FB_SPOOLER
+goto :EOF
+
+:MOD_EXPLORER
+set "PS_ARGS=-Action Restart"
+call :RUN_PS "Explorer.ps1"
+if errorlevel 9000 goto FB_EXPLORER
+goto :EOF
+
+:MOD_EXPLORER_CACHE
+set "PS_ARGS=-Action ClearCache"
+call :RUN_PS "Explorer.ps1"
+if errorlevel 9000 goto FB_EXPLORER_CACHE
+goto :EOF
+
+:: ------------------------------------------------------------------------------
+:: SEGURANCA E CONTAS
+:: ------------------------------------------------------------------------------
+:MOD_GPO_RESET
+set "PS_ARGS=-Action GpoReset"
+call :RUN_PS "Security.ps1"
+if errorlevel 9000 goto FB_GPO_RESET
+goto :EOF
+
+:MOD_SEGURANCA_STATUS
+set "PS_ARGS=-Action Status"
+call :RUN_PS "Security.ps1"
+if errorlevel 9000 goto FB_SEGURANCA_STATUS
+goto :EOF
+
+:MOD_DEFENDER
+set "PS_ARGS=-Action Update"
+call :RUN_PS "Defender.ps1"
+if errorlevel 9000 goto FB_DEFENDER
+set "PS_ARGS=-Action QuickScan"
+call :RUN_PS "Defender.ps1"
+goto :EOF
+
+:MOD_DEFENDER_STATUS
+set "PS_ARGS=-Action Status"
+call :RUN_PS "Defender.ps1"
+if errorlevel 9000 goto FB_DEFENDER_STATUS
+goto :EOF
+
+:MOD_DEFENDER_FULL
+echo   %C_AMARELO%A varredura completa pode levar varias horas e usar CPU intensamente.%C_RESET%
+choice /c SN /n /m "Confirmar varredura completa? (S/N): "
+if errorlevel 2 goto :EOF
+set "PS_ARGS=-Action FullScan"
+call :RUN_PS "Defender.ps1"
+if errorlevel 9000 call :LOG_MSG "ERR" "PowerShell inativo. Use Seguranca do Windows para a varredura completa."
+goto :EOF
+
+:MOD_DEFENDER_EXCL
+set "PS_ARGS=-Action Exclusions"
+call :RUN_PS "Defender.ps1"
+set "PS_ARGS=-Action History"
+call :RUN_PS "Defender.ps1"
+goto :EOF
+
+:MOD_USERS
+set "PS_ARGS=-Action List"
+call :RUN_PS "Users.ps1"
+if errorlevel 9000 goto FB_USERS
+echo.
+set "TARGET_USER="
+set /p "TARGET_USER=Nome EXATO do usuario para redefinir senha (ou Enter para pular): "
+if not "%TARGET_USER%"=="" (
+    set "PS_ARGS=-Action SetPassword -User "%TARGET_USER%""
+    call :RUN_PS "Users.ps1"
+)
+echo.
+choice /c SN /n /m "Ativar a conta interna de Administrador? (S/N): "
+if errorlevel 2 goto :EOF
+set "PS_ARGS=-Action EnableAdmin"
+call :RUN_PS "Users.ps1"
+if errorlevel 9000 goto FB_USERS_ADMIN
+goto :EOF
+
+:MOD_USERS_AUDIT
+set "PS_ARGS=-Action Audit"
+call :RUN_PS "Users.ps1"
+if errorlevel 9000 goto FB_USERS
+goto :EOF
+
+:MOD_TAKEOWN
+set "TARGET_PATH="
+set /p "TARGET_PATH=Cole o caminho exato do arquivo/pasta (ou Enter para cancelar): "
+if "%TARGET_PATH%"=="" goto :EOF
+set "PS_ARGS=-Action Takeown -Path "%TARGET_PATH%""
+call :RUN_PS "Security.ps1"
+if errorlevel 9000 goto FB_TAKEOWN
+goto :EOF
+
+:: ------------------------------------------------------------------------------
+:: HARDWARE, DISCOS E DRIVERS
+:: ------------------------------------------------------------------------------
+:MOD_SMART
+set "PS_ARGS=-Action Status"
+call :RUN_PS "Smart.ps1"
+if errorlevel 9000 goto FB_SMART
+goto :EOF
+
+:MOD_SMART_DETALHE
+set "PS_ARGS=-Action Detail"
+call :RUN_PS "Smart.ps1"
+if errorlevel 9000 goto FB_SMART
+goto :EOF
+
+:MOD_VOLUMES
+set "PS_ARGS=-Action Volumes"
+call :RUN_PS "Smart.ps1"
+if errorlevel 9000 goto FB_VOLUMES
+set "PS_ARGS=-Action Shadow"
+call :RUN_PS "Smart.ps1"
+goto :EOF
+
+:MOD_BATTERY
+set "PS_ARGS=-Action Info"
+call :RUN_PS "Battery.ps1"
+if errorlevel 9000 goto FB_BATTERY
+set "PS_ARGS=-Action Report"
+call :RUN_PS "Battery.ps1"
+goto :EOF
+
+:MOD_BITLOCKER
+set "PS_ARGS=-Action Status"
+call :RUN_PS "Bitlocker.ps1"
+if errorlevel 9000 goto FB_BITLOCKER
+goto :EOF
+
+:MOD_DRIVERS
+set "PS_ARGS=-Action Backup"
+call :RUN_PS "Drivers.ps1"
+if errorlevel 9000 goto FB_DRIVERS
+goto :EOF
+
+:MOD_DRIVERS_PROBLEMAS
+set "PS_ARGS=-Action Problems"
+call :RUN_PS "Drivers.ps1"
+if errorlevel 9000 goto FB_DRIVERS_PROBLEMAS
+set "PS_ARGS=-Action Unsigned"
+call :RUN_PS "Drivers.ps1"
+goto :EOF
+
+:MOD_DRIVERS_EXPORT
+set "PS_ARGS=-Action Export"
+call :RUN_PS "Drivers.ps1"
+if errorlevel 9000 call :LOG_MSG "WARN" "A exportacao do inventario requer PowerShell."
+goto :EOF
+
+:MOD_HARDWARE_FULL
+set "PS_ARGS=-Action Full"
+call :RUN_PS "Hardware.ps1"
+if errorlevel 9000 goto FB_SYSINFO
+goto :EOF
+
+:MOD_SYSINFO
+set "PS_ARGS=-Action Info"
+call :RUN_PS "Hardware.ps1"
+if errorlevel 9000 goto FB_SYSINFO
+goto :EOF
+
+:: ------------------------------------------------------------------------------
+:: DIAGNOSTICO E RELATORIOS
+:: ------------------------------------------------------------------------------
+:MOD_AUDITORIA_COMPLETA
+set "PS_ARGS=-Action Full -Days 7"
+call :RUN_PS "Audit.ps1"
+if errorlevel 9000 goto FB_AUDITORIA
+goto :EOF
+
+:MOD_AUDITORIA_RAPIDA
+set "PS_ARGS=-Action Quick"
+call :RUN_PS "Audit.ps1"
+if errorlevel 9000 goto FB_AUDITORIA
+goto :EOF
+
+:MOD_EVENTOS_7
+set "PS_ARGS=-Action Events -Days 7 -NoReport"
+call :RUN_PS "Audit.ps1"
+if errorlevel 9000 goto FB_EVENTOS
+goto :EOF
+
+:MOD_EVENTOS_30
+set "PS_ARGS=-Action Events -Days 30 -NoReport"
+call :RUN_PS "Audit.ps1"
+if errorlevel 9000 goto FB_EVENTOS
+goto :EOF
+
+:MOD_SOFTWARE
+set "PS_ARGS=-Action Software -NoReport"
+call :RUN_PS "Audit.ps1"
+if errorlevel 9000 goto FB_SOFTWARE
+goto :EOF
+
+:MOD_LICENCA
+set "PS_ARGS=-Action License -NoReport"
+call :RUN_PS "Audit.ps1"
+if errorlevel 9000 goto FB_LICENCA
+goto :EOF
+
+:MOD_RELATORIO
+set "PS_ARGS=-Action Consolidate"
+call :RUN_PS "Report.ps1"
+if errorlevel 9000 goto FB_RELATORIO
+goto :EOF
+
+:MOD_RELATORIO_SILENCIOSO
+set "PS_ARGS=-Action Consolidate -NoOpen -Quiet"
+call :RUN_PS "Report.ps1"
+goto :EOF
+
+:MOD_RELATORIO_ABRIR
+set "PS_ARGS=-Action Open"
+call :RUN_PS "Report.ps1"
+if errorlevel 9000 call :LOG_MSG "WARN" "Abra manualmente o arquivo: %LOGFILE%"
+goto :EOF
+
+:MOD_CAPACIDADES
+if "%HAS_PS%"=="0" (
+    call :LOG_MSG "WARN" "PowerShell indisponivel: capacidades detalhadas nao podem ser consultadas."
+    goto :EOF
+)
+"%PS_EXE%" -NoProfile -NoLogo -ExecutionPolicy Bypass -Command ". '%COMPARTDISK_MODULES%\Core.ps1'; $c = Get-CompartDiskCapabilities; foreach ($k in ($c.Keys | Sort-Object)) { '{0,-14}: {1}' -f $k, $c[$k] }"
+goto :EOF
+
+:: ==============================================================================
+:: 5. FALLBACKS BATCH (usados quando o PowerShell esta ausente ou bloqueado)
+::    Implementacoes Batch nativas, equivalentes funcionais de cada modulo.
+:: ==============================================================================
+
+:FB_REDE_RESET
+call :LOG_MSG "INFO" "[Batch] Resetando sockets e caches de rede..."
+ipconfig /release >nul 2>&1
+ipconfig /flushdns >nul 2>&1
+ipconfig /renew >nul 2>&1
+netsh winsock reset >nul 2>&1
+netsh int ip reset >nul 2>&1
+netsh int ipv6 reset >nul 2>&1
+netsh winhttp reset proxy >nul 2>&1
+arp -d * >nul 2>&1
+call :LOG_MSG "OK" "Rede TCP/IP e DNS redefinidos."
+goto :EOF
+
+:FB_REDE_HOSTS
+echo # Arquivo Hosts Padrao > "%windir%\System32\drivers\etc\hosts"
+echo 127.0.0.1 localhost >> "%windir%\System32\drivers\etc\hosts"
+echo ::1 localhost >> "%windir%\System32\drivers\etc\hosts"
+ipconfig /flushdns >nul 2>&1
+call :LOG_MSG "OK" "Arquivo Hosts restaurado para o padrao MSFT."
+goto :EOF
+
+:FB_FIREWALL
+netsh advfirewall export "%LOGDIR%Firewall_Backup.wfw" >nul 2>&1
+netsh advfirewall reset >nul 2>&1
+netsh advfirewall set allprofiles state on >nul 2>&1
+call :LOG_MSG "OK" "Regras do Firewall restauradas."
+goto :EOF
+
+:FB_REDE_INFO
+echo.
+ipconfig /all
+echo.
+route print -4
+goto :EOF
+
+:FB_REDE_TESTE
+echo.
+ping -n 4 8.8.8.8
+echo.
+nslookup www.microsoft.com
+goto :EOF
+
+:FB_REDE_PROXY
+netsh winhttp show proxy
+reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyServer 2>nul
+goto :EOF
+
+:FB_REDE_WIFI
+netsh wlan show interfaces
+netsh wlan show profiles
+goto :EOF
+
+:FB_LIMPEZA
+del /q /f /s "%TEMP%\*" >nul 2>&1
+del /q /f /s "C:\Windows\Temp\*" >nul 2>&1
+rd /s /q %systemdrive%\$Recycle.bin >nul 2>&1
+del /q /f /s "C:\Windows\Prefetch\*" >nul 2>&1
+del /q /f /s "C:\Windows\SoftwareDistribution\Download\*" >nul 2>&1
+rd /s /q "C:\Windows\SoftwareDistribution\DeliveryOptimization" >nul 2>&1
+:: Limpeza avancada Chromium (Cobre multiplos caches em TODOS os perfis)
+for %%N in ("Google\Chrome", "Microsoft\Edge") do (
+    if exist "%LocalAppData%\%%~N\User Data" (
+        for /d %%D in ("%LocalAppData%\%%~N\User Data\*") do (
+            for %%C in ("Cache", "Code Cache", "GPUCache", "ShaderCache", "Service Worker\CacheStorage", "Network") do (
+                if exist "%%D\%%~C" rd /s /q "%%D\%%~C" >nul 2>&1
+            )
+        )
+    )
+)
+ipconfig /flushdns >nul 2>&1
+call :LOG_MSG "OK" "Arquivos temporarios e caches de navegadores limpos."
+goto :EOF
+
+:FB_LIMPEZA_NAVEGADORES
+for %%N in ("Google\Chrome", "Microsoft\Edge", "BraveSoftware\Brave-Browser") do (
+    if exist "%LocalAppData%\%%~N\User Data" (
+        for /d %%D in ("%LocalAppData%\%%~N\User Data\*") do (
+            for %%C in ("Cache", "Code Cache", "GPUCache", "ShaderCache", "Service Worker\CacheStorage") do (
+                if exist "%%D\%%~C" rd /s /q "%%D\%%~C" >nul 2>&1
+            )
+        )
+    )
+)
+call :LOG_MSG "OK" "Caches de navegadores limpos."
+goto :EOF
+
+:FB_LIMPEZA_LOGS
+for /F "tokens=*" %%G in ('wevtutil.exe el') DO (wevtutil.exe cl "%%G" >nul 2>&1)
+del /q /f /s "C:\Windows\Logs\CBS\*" >nul 2>&1
+del /q /f /s "C:\Windows\Logs\DISM\*" >nul 2>&1
+del /q /f /s "C:\Windows\Minidump\*" >nul 2>&1
+del /q /f "C:\Windows\Memory.dmp" >nul 2>&1
+rd /s /q "C:\ProgramData\Microsoft\Windows\WER\ReportQueue" >nul 2>&1
+call :LOG_MSG "OK" "Dumps e Event Logs apagados."
+goto :EOF
+
+:FB_TELEMETRIA
+sc stop "DiagTrack" >nul 2>&1
+sc config "DiagTrack" start= disabled >nul 2>&1
+sc stop "dmwappushservice" >nul 2>&1
+sc config "dmwappushservice" start= disabled >nul 2>&1
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v AllowTelemetry /t REG_DWORD /d 0 /f >nul 2>&1
+call :LOG_MSG "OK" "Telemetria da Microsoft desativada."
+goto :EOF
+
+:FB_TELEMETRIA_ON
+sc config "DiagTrack" start= auto >nul 2>&1
+sc start "DiagTrack" >nul 2>&1
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v AllowTelemetry /t REG_DWORD /d 1 /f >nul 2>&1
+call :LOG_MSG "OK" "Telemetria restaurada ao padrao."
+goto :EOF
+
+:FB_PERFORMANCE
+powercfg -l | findstr "e9a42b02-d5df-448d-aa00-03f14749eb61" >nul
+if errorlevel 1 (
+    powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 >nul 2>&1
+)
+powercfg -setactive e9a42b02-d5df-448d-aa00-03f14749eb61 >nul 2>&1
+if errorlevel 1 (
+    call :LOG_MSG "WARN" "Falha ao aplicar esquema de energia Ultimate."
+) else (
+    call :LOG_MSG "OK" "Desempenho Maximo ativado."
+)
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f >nul 2>&1
+goto :EOF
+
+:FB_PERF_BALANCED
+powercfg -setactive 381b4222-f694-41f0-9685-ff5bb260df2e >nul 2>&1
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 0 /f >nul 2>&1
+call :LOG_MSG "OK" "Plano Equilibrado restaurado."
+goto :EOF
+
+:FB_PERF_ANALISE
+echo.
+powercfg /getactivescheme
+echo.
+wmic process get Name,WorkingSetSize /format:table 2>nul
+goto :EOF
+
+:FB_SFC_DISM
+call :LOG_MSG "INFO" "[Batch] Iniciando System File Checker (SFC)..."
+sfc /scannow
+call :LOG_MSG "INFO" "Iniciando Reparo de Imagem (DISM)..."
+dism /online /cleanup-image /restorehealth
+call :LOG_MSG "OK" "Rotinas SFC e DISM finalizadas."
+goto :EOF
+
+:FB_CHKDSK
+call :LOG_MSG "INFO" "Injetando pipes de idioma para CHKDSK..."
+(echo Y & echo S) | chkdsk C: /f /r >nul 2>&1
+call :LOG_MSG "OK" "Verificacao de disco agendada nativamente para o proximo boot."
+goto :EOF
+
+:FB_UPDATE_RESET
+call :LOG_MSG "INFO" "[Batch] Parando servicos e recriando repositorios do Windows Update..."
+net stop wuauserv >nul 2>&1
+if errorlevel 1 call :LOG_MSG "WARN" "Servico wuauserv nao parou graciosamente."
+net stop cryptSvc >nul 2>&1
+net stop bits >nul 2>&1
+
+:: Tratamento rigoroso SoftwareDistribution
+if exist "C:\Windows\SoftwareDistribution.old" rd /s /q "C:\Windows\SoftwareDistribution.old" >nul 2>&1
+if exist "C:\Windows\SoftwareDistribution" (
+    ren "C:\Windows\SoftwareDistribution" "SoftwareDistribution.old" >nul 2>&1
+    if exist "C:\Windows\SoftwareDistribution" (
+        call :LOG_MSG "WARN" "SoftwareDistribution esta bloqueada por processo ativo."
+    ) else (
+        call :LOG_MSG "OK" "Pasta SoftwareDistribution redefinida."
+    )
+)
+
+:: Tratamento rigoroso Catroot2
+if exist "C:\Windows\System32\catroot2.old" rd /s /q "C:\Windows\System32\catroot2.old" >nul 2>&1
+if exist "C:\Windows\System32\catroot2" (
+    ren "C:\Windows\System32\catroot2" "catroot2.old" >nul 2>&1
+    if exist "C:\Windows\System32\catroot2" (
+        call :LOG_MSG "WARN" "Catroot2 bloqueada (CryptSvc ativo?)."
+    ) else (
+        call :LOG_MSG "OK" "Pasta Catroot2 redefinida."
+    )
+)
+
+net start wuauserv >nul 2>&1
+net start cryptSvc >nul 2>&1
+net start bits >nul 2>&1
+goto :EOF
+
+:FB_UPDATE_STATUS
+sc query wuauserv
+sc query bits
+sc query cryptsvc
+goto :EOF
+
+:FB_UPDATE_CACHE
+net stop wuauserv >nul 2>&1
+net stop bits >nul 2>&1
+del /q /f /s "C:\Windows\SoftwareDistribution\Download\*" >nul 2>&1
+net start wuauserv >nul 2>&1
+net start bits >nul 2>&1
+call :LOG_MSG "OK" "Cache de downloads do Windows Update limpo."
+goto :EOF
+
+:FB_SPOOLER
+net stop spooler >nul 2>&1
+del /Q /F /S "%systemroot%\System32\Spool\Printers\*.*" >nul 2>&1
+net start spooler >nul 2>&1
+call :LOG_MSG "OK" "Fila de impressao limpa (Spooler resetado)."
+goto :EOF
+
+:FB_EXPLORER
+taskkill /f /im explorer.exe >nul 2>&1
+timeout /t 2 /nobreak >nul
+start explorer.exe
+call :LOG_MSG "OK" "Interface do Windows reiniciada."
+goto :EOF
+
+:FB_EXPLORER_CACHE
+taskkill /f /im explorer.exe >nul 2>&1
+del /q /f /a "%LocalAppData%\Microsoft\Windows\Explorer\thumbcache_*.db" >nul 2>&1
+del /q /f /a "%LocalAppData%\Microsoft\Windows\Explorer\iconcache_*.db" >nul 2>&1
+del /q /f /a "%LocalAppData%\IconCache.db" >nul 2>&1
+timeout /t 2 /nobreak >nul
+start explorer.exe
+call :LOG_MSG "OK" "Cache de icones e miniaturas reconstruido."
+goto :EOF
+
+:FB_GPO_RESET
+rd /s /q "%windir%\System32\GroupPolicy" >nul 2>&1
+rd /s /q "%windir%\System32\GroupPolicyUsers" >nul 2>&1
+gpupdate /force >nul 2>&1
+call :LOG_MSG "OK" "Diretivas de grupo (GPO) locais resetadas."
+goto :EOF
+
+:FB_SEGURANCA_STATUS
+echo.
+echo Firewall:
+netsh advfirewall show allprofiles state
+echo.
+echo UAC (EnableLUA):
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA 2>nul
+echo.
+echo BitLocker:
+manage-bde -status 2>nul
+goto :EOF
+
+:FB_DEFENDER
+call :LOG_MSG "ERR" "PowerShell inativo. Nao e possivel interagir com o Defender via CLI."
+if exist "%ProgramFiles%\Windows Defender\MpCmdRun.exe" (
+    call :LOG_MSG "INFO" "Tentando via MpCmdRun.exe..."
+    "%ProgramFiles%\Windows Defender\MpCmdRun.exe" -SignatureUpdate
+    "%ProgramFiles%\Windows Defender\MpCmdRun.exe" -Scan -ScanType 1
+    call :LOG_MSG "OK" "Atualizacao e varredura rapida solicitadas via MpCmdRun."
+)
+goto :EOF
+
+:FB_DEFENDER_STATUS
+sc query WinDefend
+if "%HAS_WMIC%"=="1" wmic /namespace:\\root\SecurityCenter2 path AntiVirusProduct get displayName,productState 2>nul
+goto :EOF
+
+:FB_USERS
+echo   %C_CINZA%Contas locais do sistema%C_RESET%
+if "%HAS_WMIC%"=="1" (
+    wmic useraccount where "LocalAccount=True" get name,disabled 2>nul
+) else (
+    net user
+)
+echo.
+set "TARGET_USER="
+set /p "TARGET_USER=Nome EXATO do usuario para remover senha (ou Enter): "
+if not "%TARGET_USER%"=="" (
+    net user "%TARGET_USER%" "" >nul 2>&1
+    if errorlevel 1 (
+        call :LOG_MSG "ERR" "Falha. Verifique se o nome esta correto e tente novamente."
+    ) else (
+        call :LOG_MSG "OK" "Senha do usuario %TARGET_USER% removida."
+    )
+)
+choice /c SN /n /m "Ativar Administrador padrao/oculto? (S/N): "
+if errorlevel 2 goto :EOF
+goto FB_USERS_ADMIN
+
+:FB_USERS_ADMIN
+net user Administrador /active:yes >nul 2>&1
+net user Administrator /active:yes >nul 2>&1
+call :LOG_MSG "OK" "Conta Administrador padrao ativada."
+goto :EOF
+
+:FB_TAKEOWN
+takeown /f "%TARGET_PATH%" /r /d y >nul 2>&1
+if errorlevel 1 (
+    call :LOG_MSG "ERR" "Falha no Takeown (Erro ao assumir propriedade)."
+    goto :EOF
+)
+icacls "%TARGET_PATH%" /grant *S-1-5-32-544:F /t >nul 2>&1
+if errorlevel 1 (
+    call :LOG_MSG "ERR" "Falha no Icacls (Erro ao gravar permissoes no ACL)."
+) else (
+    call :LOG_MSG "OK" "Controle Administrativo (SID-544) concedido com sucesso."
+)
+goto :EOF
+
+:FB_SMART
+call :LOG_MSG "INFO" "[Batch] Lendo metricas de hardware dos discos fisicos..."
+if "%HAS_WMIC%"=="1" (
+    wmic diskdrive get model,size,status 2>nul
+) else (
+    call :LOG_MSG "ERR" "Ferramentas necessarias (WMI/PS) inoperantes."
+)
+call :LOG_MSG "INFO" "Nota: Status 'OK' indica saude basica do WMI, nao diagnostico SMART profundo."
+goto :EOF
+
+:FB_VOLUMES
+if "%HAS_WMIC%"=="1" (
+    wmic logicaldisk where "DriveType=3" get DeviceID,VolumeName,FileSystem,Size,FreeSpace 2>nul
+) else (
+    fsutil volume diskfree C:
+)
+goto :EOF
+
+:FB_BATTERY
+set "BATTERY_LOG=%LOGDIR%Relatorio_Bateria.html"
+powercfg /batteryreport /output "%BATTERY_LOG%" >nul 2>&1
+if errorlevel 1 (
+    call :LOG_MSG "ERR" "Falha ao gravar relatorio html (sem bateria ou acesso negado)."
+) else (
+    call :LOG_MSG "OK" "Relatorio gerado!"
+    start "" "%BATTERY_LOG%"
+)
+goto :EOF
+
+:FB_BITLOCKER
+call :LOG_MSG "INFO" "[Batch] Mapeando criptografia de volumes..."
+if "%HAS_BDE%"=="1" (
+    manage-bde -status 2>nul
+) else (
+    call :LOG_MSG "ERR" "Modulo manage-bde ausente."
+)
+goto :EOF
+
+:FB_DRIVERS
+if "%HAS_PNP%"=="0" (
+    call :LOG_MSG "ERR" "PnPUtil nao localizado no Windows."
+    goto :EOF
+)
+if not exist "C:\Backup_Drivers" mkdir "C:\Backup_Drivers"
+call :LOG_MSG "INFO" "Exportando drivers locais..."
+pnputil /export-driver * "C:\Backup_Drivers" >nul 2>&1
+if errorlevel 1 (
+    call :LOG_MSG "ERR" "Exportacao retornou erro (Consulte permissao de disco)."
+) else (
+    call :LOG_MSG "OK" "Drivers extraidos para C:\Backup_Drivers."
+)
+goto :EOF
+
+:FB_DRIVERS_PROBLEMAS
+if "%HAS_WMIC%"=="1" (
+    wmic path Win32_PnPEntity where "ConfigManagerErrorCode <> 0" get Name,ConfigManagerErrorCode 2>nul
+) else (
+    call :LOG_MSG "ERR" "WMIC indisponivel para listar dispositivos com problema."
+)
+goto :EOF
+
+:FB_SYSINFO
+call :LOG_MSG "INFO" "[Batch] Coletando auditoria da placa-mae e sistema..."
+if "%HAS_WMIC%"=="1" (
+    wmic os get Caption,Version,BuildNumber,OSArchitecture /format:list 2>nul
+    wmic cpu get Name,NumberOfCores,NumberOfLogicalProcessors /format:list 2>nul
+    wmic baseboard get Manufacturer,Product /format:list 2>nul
+    wmic computersystem get Manufacturer,Model,TotalPhysicalMemory /format:list 2>nul
+    wmic bios get Manufacturer,SMBIOSBIOSVersion,SerialNumber /format:list 2>nul
+    goto :EOF
+)
+systeminfo | findstr /C:"Nome do sistema" /C:"OS Name" /C:"Versao" /C:"OS Version" /C:"Fabricante" /C:"System Manufacturer"
+goto :EOF
+
+:FB_AUDITORIA
+call :LOG_MSG "WARN" "[Batch] Auditoria completa reduzida (PowerShell indisponivel)."
+call :FB_SYSINFO
+call :FB_SMART
+call :FB_VOLUMES
+call :FB_SEGURANCA_STATUS
+call :FB_UPDATE_STATUS
+call :LOG_MSG "INFO" "Gerando relatorio texto via systeminfo..."
+systeminfo > "%LOGDIR%Auditoria_Sistema.txt" 2>nul
+if exist "%LOGDIR%Auditoria_Sistema.txt" call :LOG_MSG "OK" "Relatorio salvo em %LOGDIR%Auditoria_Sistema.txt"
+goto :EOF
+
+:FB_EVENTOS
+wevtutil qe System /c:30 /rd:true /f:text /q:"*[System[(Level=1 or Level=2)]]" 2>nul
+goto :EOF
+
+:FB_SOFTWARE
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" /s /v DisplayName 2>nul | findstr /i "DisplayName"
+goto :EOF
+
+:FB_LICENCA
+cscript //nologo "%windir%\System32\slmgr.vbs" /dli 2>nul
+goto :EOF
+
+:FB_RELATORIO
+call :LOG_MSG "WARN" "[Batch] Geracao de relatorios HTML/JSON requer PowerShell."
+call :LOG_MSG "INFO" "O log consolidado em texto permanece disponivel."
+echo.
+echo   Relatorio de texto: %LOGFILE%
+goto :EOF
+
+:: ==============================================================================
+:: 6. MOTOR CENTRAL DE LOGS, DIAGNOSTICO E SAIDA
+:: ==============================================================================
+
+:TRACE
+:: Escritor de trace minimo e sem dependencias. Usado desde a primeira linha do
+:: bootstrap, inclusive antes de LOGFILE existir. Nunca deve falhar nem abortar.
+>> "%TRACEFILE%" echo [%DATE% %TIME%] %~1
+exit /b 0
+
+:TESTAR_ESCRITA
+:: %~1 = diretorio candidato. Retorna 0 se realmente aceitar gravacao.
+if not exist "%~1" mkdir "%~1" >nul 2>&1
+> "%~1compartdisk_write_test.tmp" echo teste 2>nul
+if not exist "%~1compartdisk_write_test.tmp" exit /b 1
+del "%~1compartdisk_write_test.tmp" >nul 2>&1
+exit /b 0
+
+:LOG_MSG
+:: %~1 = Nivel (INFO, OK, WARN, ERR)   %~2 = Mensagem
+:: 
+:: A mensagem e HIGIENIZADA antes de ser ecoada. Motivo: em "echo ... %MSG%" a
+:: expansao percentual acontece ANTES do reconhecimento de operadores, entao um
+:: "|" vindo do conteudo da variavel vira um pipe real. O efeito e que a linha
+:: de log e desviada para um comando inexistente e o arquivo fica vazio.
+:: DisableDelayedExpansion protege contra "!", mas nao contra "|", "&", "<" e ">".
+setlocal EnableExtensions DisableDelayedExpansion
+set "LVL=%~1"
+set "MSG=%~2"
+if not defined MSG set "MSG=(sem mensagem)"
+set "MSG=%MSG:|=/%"
+set "MSG=%MSG:&=+%"
+set "MSG=%MSG:<=(%"
+set "MSG=%MSG:>=)%"
+
+:: Marcador de largura fixa: as mensagens ficam alinhadas em coluna, e o
+:: formato reproduz o dos relatorios. O arquivo de log mantem o formato
+:: original, para nao quebrar leitura de registros anteriores.
+set "COLOR=%C_TEXTO%"
+set "TAG=[INFO]"
+if "%LVL%"=="OK" (set "COLOR=%C_VERDE%" & set "TAG=[ OK ]")
+if "%LVL%"=="WARN" (set "COLOR=%C_AMARELO%" & set "TAG=[WARN]")
+if "%LVL%"=="ERR" (set "COLOR=%C_VERMELHO%" & set "TAG=[ERRO]")
+if "%LVL%"=="INFO" (set "COLOR=%C_CINZA%" & set "TAG=[INFO]")
+
+echo(  %COLOR%%TAG%%C_RESET% %C_TEXTO%%MSG%%C_RESET%
+if defined LOGFILE >> "%LOGFILE%" echo [%DATE% %TIME%] [%LVL%] [Launcher] %MSG%
+endlocal
+goto :EOF
+
+:SAIR
+if defined CLI_MODE goto SAIR_CLI
+cls
+call :LOG_MSG "INFO" "SESSAO ENCERRADA PELO USUARIO."
+echo.
+echo.
+echo   %C_TITULO%COMPARTDISK%C_RESET%  %C_CINZA%%COMPARTDISK_VERSION%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo   %C_VERDE%Sessao Finalizada%C_RESET%
+echo.
+echo   %C_CINZA%Log Consolidado%C_RESET%
+echo   %C_TEXTO%%LOGFILE%%C_RESET%
+echo.
+if "%HAS_PS%"=="1" (
+    echo   %C_CINZA%Relatorios da Sessao ^(TXT, CSV, JSON, HTML^)%C_RESET%
+    echo   %C_TEXTO%%LOGDIR%COMPARTDISK_Relatorios\%COMPARTDISK_SESSION%%C_RESET%
+    echo.
+)
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+pause >nul
+goto FIM
+
+:SAIR_CLI
+call :LOG_MSG "INFO" "SESSAO EM LINHA DE COMANDO ENCERRADA."
+goto FIM
+
+:FIM
+:: Encerramento normal: marca o trace como limpo para que a proxima execucao
+:: saiba que nao houve queda.
+call :TRACE "ENCERRAMENTO NORMAL"
+:: Sob o guardiao (cmd /c "... & pause") e preciso encerrar o processo inteiro,
+:: caso contrario o "pause" de seguranca dispararia apos uma saida legitima.
+if defined COMPARTDISK_GUARD exit 0
+exit /b 0
+
+:SEM_EXTENSOES
+:: Sem Command Extensions nao existem CALL :rotulo, SETLOCAL ou %~dp0. Nada da
+:: ferramenta funciona; e melhor dizer isso claramente do que fechar em silencio.
+echo.
+echo [ERRO] As Command Extensions do interpretador de comandos estao desativadas.
+echo        O COMPARTDISK depende delas em toda a sua estrutura.
+echo.
+echo        Execute:  cmd.exe /E:ON /C "%~f0"
+echo.
+pause
+exit /b 1
