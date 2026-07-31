@@ -155,7 +155,7 @@ Batch nativas. Detalhes em [Requisitos](docs/REQUISITOS.md).
 
 ## Licença
 
-Distribuído sob a Licença MIT. Consulte o arquivo [LICENSE](LICENSE).
+Distribuído sob a Licença Apache 2.0. Consulte o arquivo [LICENSE](LICENSE).
 
 ---
 
