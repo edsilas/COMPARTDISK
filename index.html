@@ -1,0 +1,2202 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>COMPARTDISK — Assistente de Reparo para Windows 10 e 11</title>
+<meta name="description" content="Automatiza em menus os comandos nativos de manutenção do Windows 10/11 (SFC, DISM, netsh, Defender) e gera relatórios. Sem instalação, sem dependências, código aberto.">
+<meta name="color-scheme" content="light">
+<meta property="og:title" content="COMPARTDISK — Assistente de Reparo para Windows">
+<meta property="og:description" content="Reparo, limpeza e diagnóstico do Windows 10 e 11 em menus. Só componentes nativos.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://github.com/edsilas/compartdisk">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230F6CBD'/%3E%3Ctext x='16' y='23' font-family='Consolas,monospace' font-size='17' font-weight='700' fill='%23fff' text-anchor='middle'%3E%3E_%3C/text%3E%3C/svg%3E">
+<style>
+/* ============================================================================
+   COMPARTDISK — folha de estilo
+   Direção: Microsoft Fluent 2. Tipografia Segoe UI Variable, superfícies
+   neutras em camadas, profundidade sutil, cantos de 4px em controles e 8px
+   em cartões, curva de movimento padrão do Fluent.
+   Elemento-assinatura: os marcadores monoespaçados do próprio console
+   ([ OK ] [WARN] [ERRO]) usados como dispositivo de interface na página,
+   criando continuidade entre a ferramenta e o site.
+   Zero dependência externa: nenhuma fonte, ícone ou script de terceiros.
+   ========================================================================= */
+
+:root{
+  /* Superfícies neutras (Fluent) */
+  --bg:#FAFAFA;
+  --layer:#FFFFFF;
+  --layer-alt:#F5F5F5;
+  --stroke:#E0E0E0;
+  --stroke-soft:#EDEDED;
+
+  /* Tinta */
+  --ink:#242424;
+  --ink-2:#424242;
+  --ink-3:#616161;
+  --ink-4:#8A8A8A;
+
+  /* Marca */
+  --brand:#0F6CBD;
+  --brand-hover:#115EA3;
+  --brand-press:#0C3B5E;
+  --brand-tint:#EBF3FC;
+  --brand-tint-2:#CFE4FA;
+
+  /* Semântica */
+  --ok:#0E700E;
+  --ok-bg:#E9F5E9;
+  --warn:#9A6700;
+  --warn-bg:#FFF8E5;
+  --crit:#B10E1C;
+  --crit-bg:#FDECEE;
+
+  /* Console — paleta real do Windows Terminal (esquema Campbell) */
+  --con-bg:#0C0C0C;
+  --con-surface:#161616;
+  --con-white:#F2F2F2;
+  --con-gray:#CCCCCC;
+  --con-dim:#767676;
+  --con-cyan:#3A96DD;
+  --con-green:#13A10E;
+  --con-yellow:#C19C00;
+  --con-red:#E74856;
+
+  /* Elevação (tokens de sombra do Fluent) */
+  --sh-2:0 1px 2px rgba(0,0,0,.14),0 0 2px rgba(0,0,0,.12);
+  --sh-4:0 2px 4px rgba(0,0,0,.14),0 0 2px rgba(0,0,0,.12);
+  --sh-8:0 4px 8px rgba(0,0,0,.14),0 0 2px rgba(0,0,0,.12);
+  --sh-16:0 8px 16px rgba(0,0,0,.14),0 0 2px rgba(0,0,0,.12);
+
+  /* Tipografia */
+  --ui:"Segoe UI Variable Text","Segoe UI Variable","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --display:"Segoe UI Variable Display","Segoe UI Variable","Segoe UI",system-ui,-apple-system,sans-serif;
+  --mono:"Cascadia Mono","Cascadia Code",Consolas,"SF Mono","Liberation Mono",monospace;
+
+  /* Forma e movimento */
+  --r-ctl:4px;
+  --r-card:8px;
+  --r-lg:12px;
+  --ease:cubic-bezier(.33,0,.67,1);
+  --ease-out:cubic-bezier(0,0,0,1);
+  --dur:.25s;
+
+  --maxw:1240px;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:84px;-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font-family:var(--ui);font-size:15px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  overflow-x:hidden;             /* nada empurra a pagina lateralmente */
+}
+/* Palavras longas quebram em vez de estourar o container. Nao hifeniza texto
+   comum: so age quando o token realmente nao cabe. */
+h1,h2,h3,h4,p,li,dd,dt,summary,span,a{overflow-wrap:break-word}
+img{max-width:100%;display:block}
+a{color:var(--brand);text-decoration:none}
+a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:2px}
+
+h1,h2,h3,h4{font-family:var(--display);margin:0;letter-spacing:-.015em;line-height:1.2;font-weight:600}
+h1{font-size:clamp(2.2rem,5.2vw,3.6rem);letter-spacing:-.03em}
+h2{font-size:clamp(1.6rem,3.2vw,2.15rem);letter-spacing:-.022em}
+h3{font-size:1.15rem;letter-spacing:-.01em}
+h4{font-size:.95rem}
+p{margin:0 0 1em}
+ul,ol{margin:0 0 1em;padding-left:1.2em}
+li{margin:.3em 0}
+
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+
+/* ---------- dispositivo-assinatura: marcador do console ---------- */
+.tok{
+  font-family:var(--mono);font-size:.72rem;font-weight:600;
+  letter-spacing:.04em;white-space:nowrap;
+  padding:2px 7px;border-radius:3px;border:1px solid transparent;
+  display:inline-block;vertical-align:1px;
+}
+.tok-ok{color:var(--ok);background:var(--ok-bg);border-color:#C6E7C6}
+.tok-warn{color:var(--warn);background:var(--warn-bg);border-color:#F2E2B5}
+.tok-crit{color:var(--crit);background:var(--crit-bg);border-color:#F5C9CE}
+.tok-info{color:var(--brand);background:var(--brand-tint);border-color:var(--brand-tint-2)}
+.tok-neutral{color:var(--ink-3);background:var(--layer-alt);border-color:var(--stroke)}
+
+/* ---------- cabeçalho ---------- */
+.skip{position:absolute;left:-9999px;top:0;background:var(--brand);color:#fff;padding:10px 16px;z-index:100;border-radius:0 0 var(--r-ctl) 0}
+.skip:focus{left:0}
+
+.topbar{
+  position:sticky;top:0;z-index:50;
+  background:rgba(250,250,250,.82);
+  backdrop-filter:saturate(180%) blur(20px);
+  -webkit-backdrop-filter:saturate(180%) blur(20px);
+  border-bottom:1px solid var(--stroke-soft);
+}
+.topbar-in{display:flex;align-items:center;gap:16px;height:56px;min-width:0}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;color:var(--ink);font-size:.95rem;letter-spacing:-.01em;flex-shrink:0;min-width:0}
+.brand:hover{text-decoration:none}
+.brand-mark{
+  width:26px;height:26px;border-radius:5px;background:var(--brand);color:#fff;
+  display:grid;place-items:center;font-family:var(--mono);font-size:.72rem;font-weight:700;
+}
+.brand-ver{font-family:var(--mono);font-size:.68rem;color:var(--ink-4);border:1px solid var(--stroke);padding:1px 5px;border-radius:3px;font-weight:500}
+
+.nav{display:flex;gap:2px;margin-left:auto;align-items:center;min-width:0;flex-wrap:nowrap}
+.nav a{
+  color:var(--ink-2);font-size:.855rem;padding:7px 11px;border-radius:var(--r-ctl);
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease);white-space:nowrap;
+}
+.nav a:hover{background:var(--layer-alt);color:var(--ink);text-decoration:none}
+.nav a.on{color:var(--brand);font-weight:600}
+.nav-cta{
+  background:var(--brand)!important;color:#fff!important;font-weight:600;padding:7px 15px!important;margin-left:8px;
+}
+.nav-cta:hover{background:var(--brand-hover)!important}
+.menu-btn{display:none;margin-left:auto;background:none;border:1px solid var(--stroke);border-radius:var(--r-ctl);width:36px;height:32px;cursor:pointer;color:var(--ink-2);font-size:1rem;line-height:1}
+
+/* ---------- herói ---------- */
+.hero{padding:72px 0 8px;position:relative;overflow:hidden}
+.hero::before{
+  content:"";position:absolute;inset:0 0 auto;height:520px;z-index:-1;
+  background:
+    radial-gradient(900px 380px at 12% -8%,var(--brand-tint) 0%,transparent 62%),
+    radial-gradient(700px 320px at 92% 4%,#F3F0FB 0%,transparent 60%);
+}
+.hero-grid{display:grid;grid-template-columns:minmax(0,.86fr) minmax(0,1.14fr);gap:48px;align-items:center}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;font-family:var(--mono);font-size:.73rem;
+  letter-spacing:.06em;color:var(--brand);background:var(--layer);border:1px solid var(--brand-tint-2);
+  padding:5px 12px;border-radius:100px;margin-bottom:20px;box-shadow:var(--sh-2);
+}
+.hero h1{margin-bottom:18px}
+.hero-sub{font-size:1.12rem;color:var(--ink-3);max-width:44ch;margin-bottom:26px}
+.hero-sub strong{color:var(--ink-2);font-weight:600}
+
+.bullets{list-style:none;padding:0;margin:0 0 30px;display:grid;gap:9px}
+.bullets li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:start;margin:0;font-size:.93rem;color:var(--ink-2)}
+
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}
+.btn{
+  display:inline-flex;align-items:center;gap:8px;font-family:var(--ui);font-size:.9rem;font-weight:600;
+  padding:10px 20px;border-radius:var(--r-ctl);border:1px solid transparent;cursor:pointer;
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease),transform .12s var(--ease);
+}
+.btn:hover{text-decoration:none}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--brand);color:#fff;box-shadow:var(--sh-4)}
+.btn-primary:hover{background:var(--brand-hover);box-shadow:var(--sh-8)}
+.btn-primary:active{background:var(--brand-press)}
+.btn-secondary{background:var(--layer);color:var(--ink);border-color:var(--stroke);box-shadow:var(--sh-2)}
+.btn-secondary:hover{background:var(--layer-alt);border-color:#D0D0D0}
+.hero-note{font-size:.8rem;color:var(--ink-4);margin:0}
+
+/* ---------- moldura de console ---------- */
+.console{
+  background:var(--con-bg);border-radius:var(--r-lg);overflow:hidden;
+  box-shadow:var(--sh-16),0 0 0 1px rgba(0,0,0,.06);
+  min-width:0;max-width:100%;
+}
+.console-bar{
+  display:flex;align-items:center;gap:8px;padding:9px 14px;background:var(--con-surface);
+  border-bottom:1px solid #262626;min-width:0;
+}
+.dot{width:11px;height:11px;border-radius:50%;flex-shrink:0}
+.console-title{
+  font-family:var(--mono);font-size:.72rem;color:var(--con-dim);margin-left:6px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+}
+.console{container-type:inline-size}
+.console pre{
+  margin:0;padding:18px 20px;font-family:var(--mono);
+  line-height:1.52;color:var(--con-gray);
+  overflow-x:auto;white-space:pre;tab-size:4;
+  /* Fonte fluida: o bloco tem 78 colunas fixas, entao o tamanho acompanha a
+     largura do proprio container. Preserva o alinhamento em coluna sem gerar
+     rolagem lateral. O clamp evita ficar ilegivel ou grande demais. */
+  font-size:clamp(.72rem, 1.98cqw, 1rem);
+}
+/* Navegadores sem container queries: aproxima pela largura da janela */
+@supports not (container-type:inline-size){
+  .console pre{font-size:clamp(.72rem,1.05vw,1rem)}
+}
+.console pre::-webkit-scrollbar{height:9px}
+.console pre::-webkit-scrollbar-thumb{background:#3A3A3A;border-radius:5px}
+.console .w{color:var(--con-white)}
+.console .d{color:var(--con-dim)}
+.console .c{color:var(--con-cyan)}
+.console .ok{color:var(--con-green)}
+.console .wa{color:var(--con-yellow)}
+.console .er{color:var(--con-red)}
+.console .p{color:var(--con-gray)}
+.caret{display:inline-block;width:7px;height:.95em;background:var(--con-gray);vertical-align:-2px;animation:blink 1.1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- seções ---------- */
+.section{padding:80px 0;border-top:1px solid var(--stroke-soft)}
+.section-alt{background:var(--layer)}
+.section-head{max-width:66ch;margin-bottom:44px}
+.section-head .kicker{
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;color:var(--brand);
+  text-transform:uppercase;margin-bottom:12px;display:block;font-weight:600;
+}
+.section-head h2{margin-bottom:14px}
+.section-head p{color:var(--ink-3);font-size:1.02rem;margin:0}
+
+/* ---------- grades de cartões ---------- */
+.grid{display:grid;gap:18px}
+.g-2{grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))}
+.g-3{grid-template-columns:repeat(auto-fit,minmax(min(100%,268px),1fr))}
+
+.card{
+  background:var(--layer);border:1px solid var(--stroke);border-radius:var(--r-card);
+  padding:24px;box-shadow:var(--sh-2);
+  transition:box-shadow var(--dur) var(--ease),transform var(--dur) var(--ease),border-color var(--dur) var(--ease);
+}
+.card:hover{box-shadow:var(--sh-8);transform:translateY(-2px);border-color:#D6D6D6}
+.section-alt .card{background:var(--bg)}
+.card h3{margin-bottom:8px}
+.card p:last-child{margin-bottom:0}
+.card .lead{color:var(--ink-3);font-size:.92rem}
+
+.card-icon{
+  width:38px;height:38px;border-radius:var(--r-ctl);background:var(--brand-tint);
+  color:var(--brand);display:grid;place-items:center;margin-bottom:14px;
+  font-family:var(--mono);font-size:.85rem;font-weight:700;
+}
+
+/* ---------- problemas que resolve ---------- */
+.problem{display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:start}
+.problem-mark{
+  font-family:var(--mono);font-size:.68rem;font-weight:700;color:var(--brand);
+  background:var(--brand-tint);border-radius:3px;padding:3px 7px;margin-top:2px;white-space:nowrap;
+}
+.problem h4{margin-bottom:4px;font-size:1rem;font-family:var(--display)}
+.problem p{margin:0;color:var(--ink-3);font-size:.9rem}
+
+/* ---------- galeria ---------- */
+.tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:20px;border-bottom:1px solid var(--stroke);padding-bottom:0}
+.tab{
+  background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;
+  font-family:var(--ui);font-size:.88rem;font-weight:500;color:var(--ink-3);
+  padding:9px 14px;border-radius:var(--r-ctl) var(--r-ctl) 0 0;
+  transition:color var(--dur) var(--ease),background var(--dur) var(--ease),border-color var(--dur) var(--ease);
+}
+.tab:hover{background:var(--layer-alt);color:var(--ink)}
+.tab[aria-selected="true"]{color:var(--brand);border-bottom-color:var(--brand);font-weight:600}
+.panel[hidden]{display:none}
+.panel-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:24px;align-items:start}
+/* Legenda em colunas sob o console: aproveita a largura sem alongar a pagina */
+.panel-note{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px 36px;align-items:start}
+.panel-note h3{grid-column:1/-1;margin-bottom:2px}
+.panel-note>p{margin:0}
+.panel-note>ul{margin:0}
+.panel-note h3{margin-bottom:10px}
+.panel-note p{color:var(--ink-3);font-size:.92rem}
+.panel-note ul{padding-left:0;list-style:none}
+.panel-note li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:9px;font-size:.88rem;color:var(--ink-2);margin:.5em 0}
+/* Legenda dos marcadores: coluna do token com largura fixa para que os textos
+   fiquem alinhados entre si, espelhando o alinhamento do proprio terminal. */
+.legenda li{grid-template-columns:6.2em minmax(0,1fr);align-items:baseline;gap:12px;margin:.55em 0}
+/* Quando o texto de abertura termina em dois-pontos, a lista precisa segui-lo
+   diretamente: este painel usa fluxo unico em vez de duas colunas. */
+.panel-note--fluxo{grid-template-columns:minmax(0,1fr)}
+.panel-note--fluxo>p,
+.panel-note--fluxo>ul{grid-column:1/-1}
+.panel-note--fluxo .legenda{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));
+  gap:4px 28px;margin-top:10px;
+}
+.legenda .tok{justify-self:start;text-align:center;width:100%}
+/* Nota de rodape do painel, separada por uma regua sutil */
+.nota{
+  grid-column:1/-1;margin:16px 0 0;padding-top:14px;border-top:1px solid var(--stroke);
+  font-size:.86rem;color:var(--ink-3);line-height:1.65;
+}
+.nota b{color:var(--ink-2);font-weight:600}
+
+/* ---------- funcionalidades ---------- */
+.feature{
+  background:var(--layer);border:1px solid var(--stroke);border-radius:var(--r-card);
+  overflow:hidden;box-shadow:var(--sh-2);
+  transition:box-shadow var(--dur) var(--ease),border-color var(--dur) var(--ease);
+}
+.feature:hover{box-shadow:var(--sh-8);border-color:#D6D6D6}
+.feature summary{
+  cursor:pointer;padding:20px 24px;display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;list-style:none;
+}
+.feature summary::-webkit-details-marker{display:none}
+.feature summary:hover{background:var(--layer-alt)}
+.feature-key{
+  font-family:var(--mono);font-weight:700;font-size:.8rem;color:var(--brand);
+  background:var(--brand-tint);border:1px solid var(--brand-tint-2);
+  border-radius:var(--r-ctl);padding:5px 9px;
+}
+.feature-title{font-family:var(--display);font-weight:600;font-size:1.02rem;letter-spacing:-.01em}
+.feature-title span{display:block;font-family:var(--ui);font-weight:400;font-size:.85rem;color:var(--ink-3);letter-spacing:0;margin-top:2px}
+.chev{color:var(--ink-4);transition:transform var(--dur) var(--ease);font-size:.75rem;font-family:var(--mono)}
+.feature[open] .chev{transform:rotate(90deg)}
+.feature-body{padding:4px 24px 24px;border-top:1px solid var(--stroke-soft);margin-top:0}
+.spec{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px 16px;margin-top:18px}
+.spec dt{
+  font-family:var(--mono);font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-4);padding-top:3px;font-weight:600;white-space:nowrap;
+  max-width:14ch;                /* nunca empurra a coluna de conteudo */
+}
+.spec dd{margin:0;font-size:.92rem;color:var(--ink-2)}
+.spec dd ul{margin:0;padding-left:1.1em}
+.callout{
+  margin-top:16px;padding:12px 16px;border-radius:var(--r-ctl);
+  background:var(--warn-bg);border:1px solid #F2E2B5;border-left:3px solid var(--warn);
+  font-size:.88rem;color:#6B4A00;
+}
+.callout strong{color:#5A3E00}
+
+/* ---------- tutoriais ---------- */
+.tutorial{margin-bottom:20px}
+.steps{list-style:none;padding:0;margin:18px 0 0;counter-reset:s}
+.steps li{
+  counter-increment:s;position:relative;padding:0 0 22px 46px;margin:0;
+  border-left:2px solid var(--stroke);
+}
+.steps li:last-child{border-left-color:transparent;padding-bottom:0}
+.steps li::before{
+  content:counter(s);position:absolute;left:-15px;top:-2px;
+  width:28px;height:28px;border-radius:50%;background:var(--layer);
+  border:2px solid var(--brand);color:var(--brand);
+  display:grid;place-items:center;font-family:var(--mono);font-size:.75rem;font-weight:700;
+}
+.steps strong{display:block;font-family:var(--display);font-size:.98rem;margin-bottom:3px;color:var(--ink)}
+.steps p{margin:0;font-size:.9rem;color:var(--ink-3)}
+/* Codigo inline: caminhos e comandos longos precisam poder quebrar, senao um
+   unico token alarga o cartao inteiro. */
+code{
+  font-family:var(--mono);font-size:.87em;background:var(--layer-alt);
+  border:1px solid var(--stroke);border-radius:3px;padding:1px 5px;color:var(--ink);
+  overflow-wrap:break-word;word-break:break-word;
+}
+.section-alt code{background:var(--bg)}
+.keys{font-family:var(--mono);font-size:.8rem;background:var(--layer-alt);border:1px solid var(--stroke);border-bottom-width:2px;border-radius:var(--r-ctl);padding:1px 6px;color:var(--ink)}
+
+/* ---------- cenários ---------- */
+/* Descricoes de tamanhos diferentes faziam cada rota parar numa altura
+   distinta. O cartao passa a ocupar a altura da linha e a rota e ancorada
+   no rodape, alinhando as seis entre si. */
+#cenarios .card{display:flex;flex-direction:column;height:100%}
+.scenario{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:start;flex:1}
+.scenario>div{display:flex;flex-direction:column;height:100%}
+.scenario .lead{flex:1}
+.scenario-num{
+  font-family:var(--mono);font-size:.68rem;font-weight:700;color:var(--brand);
+  background:var(--brand-tint);border-radius:3px;padding:3px 7px;margin-top:2px;
+  line-height:1.5;letter-spacing:.02em;white-space:nowrap;
+}
+.path{
+  font-family:var(--mono);font-size:.8rem;color:var(--ink-2);background:var(--layer-alt);
+  border:1px solid var(--stroke);border-radius:var(--r-ctl);
+  padding:10px 12px;margin-top:16px;
+  /* Flex com gap fixo: o espacamento entre os passos fica igual em todos os
+     cartoes, independente do numero de passos. Quebra sem rolagem lateral. */
+  display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;
+  white-space:normal;overflow-wrap:break-word;
+}
+.path .passo{
+  display:inline-flex;align-items:center;justify-content:center;
+  background:var(--layer);border:1px solid var(--stroke);border-radius:3px;
+  padding:2px 8px;color:var(--ink-2);font-weight:600;font-size:.78rem;
+  min-width:3.4em;                 /* larguras iguais entre passos */
+}
+.path .passo--nota{
+  background:transparent;border-color:transparent;color:var(--ink-4);
+  font-weight:400;min-width:0;padding:2px 0;
+}
+.section-alt .path .passo{background:var(--bg)}
+.path b{color:var(--brand);font-weight:700}
+
+/* ---------- boas práticas ---------- */
+.rules{display:grid;gap:14px;counter-reset:r}
+.rule{
+  display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:start;
+  background:var(--layer);border:1px solid var(--stroke);border-radius:var(--r-card);
+  padding:20px 22px;box-shadow:var(--sh-2);counter-increment:r;
+}
+.section-alt .rule{background:var(--bg)}
+.rule::before{
+  content:"0" counter(r);font-family:var(--mono);font-size:1.05rem;font-weight:700;
+  color:var(--brand);opacity:.42;line-height:1.4;
+}
+.rule h4{margin-bottom:3px;font-size:1rem}
+.rule p{margin:0;color:var(--ink-3);font-size:.91rem}
+
+/* ---------- FAQ ---------- */
+.faq{
+  background:var(--layer);border:1px solid var(--stroke);border-radius:var(--r-card);
+  margin-bottom:10px;box-shadow:var(--sh-2);overflow:hidden;
+}
+.section-alt .faq{background:var(--bg)}
+.faq summary{
+  cursor:pointer;padding:16px 22px;font-weight:600;font-size:.95rem;
+  display:flex;justify-content:space-between;gap:16px;align-items:center;list-style:none;
+  transition:background var(--dur) var(--ease);
+}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary:hover{background:var(--layer-alt)}
+.faq summary::after{content:"+";font-family:var(--mono);color:var(--ink-4);font-size:1.15rem;flex-shrink:0;transition:transform var(--dur) var(--ease)}
+.faq[open] summary::after{transform:rotate(45deg)}
+.faq-body{padding:0 22px 18px;color:var(--ink-3);font-size:.92rem}
+.faq-body p:last-child{margin-bottom:0}
+
+/* ---------- previa do relatorio HTML ----------
+   Reproduz a paleta e a estrutura reais do arquivo gerado pela ferramenta
+   (tema escuro de painel de diagnostico), para que a previa corresponda ao
+   que o usuario vai abrir no navegador. */
+.relatorio{
+  border-radius:var(--r-lg);overflow:hidden;background:#0d1117;
+  box-shadow:var(--sh-16),0 0 0 1px rgba(0,0,0,.08);max-width:100%;min-width:0;
+}
+.rel-chrome{
+  display:flex;align-items:center;gap:8px;padding:9px 14px;
+  background:#161b22;border-bottom:1px solid #21262d;min-width:0;
+}
+.rel-url{
+  font-family:var(--mono);font-size:.7rem;color:#7d8a99;margin-left:8px;
+  background:#0d1117;border:1px solid #21262d;border-radius:3px;padding:3px 10px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+}
+.rel-corpo{color:#c9d3de;font-size:.8rem;line-height:1.5}
+.rel-head{
+  display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:flex-end;
+  padding:20px 22px 16px;background:linear-gradient(180deg,#11161d,#0d1117);
+  border-bottom:1px solid #252d38;
+}
+.rel-brand{font-family:var(--mono);font-size:.6rem;letter-spacing:.12em;color:#4c8dff;margin-bottom:6px}
+.rel-h1{font-family:var(--mono);font-size:.92rem;letter-spacing:.13em;color:#eef3f8;font-weight:600}
+.rel-sub{font-family:var(--mono);font-size:.63rem;color:#7d8a99;letter-spacing:.05em;margin-top:5px}
+.rel-counts{display:flex;gap:7px;flex-wrap:wrap}
+.rel-count{
+  font-family:var(--mono);font-size:.58rem;letter-spacing:.08em;color:#7d8a99;
+  padding:6px 11px;border:1px solid #252d38;background:#151b23;border-radius:2px;
+  display:flex;gap:8px;align-items:baseline;
+}
+.rel-count b{font-size:.92rem;font-weight:600}
+.rel-count.c b{color:#e5484d} .rel-count.w b{color:#e3a008}
+.rel-count.o b{color:#3dd68c} .rel-count.i b{color:#4c8dff}
+.rel-toolbar{
+  display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+  padding:11px 22px;border-bottom:1px solid #252d38;background:#0d1117;
+}
+.rel-busca{
+  flex:1;min-width:150px;font-family:var(--mono);font-size:.63rem;color:#5d6b7a;
+  background:#151b23;border:1px solid #252d38;border-radius:2px;padding:7px 11px;
+}
+.rel-btn{
+  font-family:var(--mono);font-size:.58rem;letter-spacing:.08em;color:#7d8a99;
+  border:1px solid #252d38;border-radius:2px;padding:7px 11px;background:#151b23;white-space:nowrap;
+}
+.rel-wrap{padding:18px 22px 22px}
+.rel-sec{
+  font-family:var(--mono);font-size:.63rem;letter-spacing:.14em;text-transform:uppercase;
+  color:#7d8a99;margin:18px 0 10px;padding-bottom:7px;border-bottom:1px solid #252d38;
+}
+.rel-wrap>.rel-sec:first-child{margin-top:0}
+.rel-card{
+  display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:11px;align-items:baseline;
+  background:#151b23;border:1px solid #252d38;border-left-width:3px;border-radius:3px;
+  padding:11px 13px;margin-bottom:7px;
+}
+.rel-card.crit{border-left-color:#e5484d}
+.rel-card.warn{border-left-color:#e3a008}
+.rel-card.ok{border-left-color:#3dd68c}
+.rel-tok{font-family:var(--mono);font-size:.62rem;font-weight:600;white-space:nowrap}
+.rel-tok.c{color:#e5484d} .rel-tok.w{color:#e3a008} .rel-tok.o{color:#3dd68c}
+.rel-area{
+  font-family:var(--mono);font-size:.6rem;letter-spacing:.06em;color:#7d8a99;
+  text-transform:uppercase;white-space:nowrap;
+}
+.rel-msg{font-size:.76rem;color:#c9d3de}
+.rel-rec{display:block;margin-top:4px;font-size:.72rem;color:#7d8a99}
+.rel-det{
+  background:#151b23;border:1px solid #252d38;border-radius:3px;margin-bottom:6px;overflow:hidden;
+}
+.rel-det-head{
+  display:flex;align-items:center;gap:9px;padding:10px 13px;
+  font-family:var(--mono);font-size:.7rem;color:#c9d3de;letter-spacing:.03em;
+}
+.rel-chev{color:#5d6b7a;font-size:.62rem}
+.rel-badge{
+  margin-left:auto;font-family:var(--mono);font-size:.54rem;letter-spacing:.09em;
+  border:1px solid currentColor;border-radius:2px;padding:2px 7px;opacity:.85;
+}
+.rel-badge.o{color:#3dd68c} .rel-badge.w{color:#e3a008} .rel-badge.c{color:#e5484d}
+.rel-dl{
+  display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px 20px;margin:0;
+  padding:4px 13px 14px;border-top:1px solid #252d38;
+}
+.rel-dl dt{font-family:var(--mono);font-size:.63rem;color:#7d8a99;white-space:nowrap}
+.rel-dl dd{margin:0;font-size:.74rem;color:#c9d3de}
+.rel-footer{
+  padding:13px 22px;border-top:1px solid #252d38;background:#11161d;
+  font-family:var(--mono);font-size:.6rem;color:#5d6b7a;letter-spacing:.05em;
+  overflow-wrap:break-word;
+}
+
+/* ---------- blocos explicativos do relatorio (2x2) ----------
+   Grade fixa de duas colunas: com auto-fit, um container largo acomodaria tres
+   cartoes e deixaria o quarto isolado na linha seguinte. */
+.g-2x2{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:18px;margin-top:28px;align-items:stretch;
+}
+/* Textos de tamanhos diferentes deixariam os cartoes com alturas distintas;
+   esticar iguala a linha e mantem o alinhamento das bordas. */
+.g-2x2>.card{display:flex;flex-direction:column}
+.g-2x2>.card .lead{flex:1;margin-bottom:0}
+
+/* ---------- os quatro formatos ---------- */
+.formatos{
+  margin-top:28px;background:var(--layer);border:1px solid var(--stroke);
+  border-radius:var(--r-card);padding:26px;box-shadow:var(--sh-2);
+}
+.section-alt .formatos{background:var(--bg)}
+.formatos>h3{margin-bottom:18px}
+.formatos-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:18px 28px}
+.formato{display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:start}
+.formato-ext{
+  font-family:var(--mono);font-size:.63rem;font-weight:700;letter-spacing:.06em;
+  color:var(--brand);background:var(--brand-tint);border:1px solid var(--brand-tint-2);
+  border-radius:var(--r-ctl);padding:5px 8px;min-width:4.2em;text-align:center;
+}
+.formato h4{margin-bottom:3px;font-size:.95rem}
+.formato p{margin:0;font-size:.88rem;color:var(--ink-3)}
+.formatos-nota{
+  margin:20px 0 0;padding-top:16px;border-top:1px solid var(--stroke);
+  font-size:.87rem;color:var(--ink-3);
+}
+
+/* ---------- rodapé ---------- */
+.footer{background:#1B1B1B;color:#C7C7C7;padding:56px 0 28px;border-top:none}
+.footer h4{color:#fff;font-size:.8rem;font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase;margin-bottom:14px;font-weight:600}
+.footer a{color:#C7C7C7;font-size:.9rem;overflow-wrap:break-word}
+.footer a:hover{color:#fff}
+.footer-grid{display:grid;grid-template-columns:1.6fr repeat(3,minmax(0,1fr));gap:36px;margin-bottom:40px}
+.footer ul{list-style:none;padding:0;margin:0;display:grid;gap:9px;min-width:0}
+.footer-about p{color:#9A9A9A;font-size:.9rem;max-width:36ch}
+.footer-mark{display:flex;align-items:center;gap:9px;color:#fff;font-weight:600;margin-bottom:12px;font-size:.98rem}
+.footer-bottom{
+  border-top:1px solid #333;padding-top:22px;display:flex;justify-content:space-between;
+  gap:16px;flex-wrap:wrap;font-size:.82rem;color:#8A8A8A;min-width:0;
+}
+.footer-bottom span{min-width:0;overflow-wrap:break-word}
+.sig{font-family:var(--mono);letter-spacing:.06em;color:#A8A8A8}
+
+/* ---------- revelação ao rolar ---------- */
+.reveal{opacity:0;transform:translateY(14px);transition:opacity .5s var(--ease-out),transform .5s var(--ease-out)}
+.reveal.in{opacity:1;transform:none}
+
+/* ---------- responsivo ---------- */
+@media (max-width:1180px){
+  /* Abaixo desta largura a coluna do console ficaria estreita demais para
+     exibir 78 colunas de forma legivel: empilhamos e o bloco ganha a largura
+     inteira do container. */
+  .hero-grid{grid-template-columns:minmax(0,1fr);gap:40px}
+  .hero-sub{max-width:62ch}
+  .bullets{grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:28px}
+}
+@media (max-width:1080px){
+  /* Navegacao encolhe antes de colidir com a marca */
+  .nav a{padding:7px 7px;font-size:.8rem}
+  .nav-cta{padding:7px 12px!important}
+}
+@media (max-width:960px){
+  .panel-grid{grid-template-columns:minmax(0,1fr);gap:24px}
+  .footer-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px}
+  .hero{padding-top:48px}
+  /* Sem a coluna lateral, a legenda do painel respira melhor */
+  .panel-note{grid-template-columns:minmax(0,1fr);gap:6px}
+}
+@media (max-width:860px){
+  /* Antes de espremer os links, o menu vira botao */
+  .nav{
+    display:none;position:absolute;top:56px;left:0;right:0;flex-direction:column;
+    align-items:stretch;background:var(--layer);border-bottom:1px solid var(--stroke);
+    padding:8px;gap:2px;box-shadow:var(--sh-16);
+  }
+  .nav.open{display:flex}
+  .nav a{padding:11px 14px;font-size:.9rem}
+  .nav-cta{margin:6px 0 0!important;justify-content:center;display:flex}
+  .menu-btn{display:block}
+}
+@media (max-width:760px){
+  .section{padding:56px 0}
+  .section-head{margin-bottom:32px}
+  .feature summary{padding:16px 18px;gap:11px}
+  .feature-body{padding:4px 18px 20px}
+  .spec{grid-template-columns:1fr;gap:4px 0}
+  .spec dt{padding-top:10px}
+  .console pre{padding:14px 12px}
+  .actions .btn{flex:1 1 100%;justify-content:center}
+  .footer-grid{grid-template-columns:minmax(0,1fr)}
+  .wrap{padding:0 16px}
+  .card{padding:20px}
+  /* A numeracao e uma pastilha pequena: continua ao lado do titulo, como os
+     marcadores da secao "Para que serve". */
+  .scenario{gap:12px}
+  .rule{padding:18px}
+  .steps li{padding-left:38px}
+  .tabs{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
+  .tab{flex:0 0 auto}
+  /* Desfaz as duas colunas herdadas de 1180px: em telas estreitas cada
+     beneficio ocupa a largura toda. */
+  .bullets{grid-template-columns:minmax(0,1fr);gap:11px}
+  .steps li{padding-left:38px}
+  .tutorial .card-icon{margin-bottom:12px}
+  /* Previa do relatorio: empilha cabecalho e reduz o cromo do navegador */
+  .rel-head{padding:16px 14px 13px;gap:12px}
+  .rel-toolbar{padding:10px 14px}
+  .rel-wrap{padding:14px 14px 18px}
+  .rel-footer{padding:11px 14px}
+  .rel-card{grid-template-columns:auto minmax(0,1fr);row-gap:6px}
+  .rel-card .rel-area{grid-column:2}
+  .rel-card .rel-msg{grid-column:1/-1}
+  .rel-dl{grid-template-columns:minmax(0,1fr);gap:2px 0;padding:4px 13px 12px}
+  .rel-dl dt{margin-top:7px}
+  .g-2x2{grid-template-columns:minmax(0,1fr);gap:14px}
+  .formatos{padding:20px}
+  .formatos-grid{gap:16px}
+}
+@media (max-width:620px){
+  /* Em telas muito estreitas, priorizamos legibilidade: o texto mantem um
+     tamanho minimo confortavel e o proprio bloco rola na horizontal.
+     A rolagem fica contida no console - a pagina nunca rola de lado. */
+  .console pre{font-size:.72rem;overflow-x:auto;padding:14px 12px}
+  .console{position:relative}
+  .console::after{
+    content:"";position:absolute;top:38px;right:0;bottom:0;width:26px;
+    background:linear-gradient(90deg,transparent,var(--con-bg));
+    pointer-events:none;border-radius:0 var(--r-lg) var(--r-lg) 0;
+  }
+}
+@media (max-width:520px){
+  /* Respiro vertical proporcional a tela */
+  .section{padding:48px 0}
+  .hero{padding-top:36px}
+  .section-head{margin-bottom:26px}
+  .card{padding:18px}
+  .grid{gap:14px}
+  /* Titulos: o piso do clamp era calibrado para desktop */
+  h1{font-size:2rem;letter-spacing:-.02em}
+  h2{font-size:1.45rem}
+  .hero-sub,.section-head p{font-size:.97rem}
+  .eyebrow{font-size:.68rem;padding:5px 10px}
+  /* Barra superior mais compacta */
+  .brand{font-size:.9rem}
+  .brand-ver{font-size:.63rem}
+  /* Rotas e legendas em coluna unica */
+  .path{gap:7px 8px;padding:9px 10px}
+  .legenda li{grid-template-columns:5.6em minmax(0,1fr);gap:10px}
+  .steps li{padding-left:34px;padding-bottom:18px}
+  .rule{padding:16px;gap:12px}
+}
+@media (max-width:400px){
+  /* Aqui a pastilha ao lado do titulo realmente aperta o texto */
+  .problem,.scenario{grid-template-columns:minmax(0,1fr);gap:9px}
+  .problem-mark,.scenario-num{justify-self:start}
+  .feature summary{grid-template-columns:auto minmax(0,1fr);row-gap:8px}
+  .feature summary .chev{display:none}
+  .wrap{padding:0 14px}
+  .legenda li{grid-template-columns:minmax(0,1fr);gap:2px}
+  .legenda .tok{width:auto;justify-self:start}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+  .reveal{opacity:1;transform:none}
+}
+@media print{
+  .topbar,.actions,.footer{display:none}
+  .feature-body,.faq-body{display:block!important}
+  .console{box-shadow:none;border:1px solid #999}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#conteudo">Ir para o conteúdo</a>
+
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <a class="brand" href="#topo">
+      <span class="brand-mark" aria-hidden="true">&gt;_</span>
+      COMPARTDISK
+      <span class="brand-ver">1.2.0</span>
+    </a>
+    <button class="menu-btn" id="menuBtn" aria-label="Abrir menu" aria-expanded="false" aria-controls="nav">☰</button>
+    <nav class="nav" id="nav" aria-label="Navegação principal">
+      <a href="#visao-geral">Visão geral</a>
+      <a href="#telas">Telas</a>
+      <a href="#relatorio">Relatório</a>
+      <a href="#funcionalidades">Funcionalidades</a>
+      <a href="#tutoriais">Tutoriais</a>
+      <a href="#cenarios">Cenários</a>
+      <a href="#faq">Dúvidas</a>
+      <a class="nav-cta" href="https://github.com/edsilas/compartdisk">Baixar</a>
+    </nav>
+  </div>
+</header>
+
+<main id="conteudo">
+
+<!-- =====================================================  HERÓI  ===== -->
+<section class="hero" id="topo">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">Windows 10 · Windows 11 · Código aberto</span>
+      <h1>Destrave o Sistema</h1>
+      <p class="hero-sub">
+        O COMPARTDISK agrupa em telas numeradas os comandos de manutenção que já existem
+        no Windows — <strong>SFC, DISM, netsh, Defender, chkdsk</strong> — e transforma o
+        resultado em um relatório que você consegue ler.
+      </p>
+
+      <ul class="bullets">
+        <li><span class="tok tok-ok">[ OK ]</span><span>Não instala nada. Descompacte e execute.</span></li>
+        <li><span class="tok tok-ok">[ OK ]</span><span>Usa só componentes que já vêm no Windows. Nada é baixado.</span></li>
+        <li><span class="tok tok-ok">[ OK ]</span><span>Relatórios em TXT, CSV, JSON e HTML, prontos para anexar num chamado.</span></li>
+        <li><span class="tok tok-info">[INFO]</span><span>Funciona mesmo com o PowerShell bloqueado por política.</span></li>
+      </ul>
+
+      <div class="actions">
+        <a class="btn btn-primary" href="https://github.com/edsilas/compartdisk/tags">Baixar a versão 1.2.0</a>
+        <a class="btn btn-secondary" href="https://github.com/edsilas/compartdisk/tree/main/docs">Documentação</a>
+        <a class="btn btn-secondary" href="https://github.com/edsilas/compartdisk">Ver no GitHub</a>
+      </div>
+      <p class="hero-note">Cerca de 2 MB · sem instalador · Licença Apache 2.0</p>
+    </div>
+
+    <div class="console" role="img" aria-label="Tela principal do COMPARTDISK, com dez opções numeradas de manutenção">
+      <div class="console-bar">
+        <span class="dot" style="background:#FF5F57"></span>
+        <span class="dot" style="background:#FEBC2E"></span>
+        <span class="dot" style="background:#28C840"></span>
+        <span class="console-title">COMPARTDISK 1.2.0 — Assistente de Reparo</span>
+      </div>
+      <pre>
+  <span class="w">COMPARTDISK</span>  <span class="d">1.2.0</span>
+  <span class="d">Assistente de Reparo</span>
+
+<span class="d">  --------------------------------------------------------------------------</span>
+
+   <span class="c">[1]</span>  Reparo Geral Automatico (One-Click Fix)
+   <span class="c">[2]</span>  Atualizar Programas (Winget)
+   <span class="c">[3]</span>  Rede, Internet e Conectividade
+   <span class="c">[4]</span>  Otimizacao, Limpeza Profunda e Privacidade
+   <span class="c">[5]</span>  Reparo do Sistema, Windows Update e Explorer
+   <span class="c">[6]</span>  Contas, Permissoes e Seguranca
+   <span class="c">[7]</span>  Discos, Drivers e Auditoria de Hardware
+   <span class="c">[8]</span>  Diagnostico Avancado e Relatorios (TXT/CSV/JSON/HTML)
+   <span class="c">[9]</span>  Ambiente de Execucao e Capacidades
+
+   <span class="d">[0]</span>  Sair e Salvar Relatorio
+
+<span class="d">  --------------------------------------------------------------------------</span>
+  <span class="d">Motor:</span> Windows PowerShell 5.1
+  <span class="d">Log:</span>   C:\COMPARTDISK\Relatorio_Manutencao.txt
+  <span class="d">DESENVOLVIDO POR EDSILAS</span>
+
+<span class="p">  Opcao: </span><span class="caret"></span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ===============================================  VISÃO GERAL  ===== -->
+<section class="section" id="visao-geral">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="kicker">Visão geral</span>
+      <h2>Para que serve</h2>
+      <p>
+        Quando o Windows apresenta problema, a solução quase sempre existe — está espalhada
+        em dezenas de comandos que você precisaria digitar corretamente, na ordem certa, e
+        depois interpretar. O COMPARTDISK faz esse caminho por você e explica o que encontrou.
+      </p>
+    </div>
+
+    <div class="grid g-2">
+      <div class="card reveal">
+        <div class="problem">
+          <span class="problem-mark">REDE</span>
+          <div>
+            <h4>A internet parou e ninguém sabe por quê</h4>
+            <p>Nove passos de reinicialização da pilha de rede, testes em três camadas
+            (ping, resolução de nomes e HTTP) e verificação do arquivo <code>hosts</code>,
+            que programas indesejados costumam alterar.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card reveal">
+        <div class="problem">
+          <span class="problem-mark">DISCO</span>
+          <div>
+            <h4>O disco vive cheio e você não sabe do quê</h4>
+            <p>Modo de simulação mede quanto cada categoria liberaria antes de apagar
+            qualquer coisa. Só depois você decide.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card reveal">
+        <div class="problem">
+          <span class="problem-mark">SIST</span>
+          <div>
+            <h4>Erros estranhos, sem explicação</h4>
+            <p>Verificação e reparo dos arquivos do próprio Windows com DISM e SFC,
+            na ordem correta, com leitura do registro do verificador para dizer
+            quantos arquivos foram realmente reparados.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card reveal">
+        <div class="problem">
+          <span class="problem-mark">HARD</span>
+          <div>
+            <h4>O computador vai falhar e você não recebeu aviso</h4>
+            <p>Saúde física dos discos, contadores de desgaste, setores realocados e
+            capacidade real da bateria comparada à de fábrica.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card reveal">
+        <div class="problem">
+          <span class="problem-mark">SEGR</span>
+          <div>
+            <h4>Você não sabe se a máquina está protegida</h4>
+            <p>Secure Boot, TPM, integridade de memória, UAC, SmartScreen, estado do
+            Defender e antivírus instalados — tudo em uma tela, sem alterar nada.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card reveal">
+        <div class="problem">
+          <span class="problem-mark">DIAG</span>
+          <div>
+            <h4>O suporte pediu informações e você não sabe onde achar</h4>
+            <p>Um relatório em HTML com o retrato completo da máquina, com resumo de itens
+            críticos, em atenção e conformes. Abre em qualquer navegador, sem internet.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================  TELAS  ===== -->
+<section class="section section-alt" id="telas">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="kicker">Galeria</span>
+      <h2>Como a ferramenta se apresenta</h2>
+      <p>
+        Cada tela segue a mesma estrutura: título, régua, opções numeradas e rodapé.
+        Você aperta o número — sem Enter — e a ação começa. O <span class="keys">0</span>
+        sempre volta.
+      </p>
+    </div>
+
+    <div class="reveal">
+      <div class="tabs" role="tablist" aria-label="Telas da ferramenta">
+        <button class="tab" role="tab" id="t1" aria-controls="p1" aria-selected="true">Principal</button>
+        <button class="tab" role="tab" id="t2" aria-controls="p2" aria-selected="false">Rede</button>
+        <button class="tab" role="tab" id="t3" aria-controls="p3" aria-selected="false">Otimização</button>
+        <button class="tab" role="tab" id="t4" aria-controls="p4" aria-selected="false">Reparo</button>
+        <button class="tab" role="tab" id="t5" aria-controls="p5" aria-selected="false">Segurança</button>
+        <button class="tab" role="tab" id="t6" aria-controls="p6" aria-selected="false">Hardware</button>
+        <button class="tab" role="tab" id="t7" aria-controls="p7" aria-selected="false">Diagnóstico</button>
+        <button class="tab" role="tab" id="t8" aria-controls="p8" aria-selected="false">Ambiente</button>
+        <button class="tab" role="tab" id="t9" aria-controls="p9" aria-selected="false">Execução real</button>
+      </div>
+
+      <div class="panel" id="p1" role="tabpanel" aria-labelledby="t1">
+        <div class="panel-grid">
+          <div class="console">
+            <div class="console-bar"><span class="dot" style="background:#FF5F57"></span><span class="dot" style="background:#FEBC2E"></span><span class="dot" style="background:#28C840"></span><span class="console-title">Tela principal</span></div>
+            <pre>
+  <span class="w">COMPARTDISK</span>  <span class="d">1.2.0</span>
+  <span class="d">Assistente de Reparo</span>
+
+<span class="d">  --------------------------------------------------------------------------</span>
+
+   <span class="c">[1]</span>  Reparo Geral Automatico (One-Click Fix)
+   <span class="c">[2]</span>  Atualizar Programas (Winget)
+   <span class="c">[3]</span>  Rede, Internet e Conectividade
+   <span class="c">[4]</span>  Otimizacao, Limpeza Profunda e Privacidade
+   <span class="c">[5]</span>  Reparo do Sistema, Windows Update e Explorer
+   <span class="c">[6]</span>  Contas, Permissoes e Seguranca
+   <span class="c">[7]</span>  Discos, Drivers e Auditoria de Hardware
+   <span class="c">[8]</span>  Diagnostico Avancado e Relatorios (TXT/CSV/JSON/HTML)
+   <span class="c">[9]</span>  Ambiente de Execucao e Capacidades
+
+   <span class="d">[0]</span>  Sair e Salvar Relatorio
+
+<span class="d">  --------------------------------------------------------------------------</span>
+  <span class="d">Motor:</span> Windows PowerShell 5.1
+  <span class="d">Log:</span>   C:\COMPARTDISK\Relatorio_Manutencao.txt
+  <span class="d">DESENVOLVIDO POR EDSILAS</span>
+
+  Opcao: <span class="caret"></span></pre>
+          </div>
+          <div class="panel-note">
+            <h3>Tela principal</h3>
+            <p>Dez opções cobrem todas as areas. As sete primeiras sao as mesmas desde a primeira versão da ferramenta, então quem já usava não precisa reaprender nada.</p>
+            <ul>
+              <li><span class="tok tok-neutral">Motor</span><span>Indica se o PowerShell esta em uso ou se as rotinas Batch assumiram.</span></li>
+              <li><span class="tok tok-neutral">Log</span><span>Caminho exato onde tudo esta sendo registrado.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="p2" role="tabpanel" aria-labelledby="t2" hidden>
+        <div class="panel-grid">
+          <div class="console">
+            <div class="console-bar"><span class="dot" style="background:#FF5F57"></span><span class="dot" style="background:#FEBC2E"></span><span class="dot" style="background:#28C840"></span><span class="console-title">Rede e Conectividade</span></div>
+            <pre>
+  <span class="w">Rede e Conectividade</span>
+  <span class="d">COMPARTDISK 1.2.0</span>
+
+<span class="d">  --------------------------------------------------------------------------</span>
+
+   <span class="c">[1]</span>  Reset Completo (DNS, Winsock, TCP/IP, ARP, IPv6, proxy)
+   <span class="c">[2]</span>  Restaurar Arquivo Hosts
+   <span class="c">[3]</span>  Restaurar Firewall
+   <span class="c">[4]</span>  Diagnostico de Adaptadores, DNS, DHCP, MTU e Rotas
+   <span class="c">[5]</span>  Teste de Conectividade e Resolucao de Nomes
+   <span class="c">[6]</span>  Configuracao de Proxy
+   <span class="c">[7]</span>  Diagnostico Wi-Fi
+
+   <span class="d">[0]</span>  Voltar
+
+<span class="d">  --------------------------------------------------------------------------</span>
+  <span class="d">DESENVOLVIDO POR EDSILAS</span>
+
+  Opcao: <span class="caret"></span></pre>
+          </div>
+          <div class="panel-note">
+            <h3>Rede e Conectividade</h3>
+            <p>As quatro últimas opções apenas leem informações. Use-as antes de consertar qualquer coisa, para descobrir onde a conexão realmente para.</p>
+            <ul>
+              <li><span class="tok tok-info">[ 1 ]</span><span>Reset completo: resolve a maioria dos casos. Reinicie depois.</span></li>
+              <li><span class="tok tok-info">[ 5 ]</span><span>Teste em três camadas: ping, nomes e HTTP.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="p3" role="tabpanel" aria-labelledby="t3" hidden>
+        <div class="panel-grid">
+          <div class="console">
+            <div class="console-bar"><span class="dot" style="background:#FF5F57"></span><span class="dot" style="background:#FEBC2E"></span><span class="dot" style="background:#28C840"></span><span class="console-title">Otimização e Limpeza</span></div>
+            <pre>
+  <span class="w">Otimizacao e Limpeza</span>
+  <span class="d">COMPARTDISK 1.2.0</span>
+
+<span class="d">  --------------------------------------------------------------------------</span>
+
+   <span class="c">[1]</span>  Limpeza Customizada (caches extensos, perfis, updates)
+   <span class="c">[2]</span>  Desativar Telemetria
+   <span class="c">[3]</span>  Aplicar Perfil Desempenho Maximo
+   <span class="c">[4]</span>  Simular Limpeza (mostra o espaco recuperavel sem apagar nada)
+   <span class="c">[5]</span>  Limpeza de Navegadores (Edge, Chrome, Brave, Firefox)
+   <span class="c">[6]</span>  Analise de Desempenho (energia, inicializacao, processos, servicos)
+   <span class="c">[7]</span>  Restaurar Telemetria ao Padrao do Windows
+   <span class="c">[8]</span>  Restaurar Plano de Energia Equilibrado
+
+   <span class="d">[0]</span>  Voltar
+
+<span class="d">  --------------------------------------------------------------------------</span>
+  <span class="d">DESENVOLVIDO POR EDSILAS</span>
+
+  Opcao: <span class="caret"></span></pre>
+          </div>
+          <div class="panel-note">
+            <h3>Otimização e Limpeza</h3>
+            <p>Libera espaço, ajusta desempenho e controla a telemetria. Toda alteração de configuração aqui tem uma opção que desfaz.</p>
+            <ul>
+              <li><span class="tok tok-ok">[ 4 ]</span><span>Simula a limpeza e mede o espaço recuperável sem apagar nada.</span></li>
+              <li><span class="tok tok-warn">[ 1 ]</span><span>Apaga de fato. Arquivos removidos não vao para a lixeira.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="p4" role="tabpanel" aria-labelledby="t4" hidden>
+        <div class="panel-grid">
+          <div class="console">
+            <div class="console-bar"><span class="dot" style="background:#FF5F57"></span><span class="dot" style="background:#FEBC2E"></span><span class="dot" style="background:#28C840"></span><span class="console-title">Reparo Crítico</span></div>
+            <pre>
+  <span class="w">Reparo Critico</span>
+  <span class="d">COMPARTDISK 1.2.0</span>
+
+<span class="d">  --------------------------------------------------------------------------</span>
+
+   <span class="c">[1]</span>  Reparo Profundo (DISM ScanHealth + RestoreHealth + SFC)
+   <span class="c">[2]</span>  Destravar Windows Update (reset completo dos componentes)
+   <span class="c">[3]</span>  Destravar Fila de Impressao
+   <span class="c">[4]</span>  Reiniciar Windows Explorer
+   <span class="c">[5]</span>  Agendar Verificacao de Disco (CHKDSK)
+   <span class="c">[6]</span>  Status e Historico do Windows Update
+   <span class="c">[7]</span>  Procurar Atualizacoes Pendentes
+   <span class="c">[8]</span>  Limpar Somente o Cache do Windows Update
+   <span class="c">[9]</span>  Reconstruir Cache de Icones e Miniaturas
+
+   <span class="d">[0]</span>  Voltar
+
+<span class="d">  --------------------------------------------------------------------------</span>
+  <span class="d">DESENVOLVIDO POR EDSILAS</span>
+
+  Opcao: <span class="caret"></span></pre>
+          </div>
+          <div class="panel-note">
+            <h3>Reparo Crítico</h3>
+            <p>Conserta os arquivos do próprio Windows e destrava atualizações, impressão e interface. E o menu para erros inexplicáveis.</p>
+            <ul>
+              <li><span class="tok tok-warn">[ 1 ]</span><span>Reparo profundo: DISM seguido de SFC. De 15 a 45 minutos.</span></li>
+              <li><span class="tok tok-info">[ 6 ]</span><span>Status do Windows Update, somente leitura.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="p5" role="tabpanel" aria-labelledby="t5" hidden>
+        <div class="panel-grid">
+          <div class="console">
+            <div class="console-bar"><span class="dot" style="background:#FF5F57"></span><span class="dot" style="background:#FEBC2E"></span><span class="dot" style="background:#28C840"></span><span class="console-title">Segurança e Contas</span></div>
+            <pre>
+  <span class="w">Seguranca e Contas</span>
+  <span class="d">COMPARTDISK 1.2.0</span>
+
+<span class="d">  --------------------------------------------------------------------------</span>
+
+   <span class="c">[1]</span>  Resetar GPO Local
+   <span class="c">[2]</span>  Gerenciar Contas Locais
+   <span class="c">[3]</span>  Forcar Varredura Defender
+   <span class="c">[4]</span>  Assumir Controle de Pasta/Arquivo (Takeown)
+   <span class="c">[5]</span>  Postura de Seguranca (Secure Boot, TPM, VBS, LSA, UAC, SmartScreen)
+   <span class="c">[6]</span>  Status Completo do Defender e Antivirus Instalados
+   <span class="c">[7]</span>  Varredura Completa do Defender
+   <span class="c">[8]</span>  Exclusoes e Historico de Ameacas
+   <span class="c">[9]</span>  Auditoria de Contas, Grupos e Falhas de Logon
+
+   <span class="d">[0]</span>  Voltar
+
+<span class="d">  --------------------------------------------------------------------------</span>
+  <span class="d">DESENVOLVIDO POR EDSILAS</span>
+
+  Opcao: <span class="caret"></span></pre>
+          </div>
+          <div class="panel-note">
+            <h3>Segurança e Contas</h3>
+            <p>Cinco opções apenas leem a postura de segurança da máquina. As demais alteram contas e permissões e exigem atenção.</p>
+            <ul>
+              <li><span class="tok tok-ok">[ 5 ]</span><span>Secure Boot, TPM, VBS, integridade de memória, UAC e SmartScreen.</span></li>
+              <li><span class="tok tok-crit">[ 1 ]</span><span>Reset de GPO: em máquina corporativa, fale com a TI antes.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="p6" role="tabpanel" aria-labelledby="t6" hidden>
+        <div class="panel-grid">
+          <div class="console">
+            <div class="console-bar"><span class="dot" style="background:#FF5F57"></span><span class="dot" style="background:#FEBC2E"></span><span class="dot" style="background:#28C840"></span><span class="console-title">Hardware e Discos</span></div>
+            <pre>
+  <span class="w">Hardware e Discos</span>
+  <span class="d">COMPARTDISK 1.2.0</span>
+
+<span class="d">  --------------------------------------------------------------------------</span>
+
+   <span class="c">[1]</span>  Saude Fisica dos Discos
+   <span class="c">[2]</span>  Relatorio de Bateria
+   <span class="c">[3]</span>  Status BitLocker
+   <span class="c">[4]</span>  Backup de Drivers
+   <span class="c">[5]</span>  Auditoria de Sistema
+   <span class="c">[6]</span>  Inventario Completo (CPU, RAM, GPU, monitores, USB, PCI, TPM)
+   <span class="c">[7]</span>  Contadores de Confiabilidade e Desgaste dos Discos
+   <span class="c">[8]</span>  Volumes, Espaco e Copias de Sombra
+   <span class="c">[9]</span>  Drivers com Problema e Sem Assinatura Digital
+
+   <span class="d">[0]</span>  Voltar
+
+<span class="d">  --------------------------------------------------------------------------</span>
+  <span class="d">DESENVOLVIDO POR EDSILAS</span>
+
+  Opcao: <span class="caret"></span></pre>
+          </div>
+          <div class="panel-note">
+            <h3>Hardware e Discos</h3>
+            <p>Quase todo de leitura. Apenas o backup de drivers grava algo, e ainda assim so cria arquivos.</p>
+            <ul>
+              <li><span class="tok tok-crit">[ 1 ]</span><span>Saúde física dos discos. Se acusar problema, faça backup hoje.</span></li>
+              <li><span class="tok tok-info">[ 4 ]</span><span>Backup de drivers: faça isso antes de formatar.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="p7" role="tabpanel" aria-labelledby="t7" hidden>
+        <div class="panel-grid">
+          <div class="console">
+            <div class="console-bar"><span class="dot" style="background:#FF5F57"></span><span class="dot" style="background:#FEBC2E"></span><span class="dot" style="background:#28C840"></span><span class="console-title">Diagnóstico e Relatórios</span></div>
+            <pre>
+  <span class="w">Diagnostico Avancado e Relatorios</span>
+  <span class="d">COMPARTDISK 1.2.0</span>
+
+<span class="d">  --------------------------------------------------------------------------</span>
+
+   <span class="c">[1]</span>  Auditoria Completa + Relatorios (TXT, CSV, JSON, HTML)
+   <span class="c">[2]</span>  Auditoria Rapida
+   <span class="c">[3]</span>  Consolidar Relatorio da Sessao Atual
+   <span class="c">[4]</span>  Eventos Criticos (7 dias)
+   <span class="c">[5]</span>  Eventos Criticos (30 dias)
+   <span class="c">[6]</span>  Inventario de Aplicativos Instalados
+   <span class="c">[7]</span>  Licenciamento do Windows
+   <span class="c">[8]</span>  Exportar Inventario de Drivers
+   <span class="c">[9]</span>  Abrir o Ultimo Relatorio Gerado
+
+   <span class="d">[0]</span>  Voltar
+
+<span class="d">  --------------------------------------------------------------------------</span>
+  <span class="d">DESENVOLVIDO POR EDSILAS</span>
+
+  Opcao: <span class="caret"></span></pre>
+          </div>
+          <div class="panel-note">
+            <h3>Diagnóstico e Relatórios</h3>
+            <p>Menu inteiramente seguro: nada aqui altera o computador. E por onde vale começar em qualquer situação.</p>
+            <ul>
+              <li><span class="tok tok-ok">[ LER ]</span><span>Todas as opções sao somente leitura.</span></li>
+              <li><span class="tok tok-info">[ 1 ]</span><span>Gera os quatro formatos e abre o relatorio HTML sozinho.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="p8" role="tabpanel" aria-labelledby="t8" hidden>
+        <div class="panel-grid">
+          <div class="console">
+            <div class="console-bar"><span class="dot" style="background:#FF5F57"></span><span class="dot" style="background:#FEBC2E"></span><span class="dot" style="background:#28C840"></span><span class="console-title">Ambiente de Execução</span></div>
+            <pre>
+  <span class="w">COMPARTDISK</span>  <span class="d">1.2.0</span>
+  <span class="d">Ambiente de Execucao e Capacidades</span>
+
+<span class="d">  --------------------------------------------------------------------------</span>
+
+  <span class="d">Autoria       </span>DESENVOLVIDO POR EDSILAS
+  <span class="d">Motor         </span>Windows PowerShell 5.1
+  <span class="d">Executavel    </span>powershell.exe
+  <span class="d">Modulos       </span>C:\COMPARTDISK\Modules
+  <span class="d">Sessao        </span>20260731_135841
+  <span class="d">Log           </span>C:\COMPARTDISK\Relatorio_Manutencao.txt
+
+  <span class="d">Componentes   </span>PowerShell 1    Modulos 1    Winget 1   <span class="d">1=sim 0=nao</span>
+  <span class="d">              </span>WMIC 0          PnPUtil 1    manage-bde 1
+  <span class="d">Sem PowerShell, toda funcionalidade permanece acessivel pelas rotinas Batch.</span>
+
+<span class="d">  --------------------------------------------------------------------------</span>
+
+   <span class="c">[1]</span>  Detalhar Capacidades via PowerShell
+   <span class="c">[2]</span>  Reexecutar Deteccao de Ambiente
+
+   <span class="d">[0]</span>  Voltar
+
+<span class="d">  --------------------------------------------------------------------------</span>
+  <span class="d">DESENVOLVIDO POR EDSILAS</span>
+
+  Opcao: <span class="caret"></span></pre>
+          </div>
+          <div class="panel-note">
+            <h3>Ambiente de Execução</h3>
+            <p>A tela sobre da ferramenta. Mostra o que ela encontrou disponível no seu Windows: 1 para disponível, 0 para indisponível.</p>
+            <ul>
+              <li><span class="tok tok-warn">[ ? ]</span><span>Consulte esta tela primeiro quando algo não funcionar: ela explica o porquê.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="p9" role="tabpanel" aria-labelledby="t9" hidden>
+        <div class="panel-grid">
+          <div class="console">
+            <div class="console-bar"><span class="dot" style="background:#FF5F57"></span><span class="dot" style="background:#FEBC2E"></span><span class="dot" style="background:#28C840"></span><span class="console-title">Reparo Geral Automático — saída real</span></div>
+<pre>  <span class="d">[INFO]</span> === INICIANDO ROTINA ONE-CLICK FIX ===
+
+  <span class="w">Cleanup :: Deep</span>
+  <span class="d">COMPARTDISK 1.2.0 - DESENVOLVIDO POR EDSILAS</span>
+  <span class="d">  --------------------------------------------------------------------------</span>
+
+  <span class="ok">[ OK ]</span> Temp do usuario: 785 B liberados (1 itens removidos, 0 em uso)
+  <span class="ok">[ OK ]</span> Prefetch: 632,63 KB liberados (63 itens removidos, 1 em uso)
+  <span class="ok">[ OK ]</span> Cache de fontes: 8 MB liberados (2 itens removidos, 5 em uso)
+  <span class="ok">[ OK ]</span> Google Chrome / Default / GPUCache: 544,36 KB liberados
+  <span class="ok">[ OK ]</span> Lixeira esvaziada.
+
+  Total liberado (soma dos alvos) : 12,34 MB
+  Ganho real em C:               : 11,24 MB
+  Itens em uso (ignorados)       : 13
+
+  <span class="ok">[ OK ]</span> Cleanup concluido em 4,12s
+
+  <span class="w">Network :: Reset</span>
+  <span class="d">COMPARTDISK 1.2.0 - DESENVOLVIDO POR EDSILAS</span>
+  <span class="d">  --------------------------------------------------------------------------</span>
+
+  <span class="ok">[ OK ]</span> Limpar cache DNS
+  <span class="ok">[ OK ]</span> Reset Winsock
+  <span class="wa">[WARN]</span> Reset TCP/IP retornou codigo 1. Codigo 1 e esperado: a pilha
+         foi redefinida e o reinicio aplica a mudanca.
+  <span class="ok">[ OK ]</span> Reset de rede concluido. Reinicio recomendado.
+
+  <span class="wa">[WARN]</span> Network concluido em 7,95s
+
+  <span class="ok">[ OK ]</span> Relatorio consolidado gerado (4 arquivos, 3 critico(s), 7 aviso(s)).
+  <span class="ok">[ OK ]</span> === REPARO AUTOMATICO CONCLUIDO ===
+
+  <span class="wa">Reinicie o computador para aplicar todas as alteracoes.</span>
+<span class="p">Pressione qualquer tecla para continuar. . .</span><span class="caret"></span></pre>
+          </div>
+          <div class="panel-note panel-note--fluxo">
+            <h3>Saída de uma execução real</h3>
+            <p>Trecho do Reparo Geral Automático em uma máquina de verdade. O uso de
+            marcadores de largura fixa mantém o resultado perfeitamente alinhado em
+            colunas no terminal:</p>
+            <ul class="legenda">
+              <li><span class="tok tok-ok">[ OK ]</span><span>Operação concluída como esperado.</span></li>
+              <li><span class="tok tok-warn">[WARN]</span><span>Concluiu com ressalva — e a própria ferramenta já explica qual é.</span></li>
+              <li><span class="tok tok-crit">[ERRO]</span><span>Falhou. O motivo detalhado vai direto para o log.</span></li>
+            </ul>
+            <p class="nota">
+              <b>Nota:</b> repare no aviso do TCP/IP: em vez de soltar um erro genérico
+              como “código 1”, a ferramenta traduz exatamente o que aquilo significa.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================  RELATÓRIO  ===== -->
+<section class="section" id="relatorio">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="kicker">Relatório</span>
+      <h2>O que a ferramenta entrega no final</h2>
+      <p>
+        Toda auditoria gera quatro arquivos. O mais importante é o relatório em HTML:
+        um documento independente que abre em qualquer navegador, sem internet e sem
+        programa adicional. É este arquivo que você anexa a um chamado técnico.
+      </p>
+    </div>
+
+    <div class="reveal">
+      <div class="relatorio">
+        <div class="rel-chrome" aria-hidden="true">
+          <span class="dot" style="background:#FF5F57"></span>
+          <span class="dot" style="background:#FEBC2E"></span>
+          <span class="dot" style="background:#28C840"></span>
+          <span class="rel-url">Relatorio_Consolidado_20260731_135841.html</span>
+        </div>
+
+        <div class="rel-corpo" role="img"
+             aria-label="Prévia do relatório HTML: cabeçalho com contadores de itens críticos, em atenção, conformes e informativos, seguido de resumo executivo e seções de diagnóstico">
+
+          <div class="rel-head">
+            <div>
+              <div class="rel-brand">COMPARTDISK · DESENVOLVIDO POR EDSILAS</div>
+              <div class="rel-h1">RELATORIO CONSOLIDADO DE MANUTENCAO</div>
+              <div class="rel-sub">DESKTOP-EDSILAS · Windows 11 Pro 26100 · gerado em 31/07/2026 13:58</div>
+            </div>
+            <div class="rel-counts">
+              <span class="rel-count c">CRITICO <b>3</b></span>
+              <span class="rel-count w">ATENCAO <b>7</b></span>
+              <span class="rel-count o">OK <b>7</b></span>
+              <span class="rel-count i">INFO <b>4</b></span>
+            </div>
+          </div>
+
+          <div class="rel-toolbar">
+            <span class="rel-busca">filtrar secoes, propriedades e achados...</span>
+            <span class="rel-btn">EXPANDIR TUDO</span>
+            <span class="rel-btn">RECOLHER TUDO</span>
+          </div>
+
+          <div class="rel-wrap">
+            <div class="rel-sec">Resumo executivo</div>
+
+            <div class="rel-card crit">
+              <span class="rel-tok c">[CRIT]</span>
+              <span class="rel-area">Disco fisico</span>
+              <span class="rel-msg">Contador de setores realocados em crescimento no disco 0.
+                <span class="rel-rec">Recomendacao: fazer backup imediato e planejar a substituicao.</span>
+              </span>
+            </div>
+
+            <div class="rel-card warn">
+              <span class="rel-tok w">[WARN]</span>
+              <span class="rel-area">Windows Update</span>
+              <span class="rel-msg">Reinicio pendente aguardando conclusao de atualizacoes.
+                <span class="rel-rec">Recomendacao: reiniciar o computador.</span>
+              </span>
+            </div>
+
+            <div class="rel-card ok">
+              <span class="rel-tok o">[ OK ]</span>
+              <span class="rel-area">Defender</span>
+              <span class="rel-msg">Protecao em tempo real ativa e assinaturas atualizadas.</span>
+            </div>
+
+            <div class="rel-sec">Diagnostico detalhado</div>
+
+            <div class="rel-det aberto">
+              <div class="rel-det-head"><span class="rel-chev">▾</span> Sistema operacional <span class="rel-badge o">OK</span></div>
+              <dl class="rel-dl">
+                <dt>Sistema</dt><dd>Windows 11 Pro</dd>
+                <dt>Versao</dt><dd>24H2 (build 26100.1742)</dd>
+                <dt>Instalado em</dt><dd>12/03/2026</dd>
+                <dt>Tempo ligado</dt><dd>4 dias, 07:12</dd>
+              </dl>
+            </div>
+
+            <div class="rel-det">
+              <div class="rel-det-head"><span class="rel-chev">▸</span> Discos fisicos <span class="rel-badge c">CRITICO</span></div>
+            </div>
+            <div class="rel-det">
+              <div class="rel-det-head"><span class="rel-chev">▸</span> Rede e conectividade <span class="rel-badge o">OK</span></div>
+            </div>
+            <div class="rel-det">
+              <div class="rel-det-head"><span class="rel-chev">▸</span> Postura de seguranca <span class="rel-badge w">ATENCAO</span></div>
+            </div>
+          </div>
+
+          <div class="rel-footer">COMPARTDISK 1.2.0 · DESENVOLVIDO POR EDSILAS · sessao 20260731_135841</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid g-2x2">
+      <div class="card reveal">
+        <div class="card-icon" aria-hidden="true">1</div>
+        <h3>O resumo responde primeiro</h3>
+        <p class="lead">Os quatro contadores do topo dizem, em um olhar, se a máquina
+        precisa de atenção. Críticos em zero significa que nada exige providência
+        imediata. Cada achado abaixo traz a área afetada e uma recomendação do que fazer.</p>
+      </div>
+
+      <div class="card reveal">
+        <div class="card-icon" aria-hidden="true">2</div>
+        <h3>O detalhe fica recolhido</h3>
+        <p class="lead">As seções de diagnóstico começam fechadas para não sobrecarregar
+        a leitura. Você abre apenas o que interessa, e o campo de busca no topo filtra
+        seções, propriedades e achados enquanto você digita.</p>
+      </div>
+
+      <div class="card reveal">
+        <div class="card-icon" aria-hidden="true">3</div>
+        <h3>Os mesmos marcadores do terminal</h3>
+        <p class="lead">Os selos <span class="tok tok-crit">[CRIT]</span>,
+        <span class="tok tok-warn">[WARN]</span> e <span class="tok tok-ok">[ OK ]</span>
+        são os mesmos que aparecem durante a execução. O que você leu na tela é o que
+        encontra no relatório, sem tradução mental.</p>
+      </div>
+
+      <div class="card reveal">
+        <div class="card-icon" aria-hidden="true">4</div>
+        <h3>Funciona sem internet</h3>
+        <p class="lead">Estilos e comportamento vão embutidos no próprio arquivo, e as
+        fontes são as que já existem no Windows. O relatório abre igual em qualquer
+        máquina, inclusive numa rede isolada.</p>
+      </div>
+    </div>
+
+    <div class="formatos reveal">
+      <h3>Os quatro formatos gerados</h3>
+      <div class="formatos-grid">
+        <div class="formato">
+          <span class="formato-ext">HTML</span>
+          <div>
+            <h4>Para ler e enviar</h4>
+            <p>Relatório visual completo, com resumo e seções. Abre no navegador. É o
+            que anexar num chamado.</p>
+          </div>
+        </div>
+        <div class="formato">
+          <span class="formato-ext">TXT</span>
+          <div>
+            <h4>Para colar em qualquer lugar</h4>
+            <p>Texto puro, sem formatação. Cabe no corpo de um e-mail ou de um
+            comentário em sistema de chamados.</p>
+          </div>
+        </div>
+        <div class="formato">
+          <span class="formato-ext">CSV</span>
+          <div>
+            <h4>Para planilha</h4>
+            <p>Uma linha por item. Útil para inventariar um parque de máquinas
+            e comparar resultados no Excel.</p>
+          </div>
+        </div>
+        <div class="formato">
+          <span class="formato-ext">JSON</span>
+          <div>
+            <h4>Para automação</h4>
+            <p>Estrutura com <code>Meta</code>, <code>Sections</code> e
+            <code>Findings</code>. Filtre por <code>Severity = "CRIT"</code> para achar
+            as máquinas que exigem atenção.</p>
+          </div>
+        </div>
+      </div>
+      <p class="formatos-nota">
+        Todos ficam em <code>COMPARTDISK_Relatorios\&lt;sessão&gt;\</code>, dentro da
+        pasta do programa. O caminho exato aparece no rodapé do menu principal.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ==========================================  FUNCIONALIDADES  ===== -->
+<section class="section" id="funcionalidades">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="kicker">Guia de funcionalidades</span>
+      <h2>O que cada recurso faz</h2>
+      <p>
+        Toque em um recurso para ver o que ele faz, quando usar, em que situações é
+        indicado, o que você ganha e o que precisa observar antes.
+      </p>
+    </div>
+
+    <div class="grid" style="gap:12px">
+
+      <details class="feature reveal">
+        <summary>
+          <span class="feature-key">1</span>
+          <span class="feature-title">Reparo Geral Automático<span>Sete rotinas de reparo em sequência, sem perguntar nada</span></span>
+          <span class="chev" aria-hidden="true">▶</span>
+        </summary>
+        <div class="feature-body">
+          <dl class="spec">
+            <dt>O que faz</dt>
+            <dd>Executa em ordem: limpeza profunda, reinicialização da rede, reparo dos
+            componentes do Windows Update, fila de impressão, reinício do Explorer, reparo
+            profundo do sistema com DISM e SFC, e um relatório final consolidado.</dd>
+
+            <dt>Quando usar</dt>
+            <dd>Quando há vários problemas ao mesmo tempo e você não sabe por onde começar.</dd>
+
+            <dt>Cenários</dt>
+            <dd>Máquina lenta e instável depois de meses sem manutenção; computador que
+            voltou da assistência com comportamento estranho; preparação antes de entregar
+            um equipamento a outro usuário.</dd>
+
+            <dt>Benefícios</dt>
+            <dd>Resolve numa passada só o que exigiria uma dezena de comandos manuais, e
+            registra tudo o que fez.</dd>
+
+            <dt>Observações</dt>
+            <dd>Leva de 20 a 60 minutos. A tela fica parada por longos períodos — é normal.</dd>
+          </dl>
+          <div class="callout"><strong>Reinicie ao terminar.</strong> Boa parte das
+          correções de rede e de sistema só passa a valer depois de reiniciar.</div>
+        </div>
+      </details>
+
+      <details class="feature reveal">
+        <summary>
+          <span class="feature-key">2</span>
+          <span class="feature-title">Atualizar Programas<span>Atualiza os aplicativos instalados pelo gerenciador do Windows</span></span>
+          <span class="chev" aria-hidden="true">▶</span>
+        </summary>
+        <div class="feature-body">
+          <dl class="spec">
+            <dt>O que faz</dt>
+            <dd>Consulta o gerenciador de pacotes do Windows e atualiza todos os programas
+            que ele conhece.</dd>
+            <dt>Quando usar</dt>
+            <dd>Periodicamente, para manter navegadores e utilitários em dia.</dd>
+            <dt>Cenários</dt>
+            <dd>Manutenção de rotina; preparação de uma máquina nova; correção de
+            vulnerabilidades em programas desatualizados.</dd>
+            <dt>Benefícios</dt>
+            <dd>Substitui a visita a dezenas de sites de fabricante.</dd>
+            <dt>Observações</dt>
+            <dd>Precisa de internet. Programas abertos podem falhar ao atualizar — feche o
+            que puder antes. Avisos amarelos aqui são comuns e normalmente inofensivos.</dd>
+          </dl>
+        </div>
+      </details>
+
+      <details class="feature reveal">
+        <summary>
+          <span class="feature-key">3</span>
+          <span class="feature-title">Rede, Internet e Conectividade<span>Diagnóstico e reinicialização completa da rede</span></span>
+          <span class="chev" aria-hidden="true">▶</span>
+        </summary>
+        <div class="feature-body">
+          <dl class="spec">
+            <dt>O que faz</dt>
+            <dd>Reinicia a pilha de rede em nove passos, restaura o arquivo <code>hosts</code>
+            e o firewall aos padrões, e diagnostica adaptadores, DNS, DHCP, rotas, proxy e Wi-Fi.</dd>
+            <dt>Quando usar</dt>
+            <dd>Sem internet, sites que não abrem, Wi-Fi que conecta mas não navega, lentidão
+            só na rede.</dd>
+            <dt>Cenários</dt>
+            <dd>Depois de remover um antivírus ou VPN que deixou resíduos; quando alguns sites
+            específicos não abrem (sinal clássico de <code>hosts</code> alterado); rede que
+            parou após uma atualização do Windows.</dd>
+            <dt>Benefícios</dt>
+            <dd>As opções de leitura mostram exatamente em qual camada a conexão falha, antes
+            de você mexer em qualquer coisa.</dd>
+            <dt>Observações</dt>
+            <dd>Restaurar o firewall apaga regras personalizadas — as atuais são exportadas
+            antes. Alguns programas vão pedir autorização de novo.</dd>
+          </dl>
+          <div class="callout"><strong>Reinicie após o reset.</strong> Sem isso, você pode
+          concluir que não funcionou quando na verdade funcionou.</div>
+        </div>
+      </details>
+
+      <details class="feature reveal">
+        <summary>
+          <span class="feature-key">4</span>
+          <span class="feature-title">Otimização, Limpeza e Privacidade<span>Libera espaço, ajusta desempenho e controla telemetria</span></span>
+          <span class="chev" aria-hidden="true">▶</span>
+        </summary>
+        <div class="feature-body">
+          <dl class="spec">
+            <dt>O que faz</dt>
+            <dd>Limpa temporários, caches e arquivos de atualização; limpa o cache dos
+            navegadores; analisa o que pesa na inicialização; alterna o plano de energia; e
+            desativa ou restaura a telemetria.</dd>
+            <dt>Quando usar</dt>
+            <dd>Disco cheio, computador lento, ou quando quiser reduzir o envio de dados de uso.</dd>
+            <dt>Cenários</dt>
+            <dd>Notebook com disco pequeno que vive sem espaço; máquina que demora a iniciar;
+            equipamento que precisa priorizar velocidade em vez de economia de energia.</dd>
+            <dt>Benefícios</dt>
+            <dd>O modo de simulação mede o espaço recuperável <em>sem apagar nada</em>, então
+            você decide com informação. Toda alteração de configuração aqui tem uma opção que
+            desfaz.</dd>
+            <dt>Observações</dt>
+            <dd>Senhas e favoritos dos navegadores <strong>não</strong> são apagados — apenas
+            o cache. Feche os navegadores antes.</dd>
+          </dl>
+          <div class="callout"><strong>Arquivos apagados não vão para a lixeira.</strong>
+          Comece sempre pela opção <span class="keys">4</span>, Simular Limpeza. E ao ser
+          perguntado sobre apagar os registros de eventos, responda <span class="keys">N</span>:
+          eles são o que permite diagnosticar problemas depois.</div>
+        </div>
+      </details>
+
+      <details class="feature reveal">
+        <summary>
+          <span class="feature-key">5</span>
+          <span class="feature-title">Reparo do Sistema e Windows Update<span>Conserta os arquivos do Windows e destrava as atualizações</span></span>
+          <span class="chev" aria-hidden="true">▶</span>
+        </summary>
+        <div class="feature-body">
+          <dl class="spec">
+            <dt>O que faz</dt>
+            <dd>Verifica e repara os arquivos do próprio Windows (DISM seguido de SFC),
+            reinicia os componentes do Windows Update, limpa a fila de impressão, reinicia o
+            Explorer, reconstrói o cache de ícones e agenda a verificação de disco.</dd>
+            <dt>Quando usar</dt>
+            <dd>Erros inexplicáveis, atualizações que não instalam, impressora que não
+            imprime, barra de tarefas travada, ícones em branco.</dd>
+            <dt>Cenários</dt>
+            <dd>Windows Update preso no mesmo percentual há dias; menu Iniciar que não abre;
+            documento travado na fila de impressão que não cancela.</dd>
+            <dt>Benefícios</dt>
+            <dd>Executa DISM e SFC na ordem correta — invertida, a correção não funciona — e
+            lê o registro do verificador para dizer quantos arquivos foram reparados de fato.</dd>
+            <dt>Observações</dt>
+            <dd>O reparo profundo leva de 15 a 45 minutos. A verificação de disco só acontece
+            na próxima inicialização, antes da tela de senha, e pode demorar bastante.</dd>
+          </dl>
+        </div>
+      </details>
+
+      <details class="feature reveal">
+        <summary>
+          <span class="feature-key">6</span>
+          <span class="feature-title">Contas, Permissões e Segurança<span>Revisa a proteção da máquina e gerencia contas locais</span></span>
+          <span class="chev" aria-hidden="true">▶</span>
+        </summary>
+        <div class="feature-body">
+          <dl class="spec">
+            <dt>O que faz</dt>
+            <dd>Mostra a postura de segurança (Secure Boot, TPM, virtualização, integridade de
+            memória, UAC, SmartScreen), o estado do Defender e dos antivírus instalados,
+            aciona varreduras, audita contas e falhas de logon, e permite assumir controle de
+            pastas com acesso negado.</dd>
+            <dt>Quando usar</dt>
+            <dd>Para conferir se a máquina está protegida, investigar suspeita de infecção ou
+            recuperar acesso a uma pasta.</dd>
+            <dt>Cenários</dt>
+            <dd>Verificar se o equipamento atende aos requisitos do Windows 11; auditar quem
+            tem conta administrativa; acessar arquivos de um perfil antigo após reinstalação.</dd>
+            <dt>Benefícios</dt>
+            <dd>As cinco opções de leitura respondem em segundos o que levaria vários
+            painéis do Windows para descobrir.</dd>
+            <dt>Observações</dt>
+            <dd>Remover a senha de uma conta exige digitar a palavra <code>REMOVER</code> por
+            extenso, de propósito. A ferramenta recusa assumir controle de pastas críticas do
+            sistema, mesmo com permissão de administrador.</dd>
+          </dl>
+          <div class="callout"><strong>Em computador da empresa, fale com a TI antes.</strong>
+          Resetar as diretivas de grupo locais pode desfazer configurações aplicadas
+          intencionalmente pela organização.</div>
+        </div>
+      </details>
+
+      <details class="feature reveal">
+        <summary>
+          <span class="feature-key">7</span>
+          <span class="feature-title">Discos, Drivers e Hardware<span>Saúde física, inventário e backup de drivers</span></span>
+          <span class="chev" aria-hidden="true">▶</span>
+        </summary>
+        <div class="feature-body">
+          <dl class="spec">
+            <dt>O que faz</dt>
+            <dd>Lê a saúde física dos discos e seus contadores de desgaste, calcula o desgaste
+            real da bateria, mostra o estado do BitLocker, inventaria todo o hardware, aponta
+            drivers com problema ou sem assinatura, e exporta os drivers instalados.</dd>
+            <dt>Quando usar</dt>
+            <dd>Antes de formatar, ao comprar um equipamento usado, ou quando suspeitar de
+            falha de hardware.</dd>
+            <dt>Cenários</dt>
+            <dd>Computador travando sem padrão (disco em degradação é causa frequente);
+            notebook que não segura carga; conferir a procedência de uma máquina de segunda mão.</dd>
+            <dt>Benefícios</dt>
+            <dd>Disco em falha dá sinais antes de morrer. Esta é a leitura que pode salvar
+            seus dados. O backup de drivers evita a caça a fabricantes depois de formatar.</dd>
+            <dt>Observações</dt>
+            <dd>Menu quase todo de leitura — só o backup de drivers grava algo, e ele pode
+            ocupar de 200 MB a 2 GB.</dd>
+          </dl>
+          <div class="callout"><strong>Se o disco indicar problema, faça backup hoje.</strong>
+          Não espere confirmação de outro programa.</div>
+        </div>
+      </details>
+
+      <details class="feature reveal">
+        <summary>
+          <span class="feature-key">8</span>
+          <span class="feature-title">Diagnóstico e Relatórios<span>O retrato completo da máquina, em quatro formatos</span></span>
+          <span class="chev" aria-hidden="true">▶</span>
+        </summary>
+        <div class="feature-body">
+          <dl class="spec">
+            <dt>O que faz</dt>
+            <dd>Executa auditoria rápida ou completa, lista eventos críticos dos últimos 7 ou
+            30 dias, inventaria programas instalados, mostra o licenciamento e gera relatórios
+            em TXT, CSV, JSON e HTML.</dd>
+            <dt>Quando usar</dt>
+            <dd>Antes de qualquer reparo, para ter o retrato do “antes”. E sempre que precisar
+            enviar informações ao suporte.</dd>
+            <dt>Cenários</dt>
+            <dd>Abrir chamado técnico com dados concretos; inventariar um parque de máquinas
+            usando os arquivos CSV e JSON; comparar o estado antes e depois de uma manutenção.</dd>
+            <dt>Benefícios</dt>
+            <dd>O relatório HTML traz resumo com itens críticos, em atenção e conformes, além
+            de uma recomendação ao lado de cada constatação. Abre em qualquer navegador, sem
+            internet.</dd>
+            <dt>Observações</dt>
+            <dd>Menu inteiramente seguro: nada aqui altera o computador. O relatório contém
+            nome da máquina, usuário e número de série — trate-o conforme a política da sua
+            organização.</dd>
+          </dl>
+        </div>
+      </details>
+
+      <details class="feature reveal">
+        <summary>
+          <span class="feature-key">9</span>
+          <span class="feature-title">Ambiente de Execução<span>O que a ferramenta encontrou no seu Windows</span></span>
+          <span class="chev" aria-hidden="true">▶</span>
+        </summary>
+        <div class="feature-body">
+          <dl class="spec">
+            <dt>O que faz</dt>
+            <dd>Mostra produto, versão, autoria, motor em uso, caminho dos módulos, sessão,
+            arquivo de log e quais componentes do Windows estão disponíveis.</dd>
+            <dt>Quando usar</dt>
+            <dd>Sempre que algo não funcionar como esperado.</dd>
+            <dt>Cenários</dt>
+            <dd>Uma opção respondeu “recurso não suportado”; o rodapé diz “Motor: Batch”; você
+            quer saber onde os relatórios estão sendo gravados.</dd>
+            <dt>Benefícios</dt>
+            <dd>Responde o “por quê” antes de você procurar em fóruns.</dd>
+            <dt>Observações</dt>
+            <dd><span class="keys">1</span> significa disponível, <span class="keys">0</span>
+            indisponível. Um <span class="keys">0</span> não é erro — é a ferramenta avisando
+            que aquele componente não existe nesta máquina.</dd>
+          </dl>
+        </div>
+      </details>
+
+    </div>
+  </div>
+</section>
+
+<!-- ================================================  TUTORIAIS  ===== -->
+<section class="section section-alt" id="tutoriais">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="kicker">Passo a passo</span>
+      <h2>Tutoriais</h2>
+      <p>Do primeiro uso às situações mais comuns. Cada passo indica exatamente qual tecla apertar.</p>
+    </div>
+
+    <div class="grid g-2">
+
+      <div class="card tutorial reveal">
+        <div class="card-icon" aria-hidden="true">01</div>
+        <h3>Primeiro uso, com segurança</h3>
+        <p class="lead">Para quem nunca abriu a ferramenta. Nenhum passo aqui altera o computador.</p>
+        <ol class="steps">
+          <li><strong>Extraia a pasta</strong><p>Clique com o botão direito no arquivo <code>.zip</code> e escolha Extrair tudo. Não execute de dentro do zip.</p></li>
+          <li><strong>Execute como administrador</strong><p>Botão direito em <code>Launcher.bat</code> → Executar como administrador → Sim.</p></li>
+          <li><strong>Veja o que a ferramenta detectou</strong><p>Aperte <span class="keys">9</span>. Confira o motor em uso e os componentes disponíveis.</p></li>
+          <li><strong>Faça uma auditoria rápida</strong><p><span class="keys">0</span> para voltar, depois <span class="keys">8</span> e <span class="keys">2</span>. Leva menos de um minuto.</p></li>
+          <li><strong>Gere o relatório completo</strong><p><span class="keys">8</span> e <span class="keys">1</span>. Ao final, o relatório abre sozinho no navegador.</p></li>
+        </ol>
+      </div>
+
+      <div class="card tutorial reveal">
+        <div class="card-icon" aria-hidden="true">02</div>
+        <h3>Liberar espaço sem arrependimento</h3>
+        <p class="lead">A ordem importa: primeiro medir, depois apagar.</p>
+        <ol class="steps">
+          <li><strong>Simule antes</strong><p><span class="keys">4</span> e depois <span class="keys">4</span>. Mostra quanto cada categoria liberaria, sem apagar nada.</p></li>
+          <li><strong>Feche os navegadores</strong><p>Cache aberto não pode ser removido e aparece como “em uso”.</p></li>
+          <li><strong>Limpe os navegadores</strong><p><span class="keys">4</span> e <span class="keys">5</span>. Senhas e favoritos não são afetados.</p></li>
+          <li><strong>Faça a limpeza customizada</strong><p><span class="keys">4</span> e <span class="keys">1</span>. Quando perguntar sobre registros de eventos, responda <span class="keys">N</span>.</p></li>
+          <li><strong>Confira o resultado</strong><p>O resumo mostra o total liberado e o ganho real na unidade C:.</p></li>
+        </ol>
+      </div>
+
+      <div class="card tutorial reveal">
+        <div class="card-icon" aria-hidden="true">03</div>
+        <h3>Consertar a internet</h3>
+        <p class="lead">Diagnostique primeiro; só depois aplique a correção.</p>
+        <ol class="steps">
+          <li><strong>Veja o estado dos adaptadores</strong><p><span class="keys">3</span> e <span class="keys">4</span>. Confirme que a placa de rede aparece e está ativa.</p></li>
+          <li><strong>Descubra onde a conexão para</strong><p><span class="keys">3</span> e <span class="keys">5</span>. O teste percorre ping, resolução de nomes e HTTP.</p></li>
+          <li><strong>Verifique se há proxy indevido</strong><p><span class="keys">3</span> e <span class="keys">6</span>. Proxy esquecido é causa comum de “conecta mas não navega”.</p></li>
+          <li><strong>Aplique o reset completo</strong><p><span class="keys">3</span> e <span class="keys">1</span>. Nove passos de reinicialização da pilha de rede.</p></li>
+          <li><strong>Reinicie o computador</strong><p>Sem reiniciar, a correção pode não valer. Este passo não é opcional.</p></li>
+        </ol>
+      </div>
+
+      <div class="card tutorial reveal">
+        <div class="card-icon" aria-hidden="true">04</div>
+        <h3>Preparar informações para o suporte</h3>
+        <p class="lead">Um arquivo que responde quase tudo que o técnico vai perguntar.</p>
+        <ol class="steps">
+          <li><strong>Gere a auditoria completa</strong><p><span class="keys">8</span> e <span class="keys">1</span>. De 1 a 5 minutos.</p></li>
+          <li><strong>Aguarde o relatório abrir</strong><p>O arquivo HTML abre sozinho no navegador ao terminar.</p></li>
+          <li><strong>Leia o resumo do topo</strong><p>Três números: críticos, em atenção e conformes. Se os críticos estão em zero, a máquina está bem.</p></li>
+          <li><strong>Localize o arquivo</strong><p>Na pasta <code>COMPARTDISK_Relatorios</code>, dentro da pasta do programa. O caminho exato aparece no rodapé do menu.</p></li>
+          <li><strong>Anexe o arquivo HTML</strong><p>É independente: abre em qualquer navegador, sem internet e sem programa adicional.</p></li>
+        </ol>
+      </div>
+
+      <div class="card tutorial reveal">
+        <div class="card-icon" aria-hidden="true">05</div>
+        <h3>Reparo profundo do Windows</h3>
+        <p class="lead">Para erros inexplicáveis. Reserve tempo: pode levar 45 minutos.</p>
+        <ol class="steps">
+          <li><strong>Registre o estado atual</strong><p><span class="keys">8</span> e <span class="keys">1</span>. Guarde este relatório para comparar depois.</p></li>
+          <li><strong>Feche os programas abertos</strong><p>O reparo mexe em arquivos do sistema e usa bastante disco.</p></li>
+          <li><strong>Inicie o reparo profundo</strong><p><span class="keys">5</span> e <span class="keys">1</span>. Executa DISM e depois SFC, nessa ordem.</p></li>
+          <li><strong>Não feche a janela</strong><p>A tela fica parada por vários minutos. É normal, e interromper pode deixar o sistema inconsistente.</p></li>
+          <li><strong>Reinicie e confirme</strong><p>Depois de reiniciar, rode <span class="keys">8</span> e <span class="keys">1</span> de novo e compare com o relatório anterior.</p></li>
+        </ol>
+      </div>
+
+      <div class="card tutorial reveal">
+        <div class="card-icon" aria-hidden="true">06</div>
+        <h3>Uso avançado: execução sem menus</h3>
+        <p class="lead">Para administradores, tarefas agendadas e parques de máquinas.</p>
+        <ol class="steps">
+          <li><strong>Escolha o parâmetro</strong><p><code>/audit</code>, <code>/autofix</code>, <code>/report</code> ou <code>/clean</code>. Use <code>/?</code> para ver a ajuda.</p></li>
+          <li><strong>Defina onde gravar</strong><p>A variável <code>COMPARTDISK_LOGDIR</code> aponta os relatórios para uma pasta de rede.</p></li>
+          <li><strong>Monte a chamada</strong><p><code>set "COMPARTDISK_LOGDIR=\\servidor\inventario\%COMPUTERNAME%\"</code> seguido de <code>Launcher.bat /audit</code>.</p></li>
+          <li><strong>Agende</strong><p>Configure a tarefa para executar com privilégios mais altos, na conta SYSTEM — assim o UAC não é acionado.</p></li>
+          <li><strong>Consuma os resultados</strong><p>No arquivo JSON, filtre o campo <code>Findings</code> por <code>Severity = "CRIT"</code> para achar as máquinas que exigem atenção.</p></li>
+        </ol>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- =================================================  CENÁRIOS  ===== -->
+<section class="section" id="cenarios">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="kicker">Cenários de uso</span>
+      <h2>Situações reais</h2>
+      <p>Do sintoma direto ao caminho. Cada rota apresentada nos cartões abaixo indica
+      a sequência exata de teclas para a resolução.</p>
+    </div>
+
+    <div class="grid g-2">
+
+      <div class="card reveal">
+        <div class="scenario">
+          <span class="scenario-num">01</span>
+          <div>
+            <h3>“Está muito lento”</h3>
+            <p class="lead">Lentidão tem várias causas. Elimine as mais comuns na ordem certa,
+            começando pelo disco — hardware em degradação é a causa que ninguém verifica.</p>
+            <code class="path"><span class="passo"><b>8</b>→<b>2</b></span><span class="passo"><b>7</b>→<b>1</b></span><span class="passo"><b>4</b>→<b>4</b></span><span class="passo"><b>4</b>→<b>6</b></span></code>
+          </div>
+        </div>
+      </div>
+
+      <div class="card reveal">
+        <div class="scenario">
+          <span class="scenario-num">02</span>
+          <div>
+            <h3>“Alguns sites não abrem”</h3>
+            <p class="lead">Quando só certos endereços falham e o resto funciona, o suspeito é
+            o arquivo <code>hosts</code> ou um proxy esquecido.</p>
+            <code class="path"><span class="passo"><b>3</b>→<b>6</b></span><span class="passo"><b>3</b>→<b>2</b></span><span class="passo"><b>3</b>→<b>5</b></span></code>
+          </div>
+        </div>
+      </div>
+
+      <div class="card reveal">
+        <div class="scenario">
+          <span class="scenario-num">03</span>
+          <div>
+            <h3>“Vou comprar um notebook usado”</h3>
+            <p class="lead">Em cinco minutos você sabe o desgaste real da bateria, a saúde do
+            disco, as horas ligado e se o Windows está ativado.</p>
+            <code class="path"><span class="passo"><b>7</b>→<b>2</b></span><span class="passo"><b>7</b>→<b>7</b></span><span class="passo"><b>8</b>→<b>7</b></span><span class="passo"><b>8</b>→<b>1</b></span></code>
+          </div>
+        </div>
+      </div>
+
+      <div class="card reveal">
+        <div class="scenario">
+          <span class="scenario-num">04</span>
+          <div>
+            <h3>“Vou formatar a máquina”</h3>
+            <p class="lead">Salve os drivers antes. Depois de formatar, encontrá-los um a um
+            no site do fabricante custa horas.</p>
+            <code class="path"><span class="passo"><b>7</b>→<b>4</b></span><span class="passo"><b>8</b>→<b>6</b></span><span class="passo"><b>8</b>→<b>7</b></span></code>
+          </div>
+        </div>
+      </div>
+
+      <div class="card reveal">
+        <div class="scenario">
+          <span class="scenario-num">05</span>
+          <div>
+            <h3>“O Windows Update não instala”</h3>
+            <p class="lead">Veja o estado dos serviços, destrave os componentes e reinicie.
+            Se persistir, o problema costuma ser arquivo de sistema corrompido.</p>
+            <code class="path"><span class="passo"><b>5</b>→<b>6</b></span><span class="passo"><b>5</b>→<b>2</b></span><span class="passo passo--nota">reiniciar</span><span class="passo"><b>5</b>→<b>1</b></span></code>
+          </div>
+        </div>
+      </div>
+
+      <div class="card reveal">
+        <div class="scenario">
+          <span class="scenario-num">06</span>
+          <div>
+            <h3>“Preciso auditar 40 computadores”</h3>
+            <p class="lead">Execução desassistida por tarefa agendada, com os relatórios
+            centralizados numa pasta de rede e consumidos via CSV ou JSON.</p>
+            <code class="path"><span class="passo passo--nota">Launcher.bat <b>/audit</b></span></code>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ===========================================  BOAS PRÁTICAS  ===== -->
+<section class="section section-alt" id="boas-praticas">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="kicker">Recomendações</span>
+      <h2>Cinco regras que evitam dor de cabeça</h2>
+      <p>Nenhuma delas é sobre a ferramenta. São sobre método.</p>
+    </div>
+
+    <div class="rules">
+      <div class="rule reveal">
+        <div>
+          <h4>Observe antes de agir</h4>
+          <p>Rode uma auditoria antes de qualquer reparo. Você ganha o retrato do “antes”,
+          útil para comparar depois e para saber se o reparo era mesmo necessário.</p>
+        </div>
+      </div>
+      <div class="rule reveal">
+        <div>
+          <h4>Prefira simular</h4>
+          <p>A simulação de limpeza mostra o espaço recuperável sem apagar nada. Decida com
+          informação, não no escuro.</p>
+        </div>
+      </div>
+      <div class="rule reveal">
+        <div>
+          <h4>Um problema de cada vez</h4>
+          <p>Se você roda cinco reparos e o problema some, não saberá qual resolveu — nem o
+          que fazer quando voltar.</p>
+        </div>
+      </div>
+      <div class="rule reveal">
+        <div>
+          <h4>Reinicie quando pedido</h4>
+          <p>Correções de rede, de sistema e do Windows Update só passam a valer depois de
+          reiniciar. Sem isso, você conclui que não funcionou.</p>
+        </div>
+      </div>
+      <div class="rule reveal">
+        <div>
+          <h4>Guarde o relatório</h4>
+          <p>Antes de mudanças grandes, gere a auditoria completa e guarde o arquivo HTML.
+          É a sua referência do estado anterior.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================  FAQ  ===== -->
+<section class="section" id="faq">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="kicker">Dúvidas frequentes</span>
+      <h2>Perguntas comuns</h2>
+      <p>Se a sua não estiver aqui, o guia de solução de problemas cobre os casos por sintoma.</p>
+    </div>
+
+    <div class="reveal">
+      <details class="faq">
+        <summary>Preciso saber programar para usar?</summary>
+        <div class="faq-body"><p>Não. Você navega por menus numerados e aperta teclas. Não é
+        preciso conhecer PowerShell nem Batch, e nada precisa ser digitado além do número
+        da opção.</p></div>
+      </details>
+
+      <details class="faq">
+        <summary>Vai apagar meus arquivos?</summary>
+        <div class="faq-body"><p>Não. As limpezas atuam sobre arquivos temporários e caches.
+        Documentos, fotos, senhas de navegador e favoritos não são tocados. E a opção de
+        simulação permite ver exatamente o que seria removido, antes de remover.</p></div>
+      </details>
+
+      <details class="faq">
+        <summary>Por que o antivírus reclamou?</summary>
+        <div class="faq-body"><p>Porque a ferramenta mexe em rede, registro e serviços —
+        exatamente o padrão de comportamento que antivírus monitoram. É um falso positivo.
+        O código é aberto: são arquivos de texto que você pode abrir no Bloco de Notas e
+        conferir linha por linha.</p></div>
+      </details>
+
+      <details class="faq">
+        <summary>Apareceu “O Windows protegeu o computador”. E agora?</summary>
+        <div class="faq-body"><p>É o SmartScreen, e é esperado — o arquivo veio da internet e
+        não tem assinatura digital paga. Clique em <strong>Mais informações</strong> e depois
+        em <strong>Executar assim mesmo</strong>. Para evitar de vez: antes de extrair, clique
+        com o botão direito no <code>.zip</code>, escolha Propriedades e marque
+        <strong>Desbloquear</strong>.</p></div>
+      </details>
+
+      <details class="faq">
+        <summary>Diz “Motor: Batch”. Está errado?</summary>
+        <div class="faq-body"><p>Não. Significa que o PowerShell não está disponível ou foi
+        bloqueado por política. Todas as funções continuam acessíveis por rotinas Batch
+        equivalentes — o que muda é a profundidade do diagnóstico: os relatórios em HTML,
+        JSON e CSV não são gerados nesse modo.</p></div>
+      </details>
+
+      <details class="faq">
+        <summary>A tela está parada há vários minutos. Travou?</summary>
+        <div class="faq-body"><p>Provavelmente não. O reparo profundo leva de 15 a 45 minutos
+        e a varredura completa do Defender pode chegar a quatro horas — ambos ficam longos
+        períodos sem mostrar progresso. Se quiser confirmar, abra o Gerenciador de Tarefas:
+        havendo atividade de disco ou processador, ainda está trabalhando.</p></div>
+      </details>
+
+      <details class="faq">
+        <summary>Funciona em Windows Home?</summary>
+        <div class="faq-body"><p>Sim, integralmente. Recursos que a edição Home não possui —
+        como diretivas de grupo locais e BitLocker completo — são detectados e reportados
+        como indisponíveis, sem erro.</p></div>
+      </details>
+
+      <details class="faq">
+        <summary>Preciso de internet?</summary>
+        <div class="faq-body"><p>Não, exceto para atualizar programas e buscar atualizações do
+        Windows. Todo o resto — reparo, limpeza, diagnóstico e relatórios — funciona offline.
+        Nenhum dado é enviado para lugar nenhum.</p></div>
+      </details>
+
+      <details class="faq">
+        <summary>Posso usar no computador da empresa?</summary>
+        <div class="faq-body"><p>Tecnicamente sim, mas confirme com o setor de TI antes. As
+        opções do menu de segurança podem desfazer configurações aplicadas de propósito pela
+        organização.</p></div>
+      </details>
+
+      <details class="faq">
+        <summary>Como desinstalo?</summary>
+        <div class="faq-body"><p>Apague a pasta. É tudo. A ferramenta não cria serviços, não
+        altera a inicialização do Windows e não deixa nada em execução depois de fechada.</p></div>
+      </details>
+
+      <details class="faq">
+        <summary>Os relatórios têm dados pessoais?</summary>
+        <div class="faq-body"><p>Contêm nome do computador, nome de usuário, número de série do
+        equipamento e a lista de programas instalados. <strong>Não</strong> contêm senhas,
+        arquivos pessoais nem histórico de navegação. Chaves de recuperação do BitLocker são
+        exibidas na tela quando solicitadas, mas nunca gravadas em arquivo.</p></div>
+      </details>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <div class="footer-mark">
+          <span class="brand-mark" aria-hidden="true">&gt;_</span>
+          COMPARTDISK
+        </div>
+        <p>Assistente de reparo para Windows 10 e 11. Só componentes nativos, sem instalação
+        e sem dependências.</p>
+      </div>
+
+      <div>
+        <h4>Documentação</h4>
+        <ul>
+          <li><a href="https://github.com/edsilas/compartdisk/blob/main/docs/INSTALACAO.md">Guia de instalação</a></li>
+          <li><a href="https://github.com/edsilas/compartdisk/blob/main/docs/MANUAL-DO-USUARIO.md">Manual do usuário</a></li>
+          <li><a href="https://github.com/edsilas/compartdisk/blob/main/docs/MANUAL-DO-ADMINISTRADOR.md">Manual do administrador</a></li>
+          <li><a href="https://github.com/edsilas/compartdisk/blob/main/docs/MANUAL-TECNICO.md">Manual técnico</a></li>
+          <li><a href="https://github.com/edsilas/compartdisk/tree/main/docs">Todos os guias</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h4>Projeto</h4>
+        <ul>
+          <li><a href="https://github.com/edsilas/compartdisk">Código-fonte</a></li>
+          <li><a href="https://github.com/edsilas/compartdisk/releases/latest">Versões</a></li>
+          <li><a href="https://github.com/edsilas/compartdisk/blob/main/CHANGELOG.md">Histórico de mudanças</a></li>
+          <li><a href="https://github.com/edsilas/compartdisk/blob/main/LICENSE">Licença Apache 2.0</a></li>
+          <li><a href="https://github.com/edsilas/compartdisk/blob/main/docs/CREDITOS.md">Créditos</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h4>Suporte</h4>
+        <ul>
+          <li><a href="https://github.com/edsilas/compartdisk/blob/main/docs/SOLUCAO-DE-PROBLEMAS.md">Solução de problemas</a></li>
+          <li><a href="https://github.com/edsilas/compartdisk/blob/main/docs/FAQ.md">Perguntas frequentes</a></li>
+          <li><a href="https://github.com/edsilas/compartdisk/issues">Relatar um problema</a></li>
+          <li><a href="https://github.com/edsilas/compartdisk/blob/main/docs/LIMITACOES.md">Limitações conhecidas</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>COMPARTDISK 1.2.0 · Licença Apache 2.0 · Windows é marca registrada da Microsoft Corporation.</span>
+      <span class="sig">DESENVOLVIDO POR EDSILAS</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+
+  /* --- menu em telas estreitas --- */
+  var btn = document.getElementById('menuBtn');
+  var nav = document.getElementById('nav');
+  btn.addEventListener('click', function(){
+    var aberto = nav.classList.toggle('open');
+    btn.setAttribute('aria-expanded', aberto ? 'true' : 'false');
+  });
+  nav.addEventListener('click', function(e){
+    if (e.target.tagName === 'A') { nav.classList.remove('open'); btn.setAttribute('aria-expanded','false'); }
+  });
+
+  /* --- abas da galeria, com navegação por setas --- */
+  var abas = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  function mostrar(alvo){
+    abas.forEach(function(t){
+      var sel = (t === alvo);
+      t.setAttribute('aria-selected', sel ? 'true' : 'false');
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !sel;
+    });
+  }
+  abas.forEach(function(t, i){
+    t.addEventListener('click', function(){ mostrar(t); });
+    t.addEventListener('keydown', function(e){
+      var d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      var prox = abas[(i + d + abas.length) % abas.length];
+      prox.focus(); mostrar(prox);
+    });
+  });
+
+  /* --- revelação ao rolar --- */
+  var alvos = document.querySelectorAll('.reveal');
+  if (!('IntersectionObserver' in window) ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    alvos.forEach(function(el){ el.classList.add('in'); });
+  } else {
+    var obs = new IntersectionObserver(function(entradas){
+      entradas.forEach(function(en){
+        if (en.isIntersecting) { en.target.classList.add('in'); obs.unobserve(en.target); }
+      });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.06 });
+    alvos.forEach(function(el){ obs.observe(el); });
+  }
+
+  /* --- destaque da seção atual na navegação --- */
+  var links = Array.prototype.slice.call(document.querySelectorAll('.nav a[href^="#"]'));
+  var secoes = links.map(function(a){ return document.querySelector(a.getAttribute('href')); }).filter(Boolean);
+  if ('IntersectionObserver' in window && secoes.length) {
+    var navObs = new IntersectionObserver(function(entradas){
+      entradas.forEach(function(en){
+        if (!en.isIntersecting) return;
+        links.forEach(function(a){
+          a.classList.toggle('on', a.getAttribute('href') === '#' + en.target.id);
+        });
+      });
+    }, { rootMargin: '-45% 0px -50% 0px' });
+    secoes.forEach(function(s){ navObs.observe(s); });
+  }
+})();
+</script>
+</body>
+</html>
