@@ -9,6 +9,7 @@
 ```
 compartdisk/
 ├── Launcher.bat                      Programa principal
+├── remote.ps1                        Inicializador de execução remota
 ├── README.md                         Apresentação e índice
 ├── CHANGELOG.md                      Histórico de versões
 ├── LICENSE                           Licença MIT
@@ -66,6 +67,12 @@ O programa. Contém a interface, os menus, a autoelevação, a detecção de amb
 controle de fluxo, o motor de log e as rotinas Batch de contingência.
 
 É o único arquivo que o usuário executa.
+
+### `remote.ps1`
+
+Inicializador opcional para execução remota. Baixa a versão estável mais recente,
+valida a integridade e entrega o controle ao `Launcher.bat`. Não participa da
+execução local e pode ser removido sem afetar o funcionamento do projeto.
 
 ### `Modules/Core.ps1`
 

@@ -32,7 +32,7 @@ componentes nativos do sistema operacional, sem instalação e sem dependências
 | [1. Visão geral](#1-visão-geral) | O que a ferramenta faz e a quem se destina |
 | [2. Recursos](#2-recursos) | Capacidades principais |
 | [3. Pré-requisitos](#3-pré-requisitos) | O que é necessário antes de começar |
-| [4. Início rápido](#4-início-rápido) | Baixar, executar e fazer o primeiro diagnóstico |
+| [4. Início rápido](#4-início-rápido) | Executar em um comando ou instalar localmente |
 | [5. Interface](#5-interface) | Como a ferramenta se apresenta |
 | [6. Uso avançado](#6-uso-avançado) | Execução desassistida e parque de máquinas |
 | [7. Segurança e privacidade](#7-segurança-e-privacidade) | O que a ferramenta faz e não faz com seus dados |
@@ -86,6 +86,7 @@ funcionalidade deixa de existir. Detalhes em [Arquitetura](docs/ARQUITETURA.md).
 | **Segurança** | Revisa Defender, firewall, contas, BitLocker, TPM e Secure Boot |
 | **Hardware e discos** | Saúde física dos discos, desgaste da bateria, drivers e inventário completo |
 | **Operação sem PowerShell** | Cada função possui rotina Batch equivalente para ambientes restritos |
+| **Execução remota** | Um único comando executa a versão mais recente, com validação de integridade |
 
 ---
 
@@ -127,7 +128,32 @@ Detalhes completos em [Requisitos do Sistema](docs/REQUISITOS.md) e
 
 ## 4. Início rápido
 
-### Passo 1 — Baixar e extrair
+Há dois métodos de execução. Ambos rodam **o mesmo programa**, com os mesmos menus,
+módulos e fluxos.
+
+### Método A — Execução remota (um comando)
+
+Sempre executa a versão estável mais recente, sem download manual e sem verificar
+atualizações. Abra o **PowerShell como administrador** e execute:
+
+```powershell
+irm https://raw.githubusercontent.com/edsilas/compartdisk/main/remote.ps1 | iex
+```
+
+O inicializador consulta a versão mais recente, baixa o pacote, **valida a
+integridade por SHA-256** e executa o `Launcher.bat`. Ao encerrar, remove todos os
+arquivos temporários — nada permanece no disco.
+
+> [!TIP]
+> Indicado para uso pontual e atendimento de suporte. Para uso recorrente ou em
+> máquinas com internet limitada, prefira o método B.
+
+Detalhes, validação de integridade e configuração avançada em
+[Guia de Execução Remota](docs/EXECUCAO-REMOTA.md).
+
+### Método B — Instalação local
+
+#### Passo 1 — Baixar e extrair
 
 1. Baixe o pacote mais recente em [Releases](https://github.com/edsilas/compartdisk/releases/latest).
 2. Clique com o botão direito no arquivo `.zip`, selecione **Propriedades**, marque
@@ -139,7 +165,7 @@ Detalhes completos em [Requisitos do Sistema](docs/REQUISITOS.md) e
 > conteúdo em uma pasta temporária somente leitura, e os relatórios não poderão ser
 > gravados.
 
-### Passo 2 — Executar
+#### Passo 2 — Executar
 
 1. Clique com o botão direito em **`Launcher.bat`**.
 2. Selecione **Executar como administrador**.
@@ -148,7 +174,7 @@ Detalhes completos em [Requisitos do Sistema](docs/REQUISITOS.md) e
 Não há instalador, dependências para baixar ou alterações permanentes no sistema.
 Para desinstalar, apague a pasta.
 
-### Passo 3 — Primeiro diagnóstico
+#### Passo 3 — Primeiro diagnóstico
 
 Comece por operações que **não alteram nada** no computador:
 
@@ -162,6 +188,15 @@ Comece por operações que **não alteram nada** no computador:
 Somente depois disso vale usar as opções que modificam o sistema.
 
 Instruções detalhadas em [Guia de Instalação](docs/INSTALACAO.md).
+
+### Qual método usar
+
+| Critério | Execução remota | Instalação local |
+|---|---|---|
+| Versão executada | Sempre a mais recente | A que você baixou |
+| Ocupa espaço em disco | Não | Cerca de 2 MB |
+| Funciona sem internet | Não | Sim |
+| Indicado para | Uso pontual, suporte técnico | Uso recorrente, parque de máquinas |
 
 ---
 
@@ -268,6 +303,7 @@ senhas, arquivos pessoais ou histórico de navegação.
 | Documento | Conteúdo |
 |---|---|
 | [Guia de Instalação](docs/INSTALACAO.md) | Baixar, descompactar e executar pela primeira vez |
+| [Guia de Execução Remota](docs/EXECUCAO-REMOTA.md) | Executar em um comando, sempre na versão mais recente |
 | [Guia de Configuração](docs/CONFIGURACAO.md) | Onde ficam os logs e como ajustar o comportamento padrão |
 | [Guia de Utilização](docs/UTILIZACAO.md) | Como navegar pelos menus no dia a dia |
 | [Manual do Usuário](docs/MANUAL-DO-USUARIO.md) | Explicação de cada opção, em linguagem simples |
@@ -319,6 +355,7 @@ senhas, arquivos pessoais ou histórico de navegação.
 | O rodapé indica "Motor: Batch" | O PowerShell está indisponível ou bloqueado. Todas as funções continuam acessíveis |
 | Uma opção informa "recurso não suportado" | O hardware ou a edição do Windows não possui aquele recurso |
 | A tela parece travada | Reparo profundo e varreduras levam de 15 minutos a 4 horas, sem exibir progresso |
+| A execução remota falha ao baixar | Verifique proxy e firewall; o script exibe a causa e as alternativas |
 
 Guia completo em [Solução de Problemas](docs/SOLUCAO-DE-PROBLEMAS.md).
 
@@ -353,7 +390,10 @@ patrocinado ou endossado pela Microsoft.
 
 ---
 
+<div align="center">
 
 **COMPARTDISK 1.2.0** — Desenvolvido por Edsilas
 
 https://github.com/edsilas/compartdisk
+
+</div>

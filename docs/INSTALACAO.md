@@ -7,6 +7,11 @@ gravado permanentemente no sistema, e para remover basta apagar a pasta.
 
 ---
 
+> [!TIP]
+> Para uso pontual, existe um método sem download: um único comando no PowerShell
+> executa a versão mais recente. Consulte o
+> [Guia de Execução Remota](EXECUCAO-REMOTA.md).
+
 ## Passo 1 — Baixar
 
 Acesse https://github.com/edsilas/compartdisk e clique no botão verde **Code**,

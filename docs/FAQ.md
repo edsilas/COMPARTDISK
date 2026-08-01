@@ -17,6 +17,11 @@ Não. Você navega por menus numerados e aperta teclas.
 **É gratuito?**
 Sim, sob a Licença MIT. Você pode usar, copiar, modificar e distribuir.
 
+**Dá para executar sem baixar nada?**
+Sim. Um único comando no PowerShell, executado como administrador, baixa e roda a
+versão mais recente na memória e remove tudo ao encerrar. Consulte o
+[Guia de Execução Remota](EXECUCAO-REMOTA.md).
+
 **Preciso instalar?**
 Não. Descompacte e execute. Para remover, apague a pasta.
 
