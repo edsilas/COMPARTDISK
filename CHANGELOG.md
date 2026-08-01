@@ -14,6 +14,12 @@ versionamento e entrega a documentação completa.
 
 ### Adicionado
 
+- **Execução remota em um comando.** `irm .../remote.ps1 | iex` baixa e executa a
+  versão estável mais recente, com validação de integridade por SHA-256 e remoção
+  automática dos arquivos temporários. É um método adicional de inicialização: não
+  altera nem substitui nenhum fluxo existente.
+- Guia de Execução Remota, com passo a passo, tratamento de erros e configuração
+  por variáveis de ambiente para espelho interno ou versão fixada.
 - Documentação completa pronta para publicação: guias de instalação, configuração e
   utilização, manuais do usuário, do administrador e técnico, FAQ, solução de
   problemas, arquitetura, estrutura, requisitos, compatibilidade, limitações, boas
