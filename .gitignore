@@ -15,3 +15,6 @@ compartdisk_elevate_*.vbs
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Pagina do site, hospedada fora do repositorio
+index.html
