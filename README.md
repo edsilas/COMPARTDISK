@@ -8,18 +8,19 @@
     <img src="https://img.shields.io/badge/Release-v1.2.0-107C10?style=flat-square&logo=github&logoColor=white" alt="Release">
   </a>
   <a href="#3-pré-requisitos">
-    <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%20Windows%2011-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Platform">
+    <img src="https://img.shields.io/badge/Platform-Windows-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Platform">
   </a>
   <a href="#3-pré-requisitos">
     <img src="https://img.shields.io/badge/Shell-PowerShell%205.1%20%7C%207-5391FE?style=flat-square&logo=powershell&logoColor=white" alt="PowerShell">
   </a>
 </p>
 
-**Assistente de Reparo para Windows 10 e Windows 11**
+**Assistente de Reparo para Windows**
 
 Ferramenta de manutenção que reúne, em menus numerados, as tarefas de reparo,
 limpeza, diagnóstico e verificação de segurança do Windows. Usa exclusivamente
 componentes nativos do sistema operacional, sem instalação e sem dependências.
+Compatível atualmente com Windows 10 e Windows 11.
 
 > Desenvolvido por Edsilas
 
@@ -94,7 +95,7 @@ funcionalidade deixa de existir. Detalhes em [Arquitetura](docs/ARQUITETURA.md).
 
 ### Sistema operacional
 
-- Windows 10 (versão 1809 ou superior) ou Windows 11
+- Windows — compatível atualmente com Windows 10 (versão 1809 ou superior) e Windows 11
 - Edições Home, Pro, Education ou Enterprise
 - Arquitetura x64 ou ARM64
 
