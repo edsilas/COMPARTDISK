@@ -138,12 +138,29 @@ Sempre executa a versão estável mais recente, sem download manual e sem verifi
 atualizações. Abra o **PowerShell como administrador** e execute:
 
 ```powershell
-irm https://raw.githubusercontent.com/edsilas/compartdisk/main/remote.ps1 | iex
+irm https://compartdisk.com.br/run | iex
 ```
 
 O inicializador consulta a versão mais recente, baixa o pacote, **valida a
 integridade por SHA-256** e executa o `Launcher.bat`. Ao encerrar, remove todos os
 arquivos temporários — nada permanece no disco.
+
+<details>
+<summary>Endereço alternativo, direto pelo repositório</summary>
+
+<br>
+
+O endereço curto apenas encaminha para o script hospedado aqui no GitHub — nenhuma
+cópia é mantida fora do repositório. Se preferir não depender do domínio, ou se ele
+estiver indisponível, use a origem diretamente:
+
+```powershell
+irm https://raw.githubusercontent.com/edsilas/compartdisk/main/remote.ps1 | iex
+```
+
+Os dois comandos executam exatamente a mesma coisa.
+
+</details>
 
 > [!TIP]
 > Indicado para uso pontual e atendimento de suporte. Para uso recorrente ou em
