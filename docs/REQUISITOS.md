@@ -8,7 +8,7 @@
 
 | Item | Exigência |
 |---|---|
-| Sistema operacional | Windows 10 ou Windows 11 |
+| Sistema operacional | Windows — compatível atualmente com Windows 10 e Windows 11 |
 | Edição | Home, Pro, Education ou Enterprise |
 | Arquitetura | 64 bits (x64 ou ARM64) |
 | Permissão | Conta com privilégio de administrador |
