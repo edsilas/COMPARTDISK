@@ -1,4 +1,4 @@
-﻿<#
+<#
  COMPARTDISK 1.2.0 - Users.ps1
  Desenvolvido por Edsilas
  Acoes: List | Groups | Audit | ClearPassword | SetPassword | EnableAdmin | DisableAdmin
@@ -167,6 +167,37 @@ function Set-UserPassword {
         return
     }
 
+    # Conta vinculada a e-mail: trocar a senha local aqui nao muda a senha da
+    # Microsoft e costuma impedir o logon. Melhor recusar do que "funcionar".
+    $tipo = $null
+    try { $tipo = $conta.PrincipalSource } catch { }
+    if ("$tipo" -eq 'MicrosoftAccount') {
+        Write-Color ''
+        Write-Color "  A conta '$Nome' e uma CONTA MICROSOFT (entra com e-mail)." -Color Yellow
+        Write-Color '  Trocar a senha por aqui nao altera a senha da Microsoft e pode' -Color Yellow
+        Write-Color '  impedir a entrada no Windows.' -Color Yellow
+        Write-Color ''
+        Write-Color '  Troque em: account.microsoft.com  (ou pelo celular)' -Color Gray
+        Write-Color ''
+        Write-Log WARN "Operacao recusada: '$Nome' e conta Microsoft."
+        $script:result = 'WARN'
+        return
+    }
+
+    # Se o computador entra sozinho, a senha atual pode ser desconhecida do
+    # proprio dono. Definir uma nova fara o Windows passar a pedi-la.
+    $auto = Get-CompartDiskRegistryValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'AutoAdminLogon'
+    if ("$auto" -eq '1') {
+        Write-Color ''
+        Write-Color '  Este computador entra no Windows automaticamente, sem pedir senha.' -Color Yellow
+        Write-Color '  Ao definir uma senha, ele passara a pedi-la em todo login.' -Color Yellow
+        Write-Color ''
+    }
+
+    Write-Color ''
+    Write-Color "  Conta que sera alterada: $Nome" -Color White
+    Write-Color '  A senha nao aparece na tela enquanto voce digita. Isso e normal.' -Color DarkGray
+    Write-Color '  Anote a senha antes de digitar. Pressione Enter vazio para cancelar.' -Color DarkGray
     Write-Color ''
     $senha = Read-Host "  Nova senha para '$Nome'" -AsSecureString
     $conf  = Read-Host "  Confirme a senha" -AsSecureString
@@ -183,8 +214,19 @@ function Set-UserPassword {
         return
     }
 
+    Write-Color ''
+    Write-Color "  Confirmar a troca de senha da conta '$Nome'?" -Color Yellow
+    $ok = Read-Host '  Digite S para confirmar (qualquer outra tecla cancela)'
+    if ($ok -notmatch '^[Ss]$') {
+        Write-Log INFO 'Operacao cancelada pelo operador. Nenhuma senha foi alterada.'
+        return
+    }
+
     Invoke-SafeCommand { Set-LocalUser -Name $Nome -Password $senha -ErrorAction Stop } -Activity "Definir senha de $Nome" -Critical | Out-Null
     Write-Log OK "Senha da conta '$Nome' redefinida por $($Global:CompartDisk.User)."
+    Write-Color ''
+    Write-Color '  Guarde a senha em local seguro. Ela sera pedida no proximo login.' -Color Yellow
+    Write-Color 
     Add-CompartDiskFinding -Severity OK -Area 'Contas' -Message "Senha redefinida para a conta '$Nome'."
 }
 
