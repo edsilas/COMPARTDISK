@@ -896,6 +896,21 @@ goto :EOF
 :: SEGURANCA E CONTAS
 :: ------------------------------------------------------------------------------
 :MOD_GPO_RESET
+echo.
+echo   %C_AMARELO%ANTES DE CONTINUAR, LEIA:%C_RESET%
+echo.
+echo   %C_TEXTO%Esta opcao devolve as diretivas locais aos padroes do Windows.%C_RESET%
+echo.
+echo   %C_TEXTO%Se hoje voce entra no computador SEM digitar senha, essa entrada%C_RESET%
+echo   %C_TEXTO%automatica pode ser desligada. O Windows voltara a pedir a senha da%C_RESET%
+echo   %C_TEXTO%sua conta - a mesma de sempre, que talvez voce nunca tenha digitado.%C_RESET%
+echo.
+echo   %C_TEXTO%Confirme que sabe a senha da sua conta antes de prosseguir.%C_RESET%
+echo   %C_TEXTO%Em computador da empresa, fale com a TI: configuracoes obrigatorias%C_RESET%
+echo   %C_TEXTO%podem ser removidas.%C_RESET%
+echo.
+choice /c SN /n /m "  Sei a senha da minha conta e quero continuar? (S/N): "
+if errorlevel 2 goto :EOF
 set "PS_ARGS=-Action GpoReset"
 call :RUN_PS "Security.ps1"
 if errorlevel 9000 goto FB_GPO_RESET
@@ -938,19 +953,63 @@ call :RUN_PS "Defender.ps1"
 goto :EOF
 
 :MOD_USERS
+:: A listagem termina aqui. Qualquer alteracao passa a exigir uma escolha
+:: deliberada no submenu abaixo. Antes, o campo de troca de senha vinha
+:: emendado na listagem, sem que o usuario tivesse pedido isso.
 set "PS_ARGS=-Action List"
 call :RUN_PS "Users.ps1"
 if errorlevel 9000 goto FB_USERS
+
+:MOD_USERS_ESCOLHA
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_TEXTO%A lista acima e apenas informativa. Nada foi alterado ate aqui.%C_RESET%
+echo.
+echo    %C_CINZA%[1]%C_RESET%  %C_TEXTO%Voltar sem alterar nada%C_RESET%   %C_CINZA%(recomendado)%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Definir uma nova senha para uma conta%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Ativar a conta interna de Administrador%C_RESET%
+echo.
+echo   %C_AMARELO%As opcoes [2] e [3] alteram a forma de entrar no Windows.%C_RESET%
+echo.
+choice /c 123 /n /m "  Opcao: "
+if errorlevel 3 goto MOD_USERS_ADMIN
+if errorlevel 2 goto MOD_USERS_SENHA
+goto :EOF
+
+:MOD_USERS_SENHA
+echo.
+echo   %C_AMARELO%ANTES DE CONTINUAR, LEIA:%C_RESET%
+echo.
+echo   %C_TEXTO%1. Se voce entra no Windows com um E-MAIL (conta Microsoft), a senha%C_RESET%
+echo   %C_TEXTO%   NAO deve ser trocada aqui. Troque em account.microsoft.com.%C_RESET%
+echo.
+echo   %C_TEXTO%2. Anote a nova senha ANTES de digitar. Ao digita-la, a tela nao%C_RESET%
+echo   %C_TEXTO%   mostra nada, nem asteriscos. E o comportamento normal do Windows.%C_RESET%
+echo.
+echo   %C_TEXTO%3. Se hoje voce entra sem digitar senha, definir uma senha aqui fara%C_RESET%
+echo   %C_TEXTO%   o Windows passar a pedi-la em todo login.%C_RESET%
+echo.
+choice /c SN /n /m "  Li e quero continuar? (S/N): "
+if errorlevel 2 goto MOD_USERS_ESCOLHA
 echo.
 set "TARGET_USER="
-set /p "TARGET_USER=Nome EXATO do usuario para redefinir senha (ou Enter para pular): "
-if not "%TARGET_USER%"=="" (
-    set "PS_ARGS=-Action SetPassword -User "%TARGET_USER%""
-    call :RUN_PS "Users.ps1"
-)
+set /p "TARGET_USER=  Nome EXATO da conta, como aparece na lista (Enter cancela): "
+if "%TARGET_USER%"=="" goto MOD_USERS_ESCOLHA
+set "PS_ARGS=-Action SetPassword -User "%TARGET_USER%""
+call :RUN_PS "Users.ps1"
+goto :EOF
+
+:MOD_USERS_ADMIN
 echo.
-choice /c SN /n /m "Ativar a conta interna de Administrador? (S/N): "
-if errorlevel 2 goto :EOF
+echo   %C_AMARELO%A conta interna de Administrador nasce SEM SENHA.%C_RESET%
+echo.
+echo   %C_TEXTO%Ela passara a aparecer na tela de login, e quem tiver acesso fisico ao%C_RESET%
+echo   %C_TEXTO%computador podera entrar por ela sem digitar nada.%C_RESET%
+echo.
+echo   %C_TEXTO%E util para recuperar acesso. Depois de usar, desative-a.%C_RESET%
+echo.
+choice /c SN /n /m "  Ativar mesmo assim? (S/N): "
+if errorlevel 2 goto MOD_USERS_ESCOLHA
 set "PS_ARGS=-Action EnableAdmin"
 call :RUN_PS "Users.ps1"
 if errorlevel 9000 goto FB_USERS_ADMIN
