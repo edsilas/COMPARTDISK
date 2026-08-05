@@ -24,7 +24,12 @@ function Import-SessionState {
     $dir = $Global:CompartDisk.OutDir
     if (-not (Test-Path -LiteralPath $dir)) { return 0 }
 
-    $arquivos = @(Get-ChildItem -LiteralPath $dir -Filter 'state_*.json' -File -ErrorAction SilentlyContinue)
+    # O proprio Report grava um state_Report_*.json contendo TUDO que acabou de
+    # agregar. Reincluir esse arquivo em uma segunda consolidacao da mesma sessao
+    # (cenario real: /autofix seguido do menu [8][3]) duplicaria cada achado e
+    # dobraria os contadores do resumo executivo.
+    $arquivos = @(Get-ChildItem -LiteralPath $dir -Filter 'state_*.json' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notlike 'state_Report*' })
     if ($arquivos.Count -eq 0) { return 0 }
 
     $modulos = New-Object System.Collections.ArrayList

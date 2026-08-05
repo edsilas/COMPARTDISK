@@ -103,7 +103,12 @@ function Write-Color {
         if ($NoNewLine) { Write-Host $Text -ForegroundColor $Color -NoNewline }
         else            { Write-Host $Text -ForegroundColor $Color }
     } catch {
-        Write-Output $Text
+        # Nao usar Write-Output aqui: o texto entraria no stream de saida e
+        # passaria a integrar o valor de retorno de quem chamou (ex.: o codigo
+        # devolvido por Stop-CompartDiskModule viraria um array).
+        try {
+            if ($NoNewLine) { [Console]::Out.Write($Text) } else { [Console]::Out.WriteLine($Text) }
+        } catch { }
     }
 }
 
@@ -252,6 +257,7 @@ function Start-CompartDiskModule {
 
     Initialize-CompartDiskContext
     $Global:CompartDisk.CurrentModule = $Name
+    $Global:CompartDisk.CurrentAction = $Action
     $Global:CompartDisk.ModuleStart   = Get-Date
     $Global:CompartDisk.ModuleResult  = $Global:CompartDisk.Exit.OK
 
@@ -302,7 +308,12 @@ function Stop-CompartDiskModule {
 
     # Persiste o resultado para agregacao pelo Report.ps1
     try {
-        $state = Join-Path $Global:CompartDisk.OutDir ('state_{0}.json' -f $mod)
+        # O nome inclui a acao: opcoes de menu que invocam o mesmo modulo duas
+        # vezes (Defender Update+QuickScan, Smart Volumes+Shadow, ...) sobrescreviam
+        # o estado da primeira execucao, que sumia do relatorio consolidado.
+        $acao   = $Global:CompartDisk.CurrentAction
+        $rotulo = if ([string]::IsNullOrWhiteSpace($acao)) { $mod } else { '{0}_{1}' -f $mod, $acao }
+        $state = Join-Path $Global:CompartDisk.OutDir ('state_{0}.json' -f $rotulo)
         $payload = [pscustomobject]@{
             Module    = $mod
             Result    = $Result
@@ -392,8 +403,17 @@ function Invoke-NativeCommand {
     $proc.StartInfo = $psi
     try {
         [void]$proc.Start()
-        $stdout = $proc.StandardOutput.ReadToEnd()
-        $stderr = $proc.StandardError.ReadToEnd()
+
+        # Os dois canais precisam ser drenados CONCORRENTEMENTE. Ler stdout ate o
+        # fim e so depois stderr trava quando o processo filho enche o buffer do
+        # canal ainda nao lido (~4 KB) - e o WaitForExit abaixo jamais chegaria a
+        # ser avaliado, tornando o tempo limite inoperante. 'takeown /r' e
+        # 'pnputil /export-driver' produzem volume suficiente para isso.
+        # ReadToEndAsync existe desde o .NET 4.5: nativo no Windows 10/11, valido
+        # em Windows PowerShell 5.1 e em PowerShell 7.
+        $tarefaOut = $proc.StandardOutput.ReadToEndAsync()
+        $tarefaErr = $proc.StandardError.ReadToEndAsync()
+
         if ($TimeoutSeconds -gt 0) {
             if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
                 try { $proc.Kill() } catch {}
@@ -402,6 +422,9 @@ function Invoke-NativeCommand {
         } else {
             $proc.WaitForExit()
         }
+
+        $stdout = $tarefaOut.Result
+        $stderr = $tarefaErr.Result
         $out = [pscustomobject]@{
             ExitCode = $proc.ExitCode
             StdOut   = $stdout
@@ -781,19 +804,47 @@ function Get-CompartDiskFolderSize {
     return $r
 }
 
+function Test-CompartDiskProtectedPath {
+    <# Ponto unico de decisao sobre caminhos que nunca podem ser removidos nem ter
+       propriedade/ACL reescritas.
+
+       A normalizacao e aplicada aos DOIS lados da comparacao. Antes, a lista
+       guardava "C:\" enquanto o alvo era normalizado para "C:": a raiz do disco -
+       justamente o caminho mais destrutivo - nunca casava e passava batido.
+       docs/MANUAL-TECNICO.md ja declarava a raiz como protegida. #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string[]]$AdditionalPaths = @()
+    )
+    $base = @(
+        "$env:SystemRoot"
+        "$env:SystemRoot\System32"
+        "$env:SystemDrive\"
+        "$env:ProgramFiles"
+    )
+    $norm = try { (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path } catch { $Path }
+    $norm = "$norm".TrimEnd('\')
+    foreach ($p in @($base + $AdditionalPaths)) {
+        if ([string]::IsNullOrWhiteSpace($p)) { continue }
+        if ("$p".TrimEnd('\') -eq $norm) { return $true }
+    }
+    return $false
+}
+
 function Remove-CompartDiskPathSafely {
     <# Remocao idempotente e defensiva: nunca remove a propria pasta raiz, so o conteudo. #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string]$Path,
         [switch]$KeepRoot,
-        [string[]]$ExcludeNames = @()
+        [string[]]$ExcludeNames = @(),
+        [string[]]$ExcludePatterns = @()
     )
     $out = [pscustomobject]@{ Path = $Path; Removed = 0; Failed = 0; BytesFreed = 0; Skipped = $false }
 
-    $blocked = @("$env:SystemRoot", "$env:SystemDrive\", "$env:SystemRoot\System32", "$env:ProgramFiles", "$env:USERPROFILE")
     $norm = try { (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path.TrimEnd('\') } catch { $Path.TrimEnd('\') }
-    if ($blocked -contains $norm) {
+    if (Test-CompartDiskProtectedPath -Path $Path -AdditionalPaths @("$env:USERPROFILE")) {
         Write-Log WARN "Caminho protegido, remocao recusada: $norm"
         $out.Skipped = $true
         return $out
@@ -804,6 +855,11 @@ function Remove-CompartDiskPathSafely {
     try { $items = Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue } catch { }
     foreach ($item in $items) {
         if ($ExcludeNames -contains $item.Name) { continue }
+        $preservar = $false
+        foreach ($padrao in $ExcludePatterns) {
+            if ($item.Name -like $padrao) { $preservar = $true; break }
+        }
+        if ($preservar) { continue }
         try {
             $size = 0
             if ($item.PSIsContainer) {
@@ -929,7 +985,12 @@ function New-Report {
             switch ($f) {
                 'JSON' {
                     $p = "$base.json"
-                    ($Data | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath $p -Encoding UTF8
+                    # UTF-8 SEM marca de ordem de bytes: "Set-Content -Encoding UTF8"
+                    # grava BOM no Windows PowerShell 5.1 e nao grava no PowerShell 7,
+                    # produzindo bytes diferentes conforme o motor. O JSON e declarado
+                    # para consumo automatizado e parsers estritos recusam o BOM.
+                    # TXT, CSV e HTML permanecem como estao (no CSV o BOM ajuda o Excel).
+                    [System.IO.File]::WriteAllText($p, ($Data | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
                     [void]$produced.Add($p)
                 }
                 'TXT' {
@@ -1089,7 +1150,7 @@ function ConvertTo-CompartDiskHtml {
 :root{
   --bg:#0d1117; --panel:#151b23; --panel-2:#1b2129; --rule:#252d38;
   --ink:#c9d3de; --ink-dim:#7d8a99; --ink-bright:#eef3f8;
-  --crit:#e5484d; --warn:#e3a008; --ok:#3dd68c; --info:#4c8dff;
+  --crit:#e5484d; --warn:#e3a008; --ok:#3dd68c; --info:#4c8dff; --accent:#4c8dff;
   --mono:"Cascadia Mono","Cascadia Code",Consolas,"Lucida Console",monospace;
   --sans:"Segoe UI Variable Text","Segoe UI",Tahoma,sans-serif;
 }

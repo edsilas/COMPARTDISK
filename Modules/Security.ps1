@@ -112,10 +112,11 @@ function Grant-AdminOwnership {
         return
     }
 
-    # Protecao: recusa alvos criticos do sistema
-    $protegidos = @("$env:SystemRoot", "$env:SystemRoot\System32", "$env:SystemDrive\", "$env:ProgramFiles")
+    # Protecao: recusa alvos criticos do sistema. A decisao mora no Core, em ponto
+    # unico, porque esta lista e a do Remove-CompartDiskPathSafely divergiam - e a
+    # comparacao nao normalizada deixava a raiz do disco passar em ambas.
     $norm = (Resolve-Path -LiteralPath $Alvo).Path.TrimEnd('\')
-    if ($protegidos -contains $norm) {
+    if (Test-CompartDiskProtectedPath -Path $Alvo) {
         Write-Log ERR "Operacao recusada: '$norm' e um caminho critico do sistema."
         Add-CompartDiskFinding -Severity WARN -Area 'Permissoes' -Message "Takeown recusado em caminho critico: $norm"
         $script:result = 'WARN'

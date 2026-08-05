@@ -1,4 +1,4 @@
-<#
+﻿<#
  COMPARTDISK - Inicializador de execucao remota
  DESENVOLVIDO POR EDSILAS
 

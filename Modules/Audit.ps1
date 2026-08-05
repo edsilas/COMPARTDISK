@@ -2,6 +2,7 @@
  COMPARTDISK 1.2.0 - Audit.ps1
  Desenvolvido por Edsilas
  Acoes: Full | Quick | Events | Software | License
+ -NoOpen suprime a abertura automatica do relatorio (modo desassistido).
  Somente leitura: nenhuma alteracao e feita no sistema.
 #>
 [CmdletBinding()]
@@ -10,6 +11,7 @@ param(
     [string]$Action = 'Full',
     [int]$Days = 7,
     [switch]$NoReport,
+    [switch]$NoOpen,
     [switch]$Quiet
 )
 
@@ -258,7 +260,7 @@ try {
     if (-not $NoReport) {
         Write-Color ''
         Write-Log INFO 'Gerando relatorios (TXT, CSV, JSON, HTML)...'
-        $arquivos = New-Report -Name "Auditoria_$Action" -Title 'Auditoria de manutencao do Windows' -Format TXT, CSV, JSON, HTML -Open
+        $arquivos = New-Report -Name "Auditoria_$Action" -Title 'Auditoria de manutencao do Windows' -Format TXT, CSV, JSON, HTML -Open:(-not $NoOpen)
         Write-Color ''
         foreach ($a in $arquivos) { Write-Color "  $a" -Color Green }
     }

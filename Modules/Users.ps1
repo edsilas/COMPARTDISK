@@ -1,4 +1,4 @@
-<#
+﻿<#
  COMPARTDISK 1.2.0 - Users.ps1
  Desenvolvido por Edsilas
  Acoes: List | Groups | Audit | ClearPassword | SetPassword | EnableAdmin | DisableAdmin
@@ -201,14 +201,34 @@ function Set-UserPassword {
     Write-Color ''
     $senha = Read-Host "  Nova senha para '$Nome'" -AsSecureString
     $conf  = Read-Host "  Confirme a senha" -AsSecureString
-    $a = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($senha))
-    $b = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($conf))
-    if ($a -ne $b) {
+
+    # Comparar exige o texto claro, mas ele nao pode ficar residente: o BSTR e
+    # memoria NAO gerenciada, que o coletor de lixo jamais recupera, e a String
+    # gerenciada sobreviveria ate uma coleta futura. Os ponteiros sao zerados e
+    # liberados no finally, inclusive se algo lancar no meio.
+    $ptrSenha = [IntPtr]::Zero
+    $ptrConf  = [IntPtr]::Zero
+    $coincidem = $false
+    $vazia     = $true
+    try {
+        $ptrSenha = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($senha)
+        $ptrConf  = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($conf)
+        $a = [Runtime.InteropServices.Marshal]::PtrToStringAuto($ptrSenha)
+        $b = [Runtime.InteropServices.Marshal]::PtrToStringAuto($ptrConf)
+        $coincidem = ($a -eq $b)
+        $vazia     = [string]::IsNullOrEmpty($a)
+        $a = $null; $b = $null
+    } finally {
+        if ($ptrSenha -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptrSenha) }
+        if ($ptrConf  -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptrConf) }
+    }
+
+    if (-not $coincidem) {
         Write-Log ERR 'As senhas nao coincidem. Operacao cancelada.'
         $script:result = 'ERROR'
         return
     }
-    if ([string]::IsNullOrEmpty($a)) {
+    if ($vazia) {
         Write-Log ERR 'Senha vazia. Use a acao ClearPassword se a intencao for remover a senha.'
         $script:result = 'ERROR'
         return
@@ -222,11 +242,29 @@ function Set-UserPassword {
         return
     }
 
-    Invoke-SafeCommand { Set-LocalUser -Name $Nome -Password $senha -ErrorAction Stop } -Activity "Definir senha de $Nome" -Critical | Out-Null
+    if (Test-CompartDiskCommand 'Set-LocalUser') {
+        Invoke-SafeCommand { Set-LocalUser -Name $Nome -Password $senha -ErrorAction Stop } -Activity "Definir senha de $Nome" -Critical | Out-Null
+    } else {
+        # Mesma degradacao que o ramo ClearPassword ja adotava: sem o modulo
+        # LocalAccounts, a interface ADSI WinNT e o equivalente nativo. net.exe
+        # nao serve aqui - com a saida redirecionada, seu prompt de senha ficaria
+        # invisivel e a ferramenta pareceria travada.
+        $ptrAplicar = [IntPtr]::Zero
+        try {
+            $ptrAplicar = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($senha)
+            $claro = [Runtime.InteropServices.Marshal]::PtrToStringAuto($ptrAplicar)
+            $contaAdsi = [ADSI]("WinNT://./{0},user" -f $Nome)
+            $contaAdsi.SetPassword($claro)
+            $contaAdsi.SetInfo()
+            $claro = $null
+        } finally {
+            if ($ptrAplicar -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptrAplicar) }
+        }
+    }
     Write-Log OK "Senha da conta '$Nome' redefinida por $($Global:CompartDisk.User)."
     Write-Color ''
     Write-Color '  Guarde a senha em local seguro. Ela sera pedida no proximo login.' -Color Yellow
-    Write-Color 
+    Write-Color ''
     Add-CompartDiskFinding -Severity OK -Area 'Contas' -Message "Senha redefinida para a conta '$Nome'."
 }
 
@@ -240,7 +278,8 @@ function Set-BuiltinAdmin {
         return
     }
 
-    $acao = if ($Habilitar) { 'habilitar' } else { 'desabilitar' }
+    $acao     = if ($Habilitar) { 'habilitar' }  else { 'desabilitar' }
+    $acaoFeita = if ($Habilitar) { 'habilitada' } else { 'desabilitada' }
     Write-Log INFO "Preparando para $acao a conta interna '$nome'."
 
     if ($Habilitar) {
@@ -261,9 +300,9 @@ function Set-BuiltinAdmin {
         if ($r.ExitCode -ne 0) { throw "net user retornou $($r.ExitCode)" }
     }
 
-    Write-Log OK "Conta '$nome' ${acao}da por $($Global:CompartDisk.User)."
+    Write-Log OK "Conta '$nome' $acaoFeita por $($Global:CompartDisk.User)."
     $sev = if ($Habilitar) { 'WARN' } else { 'OK' }
-    Add-CompartDiskFinding -Severity $sev -Area 'Contas' -Message "Conta interna de Administrador '$nome' foi ${acao}da." `
+    Add-CompartDiskFinding -Severity $sev -Area 'Contas' -Message "Conta interna de Administrador '$nome' foi $acaoFeita." `
         -Recommendation $(if ($Habilitar) { 'Definir senha forte imediatamente e desabilitar apos o uso.' } else { '' })
 }
 

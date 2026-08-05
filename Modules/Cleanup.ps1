@@ -22,14 +22,18 @@ function Get-CleanupTargets {
     $t = New-Object System.Collections.ArrayList
 
     $add = {
-        param($nome, $caminho, $grupo, $manterRaiz = $true, $excluir = @())
+        param($nome, $caminho, $grupo, $manterRaiz = $true, $excluir = @(), $excluirPadrao = @())
         [void]$t.Add([pscustomobject]@{
-            Nome = $nome; Caminho = $caminho; Grupo = $grupo; ManterRaiz = $manterRaiz; Excluir = $excluir
+            Nome = $nome; Caminho = $caminho; Grupo = $grupo; ManterRaiz = $manterRaiz
+            Excluir = $excluir; ExcluirPadrao = $excluirPadrao
         })
     }
 
     # --- Padrao: sempre seguro
-    & $add 'Temp do usuario'          $env:TEMP 'Padrao'
+    # Na execucao remota o proprio pacote e extraido em %TEMP%\COMPARTDISK_<id>,
+    # e o trace de inicializacao vive em %TEMP%\COMPARTDISK_Bootstrap.log. Limpar
+    # o TEMP sem essa excecao apagaria os modulos da instancia em execucao.
+    & $add 'Temp do usuario'          $env:TEMP 'Padrao' $true @() @('COMPARTDISK_*')
     & $add 'Temp do Windows'          (Join-Path $env:SystemRoot 'Temp') 'Padrao'
     & $add 'Cache do Windows Update'  (Join-Path $env:SystemRoot 'SoftwareDistribution\Download') 'Padrao'
     & $add 'Delivery Optimization'    (Join-Path $env:SystemRoot 'SoftwareDistribution\DeliveryOptimization') 'Padrao'
@@ -124,7 +128,7 @@ function Invoke-Cleanup {
     foreach ($t in $Targets) {
         if (-not (Test-Path -LiteralPath $t.Caminho)) { continue }
         $antes = Get-CompartDiskFolderSize -Path $t.Caminho
-        $r = Remove-CompartDiskPathSafely -Path $t.Caminho -KeepRoot:$t.ManterRaiz -ExcludeNames $t.Excluir
+        $r = Remove-CompartDiskPathSafely -Path $t.Caminho -KeepRoot:$t.ManterRaiz -ExcludeNames $t.Excluir -ExcludePatterns $t.ExcluirPadrao
 
         $totalLiberado   += $r.BytesFreed
         $bloqueadosTotal += $r.Failed
@@ -184,14 +188,28 @@ function Clear-EventLogs {
         return
     }
 
-    # Exporta os principais antes de limpar (reversibilidade)
+    # Exporta os principais antes de limpar (reversibilidade).
+    # O exito e medido pelo arquivo efetivamente produzido, e nao pela ausencia de
+    # excecao: a limpeza abaixo e irreversivel e nao pode ser precedida por um
+    # "backup concluido" que nunca existiu.
+    $exportados = 0
     foreach ($log in @('System', 'Application', 'Security')) {
         $dest = Join-Path $exportar "$log.evtx"
-        Invoke-SafeCommand {
-            Invoke-NativeCommand -FilePath $wevtutil -Arguments @('epl', $log, "`"$dest`"") -TimeoutSeconds 120
-        } -Activity "Exportar log $log" | Out-Null
+        $e = Invoke-SafeCommand {
+            Invoke-NativeCommand -FilePath $wevtutil -Arguments @('epl', "`"$log`"", "`"$dest`"") -TimeoutSeconds 120
+        } -Activity "Exportar log $log"
+        if ($e.Success -and $e.Value -and $e.Value.ExitCode -eq 0 -and (Test-Path -LiteralPath $dest)) {
+            $exportados++
+        } else {
+            Write-Log WARN "Log '$log' nao pode ser exportado. Ele sera limpo SEM copia de seguranca."
+        }
     }
-    Write-Log OK "Backup dos logs principais em: $exportar"
+    if ($exportados -gt 0) {
+        Write-Log OK "Backup de $exportados de 3 log(s) principal(is) em: $exportar"
+    } else {
+        Write-Log ERR 'Nenhum log pode ser exportado. A limpeza prosseguira SEM copia de seguranca.'
+        $script:result = 'WARN'
+    }
 
     $r = Invoke-SafeCommand { Invoke-NativeCommand -FilePath $wevtutil -Arguments @('el') -TimeoutSeconds 60 } -Activity 'Listar logs'
     $limpos = 0; $falhas = 0
@@ -226,9 +244,11 @@ function Clear-EventLogs {
         'Logs limpos'      = $limpos
         'Logs protegidos'  = $falhas
         'Dumps liberados'  = (ConvertTo-CompartDiskSize $lib)
-        'Backup dos logs'  = $exportar
+        'Backup dos logs'  = $(if ($exportados -gt 0) { "$exportar ($exportados de 3)" } else { 'NENHUM - exportacao falhou' })
     })
-    Add-CompartDiskFinding -Severity INFO -Area 'Limpeza' -Message "$limpos log(s) de eventos limpos." -Recommendation "Backup preservado em $exportar"
+    Add-CompartDiskFinding -Severity $(if ($exportados -gt 0) { 'INFO' } else { 'WARN' }) -Area 'Limpeza' `
+        -Message "$limpos log(s) de eventos limpos." `
+        -Recommendation $(if ($exportados -gt 0) { "Backup preservado em $exportar" } else { 'Nenhum log pode ser exportado antes da limpeza.' })
 }
 
 # ------------------------------------------------------------------------------
