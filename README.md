@@ -141,9 +141,11 @@ atualizações. Abra o **PowerShell como administrador** e execute:
 irm https://compartdisk.com.br/run | iex
 ```
 
-O inicializador consulta a versão mais recente, baixa o pacote, **valida a
-integridade por SHA-256** e executa o `Launcher.bat`. Ao encerrar, remove todos os
-arquivos temporários — nada permanece no disco.
+O inicializador consulta a versão mais recente, baixa o pacote, confere a assinatura
+de arquivo ZIP e — quando a versão publica o valor nas notas da release — **valida a
+integridade por SHA-256**; se o valor não estiver publicado, o script avisa na tela e
+prossegue. Em seguida executa o `Launcher.bat`. Ao encerrar, remove todos os arquivos
+temporários — nada permanece no disco.
 
 <details>
 <summary>Endereço alternativo, direto pelo repositório</summary>
@@ -267,8 +269,9 @@ Launcher.bat /?          :: exibe a ajuda
 ```
 
 Em modo desassistido não há menus nem pausas. O processo encerra com código de saída
-`0` (sucesso), `1` (avisos) ou `2` (erro tratado), o que permite encadeamento em
-scripts.
+`0`, o que permite encadeamento em scripts. O diagnóstico de cada execução fica no
+log de texto e nos relatórios da sessão — no JSON, o campo `Findings` traz a
+severidade de cada constatação.
 
 ### Coleta centralizada
 

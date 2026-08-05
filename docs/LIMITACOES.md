@@ -48,6 +48,31 @@ Algumas correções só passam a valer depois de reiniciar o Windows:
 
 A ferramenta avisa quando isso se aplica.
 
+### Remoção de aplicativos não é reversível localmente
+
+O módulo de Desbloat reverte serviços, tarefas agendadas e ajustes de registro ao
+valor exato anterior, a partir do manifesto gravado em cada execução. **Aplicativos
+removidos são exceção:** o Windows não retém o pacote original em disco após a
+remoção, então a reversão apenas lista o que foi removido para reinstalação pela
+Microsoft Store. Antes de aplicar qualquer nível acima de Seguro, use a simulação.
+
+A limpeza do armazenamento de componentes também é definitiva, e com `/ResetBase`
+(nível Avançado) as atualizações já instaladas deixam de ser desinstaláveis.
+
+### O perfil usado é o de quem elevou
+A ferramenta roda elevada. Quando a elevação é feita com **uma conta de administrador
+diferente** da que está usando o computador — cenário comum em ambiente corporativo —
+as operações que dependem do perfil do usuário atuam sobre o perfil do administrador,
+não sobre o de quem está logado. Isso afeta:
+
+- limpeza de caches de navegadores;
+- redefinição das preferências de exibição de pastas;
+- inventário de programas instalados apenas para o usuário.
+
+Quando a elevação é a do próprio usuário (o caso doméstico, em que o Windows apenas
+pede a confirmação do Controle de Conta de Usuário), o perfil é o mesmo e não há
+divergência.
+
 ### Arquivos em uso
 
 Pastas e arquivos abertos por processos ativos não podem ser renomeados ou apagados.
@@ -108,7 +133,8 @@ pesa na inicialização. Elas não aceleram hardware antigo além do que ele per
 
 ## Erros conhecidos
 
-Nenhum erro aberto nesta versão.
+Nenhum erro aberto nesta versão. Os defeitos já corrigidos estão listados no
+[Histórico de Mudanças](../CHANGELOG.md).
 
 Encontrou um? Abra uma *issue* em
 https://github.com/edsilas/compartdisk/issues, anexando o relatório HTML e o arquivo

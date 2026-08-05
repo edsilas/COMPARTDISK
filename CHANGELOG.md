@@ -7,6 +7,103 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [Não publicado]
+
+### Adicionado
+
+- **Módulo de Desbloat (`Modules/Debloat.ps1`).** Onze ações: `Analyze`, `Apps`,
+  `Services`, `Tasks`, `Privacy`, `Tweaks`, `Components`, `Full`, `Backup`, `Restore`
+  e `RestorePoint`, em três níveis de risco — `Safe`, `Moderate` e `Aggressive`.
+  Acessível pelo menu `[4]` › `[9]`. Nenhuma tecla de menu existente mudou de posição.
+- **Catálogo declarativo único.** Cada item traz tipo, categoria, nível mínimo, motivo
+  técnico e reversibilidade. Simulação, execução e relatório derivam da mesma fonte,
+  o que garante que a prévia descreva exatamente o que a execução fará.
+- **Listas de proteção com precedência absoluta.** Famílias Appx, prefixos de runtime,
+  serviços e ramos de registro protegidos são avaliados depois de `-Include`,
+  justamente para que a proteção não possa ser contornada por parâmetro. Pacotes
+  casados por curinga são reconferidos pelo nome real antes da remoção.
+- **Manifesto de reversão.** Toda alteração registra o estado *anterior* em JSON, em
+  duas cópias: no diretório da sessão e em `COMPARTDISK_Restauracao`, fora dela. A
+  ação `Restore` devolve serviços, tarefas e registro ao valor exato de origem —
+  inclusive removendo valores que não existiam antes, em vez de gravar zero.
+- **Ponto de restauração do sistema.** A rotina completa cria um antes de qualquer
+  alteração e **aborta** se não conseguir, salvo `-SkipRestorePoint` explícito. Trata
+  os dois motivos clássicos de falha: proteção desligada e o intervalo mínimo de 24 h.
+- **Validação prévia** de edição do Windows, privilégio, reinício pendente,
+  disponibilidade dos módulos Appx e ScheduledTasks e espaço livre em disco.
+- **Simulação como padrão.** `Analyze` nunca altera nada, e `-DryRun` aplica a mesma
+  proteção a qualquer outra ação.
+- **Decisão condicional por hardware.** O `SysMain` é preservado em disco mecânico,
+  onde o Superfetch traz ganho real, e só é desativado em SSD.
+- Rotinas Batch `:FB_DEBLOAT*` para serviços, tarefas, registro, componentes e ponto
+  de restauração, mantendo a promessa de degradação sem PowerShell. A remoção de
+  aplicativos não tem equivalente Batch e é informada como tal.
+
+### Correção de defeitos
+
+Correção de defeitos e endurecimento de guardas de segurança. Nenhuma funcionalidade
+foi adicionada ou removida; nenhuma tecla de menu mudou de posição.
+
+### Corrigido
+
+- **Raiz do disco não era reconhecida como caminho protegido.** A lista de proteção
+  guardava `C:\` enquanto o alvo era normalizado para `C:`, e a comparação nunca
+  casava. O efeito prático era permitir `takeown` e reescrita de ACL recursivos sobre
+  todo o volume de sistema. A decisão passou a morar em ponto único no `Core.ps1`
+  (`Test-CompartDiskProtectedPath`), com normalização aplicada aos dois lados.
+- **Troca de senha travava ao final.** Uma chamada a `Write-Color` sem argumento fazia
+  o PowerShell abrir prompt de parâmetro obrigatório logo após a senha ser redefinida.
+- **Backup dos logs de eventos era anunciado mesmo quando falhava.** A mensagem de
+  êxito e o achado do relatório passaram a refletir quantos logs foram realmente
+  exportados antes da limpeza, que é irreversível.
+- **`Invoke-NativeCommand` podia travar indefinidamente.** A leitura de saída padrão e
+  de erro era sequencial: o processo filho bloqueava ao encher o canal ainda não lido,
+  e o tempo limite jamais chegava a ser avaliado. Os dois canais passaram a ser
+  drenados de forma concorrente, e o tempo limite tornou-se efetivo.
+- **Relatório consolidado duplicava achados.** Consolidar duas vezes na mesma sessão
+  reagregava o próprio estado do módulo `Report`, dobrando cada constatação e os
+  contadores do resumo executivo.
+- **Constatações perdidas quando o mesmo módulo era executado duas vezes.** O arquivo
+  de estado era nomeado apenas pelo módulo; a segunda ação sobrescrevia a primeira.
+  O nome passou a incluir a ação. Afetava seis opções de menu.
+- **Senha em texto claro permanecia em memória.** O `BSTR` gerado na confirmação nunca
+  era liberado com `ZeroFreeBSTR`, e a cadeia gerenciada sobrevivia até uma coleta
+  futura. Ambos passaram a ser zerados e liberados de forma determinística.
+- **Ativação e desativação da conta interna geravam texto malformado** no log e no
+  relatório (`habilitarda`, `desabilitarda`).
+- **Variável de cor inexistente no relatório HTML.** A classe `.brand` referenciava
+  `--accent`, que nunca foi declarada.
+- **Fallback de `Write-Color` poluía o valor de retorno.** Ao falhar, a função escrevia
+  no fluxo de saída, o que podia transformar o código devolvido por
+  `Stop-CompartDiskModule` em um vetor.
+- **`Users.ps1` e `remote.ps1` estavam sem marca de ordem de bytes**, contrariando a
+  convenção registrada no Manual Técnico.
+
+### Alterado
+
+- **Rotina Batch de contas alinhada ao caminho PowerShell.** A listagem deixou de
+  emendar a *remoção* de senha e o encadeamento automático da conta interna de
+  Administrador. Agora termina na listagem e exige escolha deliberada, como já
+  acontecia com o PowerShell disponível. A auditoria de contas passou a usar uma
+  rotina somente leitura.
+- **Modo desassistido não abre mais o navegador.** `/audit` e `/report` deixaram de
+  exibir o relatório HTML ao final. O modo interativo permanece inalterado.
+- **Relatório JSON gravado sem marca de ordem de bytes.** O mesmo arquivo era gerado
+  com BOM no Windows PowerShell 5.1 e sem BOM no PowerShell 7. TXT, CSV e HTML não
+  mudaram.
+- **Limpeza preserva os artefatos da própria ferramenta em `%TEMP%`.** Na execução
+  remota o pacote é extraído ali, e a limpeza profunda removia os módulos da instância
+  em execução.
+- Duas opções que se tornavam silenciosas sem PowerShell — exclusões do Defender e
+  troca de senha — passaram a informar a indisponibilidade.
+- Nome de conta e caminho digitados no Launcher têm aspas removidas antes de compor
+  os argumentos, o que também faz funcionar o texto colado com **Copiar como caminho**
+  do Explorer.
+- Documentação alinhada ao comportamento real: código de saída do modo desassistido,
+  condições da validação SHA-256 e limitação de perfil sob elevação.
+
+---
+
 ## [1.2.0] — 2026-07-31
 
 Versão oficial de publicação. Consolida a identidade **COMPARTDISK**, padroniza o

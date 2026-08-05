@@ -75,6 +75,30 @@ precisar de nova autorização.
 | `6` | Análise de Desempenho | 🔵 |
 | `7` | Restaurar Telemetria ao Padrão do Windows | 🟡 |
 | `8` | Restaurar Plano de Energia Equilibrado | 🟡 |
+| `9` | Desbloat do Windows — abre submenu próprio | 🟡 |
+
+#### Submenu do Desbloat — `[4]` › `[9]`
+
+| Tecla | Ação | Risco |
+|:---:|---|:---:|
+| `1` | Simular Desbloat — não altera nada | 🟢 |
+| `2` | Desbloat Seguro | 🟡 |
+| `3` | Desbloat Moderado | 🟠 |
+| `4` | Desbloat Avançado | 🔴 |
+| `5` | Remover Somente Aplicativos | 🟠 |
+| `6` | Ajustar Serviços e Tarefas Agendadas | 🟡 |
+| `7` | Privacidade e Ajustes Opcionais | 🟢 |
+| `8` | Limpar Componentes Obsoletos (WinSxS) | 🟡 |
+| `9` | Backup, Ponto de Restauração e Reverter | 🟢 |
+
+#### Backup e reversão — `[4]` › `[9]` › `[9]`
+
+| Tecla | Ação | Risco |
+|:---:|---|:---:|
+| `1` | Criar Ponto de Restauração Agora | 🟢 |
+| `2` | Registrar Estado Atual (backup) | 🟢 |
+| `3` | Simular Reversão | 🟢 |
+| `4` | Reverter Alterações do Desbloat | 🟡 |
 | `0` | Voltar | — |
 
 **`4` Simular Limpeza** — comece por aqui. Mostra quanto espaço cada categoria

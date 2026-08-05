@@ -26,6 +26,7 @@ compartdisk/
 │   ├── Security.ps1                  Postura de segurança e permissões
 │   ├── Users.ps1                     Contas locais
 │   ├── Telemetry.ps1                 Telemetria
+│   ├── Debloat.ps1                   Desbloat: aplicativos, servicos, tarefas, componentes
 │   ├── Performance.ps1               Energia e desempenho
 │   ├── Hardware.ps1                  Inventário de hardware
 │   ├── Drivers.ps1                   Drivers

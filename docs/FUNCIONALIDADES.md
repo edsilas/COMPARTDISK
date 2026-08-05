@@ -19,6 +19,7 @@ veja o [Manual do Usuário](MANUAL-DO-USUARIO.md).
 | `Security.ps1` | `Status` `GpoReset` `Takeown` `Firewall` `Uac` |
 | `Users.ps1` | `List` `Groups` `Audit` `ClearPassword` `SetPassword` `EnableAdmin` `DisableAdmin` |
 | `Telemetry.ps1` | `Status` `Disable` `Enable` |
+| `Debloat.ps1` | `Analyze` `Apps` `Services` `Tasks` `Privacy` `Tweaks` `Components` `Full` `Backup` `Restore` `RestorePoint` |
 | `Performance.ps1` | `Analyze` `Ultimate` `Balanced` `Startup` `Processes` `Services` |
 | `Hardware.ps1` | `Info` `Full` `Gpu` `Memory` `Devices` `Temperature` |
 | `Drivers.ps1` | `List` `Problems` `Backup` `Unsigned` `Export` |
