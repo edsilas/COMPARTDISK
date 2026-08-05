@@ -1,6 +1,6 @@
 # Perguntas Frequentes
 
-**COMPARTDISK 1.2.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.3.0** · Desenvolvido por Edsilas
 
 ---
 

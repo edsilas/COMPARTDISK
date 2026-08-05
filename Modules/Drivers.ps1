@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.2.0 - Drivers.ps1
+ COMPARTDISK 1.3.0 - Drivers.ps1
  Desenvolvido por Edsilas
  Acoes: List | Problems | Backup | Unsigned | Export
 #>

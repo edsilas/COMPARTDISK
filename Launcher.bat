@@ -1,6 +1,6 @@
 @echo off
 :: ==============================================================================
-:: COMPARTDISK 1.2.0 - ASSISTENTE DE REPARO PARA WINDOWS 10 E WINDOWS 11
+:: COMPARTDISK 1.3.0 - ASSISTENTE DE REPARO PARA WINDOWS 10 E WINDOWS 11
 :: DESENVOLVIDO POR EDSILAS
 ::
 :: Arquitetura hibrida: Batch como interface, navegacao, controle de fluxo,
@@ -52,7 +52,7 @@ chcp 65001 >nul 2>&1
 :: Se o processo morrer de forma abrupta, a ultima linha deste arquivo aponta
 :: exatamente o estagio em que a falha ocorreu.
 :: ==============================================================================
-set "COMPARTDISK_VERSION=1.2.0"
+set "COMPARTDISK_VERSION=1.3.0"
 set "COMPARTDISK_ROOT=%~dp0"
 set "COMPARTDISK_MODULES=%~dp0Modules"
 set "COMPARTDISK_SELF=%~f0"

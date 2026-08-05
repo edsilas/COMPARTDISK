@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.2.0 - Performance.ps1
+ COMPARTDISK 1.3.0 - Performance.ps1
  Desenvolvido por Edsilas
  Acoes: Analyze | Ultimate | Balanced | Startup | Processes | Services
 #>

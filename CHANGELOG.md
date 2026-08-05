@@ -7,7 +7,7 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
-## [Não publicado]
+## [1.3.0] — 2026-08-05
 
 ### Adicionado
 
@@ -206,6 +206,7 @@ Primeira versão da arquitetura modular.
 
 ---
 
+[1.3.0]: https://github.com/edsilas/compartdisk/releases/tag/v1.3.0
 [1.2.0]: https://github.com/edsilas/compartdisk/releases/tag/v1.2.0
 [1.1.0]: https://github.com/edsilas/compartdisk/releases/tag/v1.1.0
 [1.0.0]: https://github.com/edsilas/compartdisk/releases/tag/v1.0.0

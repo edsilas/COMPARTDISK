@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.2.0 - Battery.ps1
+ COMPARTDISK 1.3.0 - Battery.ps1
  Desenvolvido por Edsilas
  Acoes: Info | Report | Sleep
 #>

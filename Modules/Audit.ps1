@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.2.0 - Audit.ps1
+ COMPARTDISK 1.3.0 - Audit.ps1
  Desenvolvido por Edsilas
  Acoes: Full | Quick | Events | Software | License
  -NoOpen suprime a abertura automatica do relatorio (modo desassistido).

@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.2.0 - Debloat.ps1
+ COMPARTDISK 1.3.0 - Debloat.ps1
  Desenvolvido por Edsilas
  Acoes: Analyze | Apps | Services | Tasks | Privacy | Tweaks | Components | Full
         Backup | Restore | RestorePoint

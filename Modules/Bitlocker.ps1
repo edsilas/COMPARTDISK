@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.2.0 - Bitlocker.ps1
+ COMPARTDISK 1.3.0 - Bitlocker.ps1
  Desenvolvido por Edsilas
  Acoes: Status | Report | Keys
  Modulo somente leitura: nao altera o estado de criptografia dos volumes.

@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.2.0 - Network.ps1
+ COMPARTDISK 1.3.0 - Network.ps1
  Desenvolvido por Edsilas
  Acoes: Info | Reset | Hosts | Firewall | Test | Proxy | Wifi
 #>

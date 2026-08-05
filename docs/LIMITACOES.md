@@ -1,6 +1,6 @@
 # Limitações Conhecidas
 
-**COMPARTDISK 1.2.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.3.0** · Desenvolvido por Edsilas
 
 Ser honesto sobre o que a ferramenta **não** faz é tão importante quanto documentar o
 que ela faz. Esta página lista os limites reais.

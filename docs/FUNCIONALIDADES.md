@@ -1,6 +1,6 @@
 # Descrição das Funcionalidades
 
-**COMPARTDISK 1.2.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.3.0** · Desenvolvido por Edsilas
 
 Descrição técnica do que cada recurso faz. Para a explicação em linguagem simples,
 veja o [Manual do Usuário](MANUAL-DO-USUARIO.md).

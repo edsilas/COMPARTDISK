@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.2.0 - Cleanup.ps1
+ COMPARTDISK 1.3.0 - Cleanup.ps1
  Desenvolvido por Edsilas
  Acoes: Analyze | Standard | Deep | Browsers | Logs
  Nenhum alvo remove arquivos necessarios ao funcionamento do Windows.
