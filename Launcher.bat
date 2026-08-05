@@ -328,10 +328,10 @@ goto MENU_PRINCIPAL
 call :MOD_AUTO_FIX_CORE
 goto SAIR
 :CLI_AUDIT
-call :MOD_AUDITORIA_COMPLETA
+call :MOD_AUDITORIA_COMPLETA_CLI
 goto SAIR
 :CLI_REPORT
-call :MOD_RELATORIO
+call :MOD_RELATORIO_CLI
 goto SAIR
 :CLI_CLEAN
 call :MOD_TEMP_LOGS_SILENT
@@ -449,14 +449,16 @@ echo    %C_CIANO%[5]%C_RESET%  %C_TEXTO%Limpeza de Navegadores (Edge, Chrome, Br
 echo    %C_CIANO%[6]%C_RESET%  %C_TEXTO%Analise de Desempenho (energia, inicializacao, processos, servicos)%C_RESET%
 echo    %C_CIANO%[7]%C_RESET%  %C_TEXTO%Restaurar Telemetria ao Padrao do Windows%C_RESET%
 echo    %C_CIANO%[8]%C_RESET%  %C_TEXTO%Restaurar Plano de Energia Equilibrado%C_RESET%
+echo    %C_CIANO%[9]%C_RESET%  %C_TEXTO%Desbloat do Windows (aplicativos, servicos, tarefas, componentes)%C_RESET%
 echo.
 echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
 echo.
 echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
-choice /c 123456780 /n /m "  Opcao: "
-if errorlevel 9 goto MENU_PRINCIPAL
+choice /c 1234567890 /n /m "  Opcao: "
+if errorlevel 10 goto MENU_PRINCIPAL
+if errorlevel 9 goto MENU_DEBLOAT
 if errorlevel 8 call :MOD_PERF_BALANCED
 if errorlevel 7 call :MOD_TELEMETRIA_ON
 if errorlevel 6 call :MOD_PERF_ANALISE
@@ -466,6 +468,75 @@ if errorlevel 3 call :MOD_PERFORMANCE
 if errorlevel 2 call :MOD_TELEMETRIA
 if errorlevel 1 call :MOD_TEMP_LOGS
 pause & goto MENU_OTIMIZACAO
+
+:MENU_DEBLOAT
+cls
+echo.
+echo   %C_TITULO%Desbloat do Windows%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo   %C_TEXTO%Tres niveis, do mais conservador ao mais invasivo. Comece sempre pela%C_RESET%
+echo   %C_TEXTO%simulacao: ela mostra exatamente o que seria alterado, sem alterar nada.%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Simular Desbloat (nao altera nada)%C_RESET%   %C_CINZA%(comece aqui)%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Desbloat Seguro%C_RESET%   %C_CINZA%(recomendado)%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Desbloat Moderado (inclui Xbox, midia, fotos, email)%C_RESET%
+echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Desbloat Avancado (inclui busca do Iniciar e ResetBase)%C_RESET%
+echo    %C_CIANO%[5]%C_RESET%  %C_TEXTO%Remover Somente Aplicativos%C_RESET%
+echo    %C_CIANO%[6]%C_RESET%  %C_TEXTO%Ajustar Servicos e Tarefas Agendadas%C_RESET%
+echo    %C_CIANO%[7]%C_RESET%  %C_TEXTO%Privacidade e Ajustes Opcionais%C_RESET%
+echo    %C_CIANO%[8]%C_RESET%  %C_TEXTO%Limpar Componentes Obsoletos (WinSxS)%C_RESET%
+echo    %C_CIANO%[9]%C_RESET%  %C_TEXTO%Backup, Ponto de Restauracao e Reverter Alteracoes%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+choice /c 1234567890 /n /m "  Opcao: "
+if errorlevel 10 goto MENU_OTIMIZACAO
+if errorlevel 9 goto MENU_DEBLOAT_REVERSAO
+if errorlevel 8 call :MOD_DEBLOAT_COMPONENTES
+if errorlevel 7 call :MOD_DEBLOAT_PRIVACIDADE
+if errorlevel 6 call :MOD_DEBLOAT_SERVICOS
+if errorlevel 5 call :MOD_DEBLOAT_APPS
+if errorlevel 4 call :MOD_DEBLOAT_AVANCADO
+if errorlevel 3 call :MOD_DEBLOAT_MODERADO
+if errorlevel 2 call :MOD_DEBLOAT_SEGURO
+if errorlevel 1 call :MOD_DEBLOAT_SIMULAR
+pause & goto MENU_DEBLOAT
+
+:MENU_DEBLOAT_REVERSAO
+cls
+echo.
+echo   %C_TITULO%Backup e Reversao do Desbloat%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo   %C_TEXTO%Servicos, tarefas e ajustes de registro voltam ao valor exato anterior.%C_RESET%
+echo   %C_TEXTO%Aplicativos removidos precisam ser reinstalados pela Microsoft Store:%C_RESET%
+echo   %C_TEXTO%o Windows nao guarda o pacote original no disco apos a remocao.%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Criar Ponto de Restauracao Agora%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Registrar Estado Atual (backup, nao altera nada)%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Simular Reversao%C_RESET%
+echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Reverter Alteracoes do Desbloat%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+choice /c 12340 /n /m "  Opcao: "
+if errorlevel 5 goto MENU_DEBLOAT
+if errorlevel 4 call :MOD_DEBLOAT_REVERTER
+if errorlevel 3 call :MOD_DEBLOAT_REVERTER_SIMULAR
+if errorlevel 2 call :MOD_DEBLOAT_BACKUP
+if errorlevel 1 call :MOD_DEBLOAT_PONTO
+pause & goto MENU_DEBLOAT_REVERSAO
 
 :MENU_REPARO
 cls
@@ -834,6 +905,131 @@ if errorlevel 9000 goto FB_PERF_ANALISE
 goto :EOF
 
 :: ------------------------------------------------------------------------------
+:: DESBLOAT DO WINDOWS
+:: ------------------------------------------------------------------------------
+:MOD_DEBLOAT_SIMULAR
+set "PS_ARGS=-Action Analyze -Level Moderate"
+call :RUN_PS "Debloat.ps1"
+if errorlevel 9000 goto FB_DEBLOAT
+goto :EOF
+
+:MOD_DEBLOAT_SEGURO
+echo.
+echo   %C_TEXTO%O nivel Seguro remove aplicativos promocionais e pre-instalados de%C_RESET%
+echo   %C_TEXTO%fabricante, ajusta servicos sem uso e desliga sugestoes na interface.%C_RESET%
+echo   %C_TEXTO%Nada que o Windows precise para funcionar e tocado.%C_RESET%
+echo.
+echo   %C_TEXTO%Um ponto de restauracao sera criado antes de qualquer alteracao.%C_RESET%
+echo.
+choice /c SN /n /m "  Continuar? (S/N): "
+if errorlevel 2 goto :EOF
+set "PS_ARGS=-Action Full -Level Safe"
+call :RUN_PS "Debloat.ps1"
+if errorlevel 9000 goto FB_DEBLOAT
+goto :EOF
+
+:MOD_DEBLOAT_MODERADO
+echo.
+echo   %C_AMARELO%ANTES DE CONTINUAR, LEIA:%C_RESET%
+echo.
+echo   %C_TEXTO%O nivel Moderado remove tambem os aplicativos Xbox, o player de musica%C_RESET%
+echo   %C_TEXTO%e video, o visualizador de Fotos, a Camera, o Email e o Calendario.%C_RESET%
+echo.
+echo   %C_TEXTO%Se voce usa qualquer um deles, escolha o nivel Seguro.%C_RESET%
+echo   %C_TEXTO%Aplicativos removidos so voltam pela Microsoft Store.%C_RESET%
+echo.
+choice /c SN /n /m "  Continuar mesmo assim? (S/N): "
+if errorlevel 2 goto :EOF
+set "PS_ARGS=-Action Full -Level Moderate"
+call :RUN_PS "Debloat.ps1"
+if errorlevel 9000 goto FB_DEBLOAT
+goto :EOF
+
+:MOD_DEBLOAT_AVANCADO
+echo.
+echo   %C_AMARELO%ATENCAO - NIVEL AVANCADO%C_RESET%
+echo.
+echo   %C_TEXTO%Alem de tudo do nivel Moderado, este nivel:%C_RESET%
+echo.
+echo   %C_TEXTO%  - desativa a indexacao, o que desliga a busca do menu Iniciar;%C_RESET%
+echo   %C_TEXTO%  - remove a Ferramenta de Captura e a Calculadora;%C_RESET%
+echo   %C_TEXTO%  - aplica /ResetBase no DISM, o que impede desinstalar as%C_RESET%
+echo   %C_TEXTO%    atualizacoes do Windows ja aplicadas.%C_RESET%
+echo.
+echo   %C_TEXTO%Recomendado apenas para quem sabe exatamente o que esta fazendo.%C_RESET%
+echo.
+choice /c SN /n /m "  Li os avisos e quero continuar? (S/N): "
+if errorlevel 2 goto :EOF
+set "PS_ARGS=-Action Full -Level Aggressive"
+call :RUN_PS "Debloat.ps1"
+if errorlevel 9000 goto FB_DEBLOAT
+goto :EOF
+
+:MOD_DEBLOAT_APPS
+set "PS_ARGS=-Action Apps -Level Safe"
+call :RUN_PS "Debloat.ps1"
+if errorlevel 9000 call :LOG_MSG "WARN" "A remocao de aplicativos exige PowerShell. Use Configuracoes / Aplicativos."
+goto :EOF
+
+:MOD_DEBLOAT_SERVICOS
+set "PS_ARGS=-Action Services -Level Safe"
+call :RUN_PS "Debloat.ps1"
+if errorlevel 9000 goto FB_DEBLOAT_SERVICOS
+set "PS_ARGS=-Action Tasks -Level Safe"
+call :RUN_PS "Debloat.ps1"
+goto :EOF
+
+:MOD_DEBLOAT_PRIVACIDADE
+set "PS_ARGS=-Action Privacy -Level Safe"
+call :RUN_PS "Debloat.ps1"
+if errorlevel 9000 goto FB_DEBLOAT_PRIVACIDADE
+set "PS_ARGS=-Action Tweaks -Level Safe"
+call :RUN_PS "Debloat.ps1"
+goto :EOF
+
+:MOD_DEBLOAT_COMPONENTES
+echo.
+echo   %C_TEXTO%A limpeza do armazenamento de componentes remove versoes superadas de%C_RESET%
+echo   %C_TEXTO%arquivos do Windows. Costuma demorar e usar disco intensamente.%C_RESET%
+echo.
+choice /c SN /n /m "  Continuar? (S/N): "
+if errorlevel 2 goto :EOF
+set "PS_ARGS=-Action Components -Level Safe"
+call :RUN_PS "Debloat.ps1"
+if errorlevel 9000 goto FB_DEBLOAT_COMPONENTES
+goto :EOF
+
+:MOD_DEBLOAT_PONTO
+set "PS_ARGS=-Action RestorePoint"
+call :RUN_PS "Debloat.ps1"
+if errorlevel 9000 goto FB_DEBLOAT_PONTO
+goto :EOF
+
+:MOD_DEBLOAT_BACKUP
+set "PS_ARGS=-Action Backup"
+call :RUN_PS "Debloat.ps1"
+if errorlevel 9000 call :LOG_MSG "WARN" "O registro de estado exige PowerShell."
+goto :EOF
+
+:MOD_DEBLOAT_REVERTER_SIMULAR
+set "PS_ARGS=-Action Restore -DryRun"
+call :RUN_PS "Debloat.ps1"
+if errorlevel 9000 call :LOG_MSG "WARN" "A reversao exige PowerShell e o manifesto gravado pelo modulo."
+goto :EOF
+
+:MOD_DEBLOAT_REVERTER
+echo.
+echo   %C_TEXTO%Servicos, tarefas e ajustes de registro voltarao ao estado anterior.%C_RESET%
+echo   %C_TEXTO%Os aplicativos removidos serao apenas listados para reinstalacao.%C_RESET%
+echo.
+choice /c SN /n /m "  Confirmar a reversao? (S/N): "
+if errorlevel 2 goto :EOF
+set "PS_ARGS=-Action Restore"
+call :RUN_PS "Debloat.ps1"
+if errorlevel 9000 call :LOG_MSG "WARN" "A reversao exige PowerShell e o manifesto gravado pelo modulo."
+goto :EOF
+
+:: ------------------------------------------------------------------------------
 :: REPARO DO SISTEMA
 :: ------------------------------------------------------------------------------
 :MOD_SFC_DISM
@@ -948,6 +1144,10 @@ goto :EOF
 :MOD_DEFENDER_EXCL
 set "PS_ARGS=-Action Exclusions"
 call :RUN_PS "Defender.ps1"
+if errorlevel 9000 (
+    call :LOG_MSG "WARN" "Exclusoes e historico de ameacas exigem PowerShell. Consulte Seguranca do Windows."
+    goto :EOF
+)
 set "PS_ARGS=-Action History"
 call :RUN_PS "Defender.ps1"
 goto :EOF
@@ -994,9 +1194,14 @@ if errorlevel 2 goto MOD_USERS_ESCOLHA
 echo.
 set "TARGET_USER="
 set /p "TARGET_USER=  Nome EXATO da conta, como aparece na lista (Enter cancela): "
-if "%TARGET_USER%"=="" goto MOD_USERS_ESCOLHA
+if not defined TARGET_USER goto MOD_USERS_ESCOLHA
+:: Aspa solta na entrada quebra o encadeamento de PS_ARGS na linha de comando do
+:: PowerShell. Nome de conta do Windows nunca contem aspas: remove-las e seguro.
+set "TARGET_USER=%TARGET_USER:"=%"
+if not defined TARGET_USER goto MOD_USERS_ESCOLHA
 set "PS_ARGS=-Action SetPassword -User "%TARGET_USER%""
 call :RUN_PS "Users.ps1"
+if errorlevel 9000 call :LOG_MSG "WARN" "A troca de senha por aqui exige PowerShell. Sem ele, use: net user <conta> *"
 goto :EOF
 
 :MOD_USERS_ADMIN
@@ -1018,13 +1223,18 @@ goto :EOF
 :MOD_USERS_AUDIT
 set "PS_ARGS=-Action Audit"
 call :RUN_PS "Users.ps1"
-if errorlevel 9000 goto FB_USERS
+if errorlevel 9000 goto FB_USERS_LIST
 goto :EOF
 
 :MOD_TAKEOWN
 set "TARGET_PATH="
 set /p "TARGET_PATH=Cole o caminho exato do arquivo/pasta (ou Enter para cancelar): "
-if "%TARGET_PATH%"=="" goto :EOF
+if not defined TARGET_PATH goto :EOF
+:: O Explorer copia caminhos ja entre aspas, e uma aspa solta quebraria o
+:: encadeamento de PS_ARGS. Caminho do Windows nunca contem aspas: remove-las
+:: e seguro e ainda faz o texto colado do Explorer funcionar direto.
+set "TARGET_PATH=%TARGET_PATH:"=%"
+if not defined TARGET_PATH goto :EOF
 set "PS_ARGS=-Action Takeown -Path "%TARGET_PATH%""
 call :RUN_PS "Security.ps1"
 if errorlevel 9000 goto FB_TAKEOWN
@@ -1108,6 +1318,14 @@ call :RUN_PS "Audit.ps1"
 if errorlevel 9000 goto FB_AUDITORIA
 goto :EOF
 
+:MOD_AUDITORIA_COMPLETA_CLI
+:: Mesma auditoria da opcao [8][1], sem abrir o navegador ao final. Em parque de
+:: maquinas, /audit abria uma janela em cada estacao - o oposto de desassistido.
+set "PS_ARGS=-Action Full -Days 7 -NoOpen"
+call :RUN_PS "Audit.ps1"
+if errorlevel 9000 goto FB_AUDITORIA
+goto :EOF
+
 :MOD_AUDITORIA_RAPIDA
 set "PS_ARGS=-Action Quick"
 call :RUN_PS "Audit.ps1"
@@ -1140,6 +1358,14 @@ goto :EOF
 
 :MOD_RELATORIO
 set "PS_ARGS=-Action Consolidate"
+call :RUN_PS "Report.ps1"
+if errorlevel 9000 goto FB_RELATORIO
+goto :EOF
+
+:MOD_RELATORIO_CLI
+:: Consolidacao identica a da opcao [8][3], sem abrir o navegador. Mantem a saida
+:: em tela, ao contrario de :MOD_RELATORIO_SILENCIOSO, que tambem e -Quiet.
+set "PS_ARGS=-Action Consolidate -NoOpen"
 call :RUN_PS "Report.ps1"
 if errorlevel 9000 goto FB_RELATORIO
 goto :EOF
@@ -1278,6 +1504,85 @@ sc config "DiagTrack" start= auto >nul 2>&1
 sc start "DiagTrack" >nul 2>&1
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v AllowTelemetry /t REG_DWORD /d 1 /f >nul 2>&1
 call :LOG_MSG "OK" "Telemetria restaurada ao padrao."
+goto :EOF
+
+:: --- Desbloat em modo degradado -------------------------------------------
+:: Cobre o que sc.exe, schtasks.exe, reg.exe e dism.exe alcancam. A remocao de
+:: aplicativos da loja depende do subsistema Appx e nao tem equivalente Batch.
+:FB_DEBLOAT
+call :LOG_MSG "WARN" "[Batch] Desbloat reduzido: sem PowerShell nao ha catalogo, simulacao nem manifesto de reversao."
+call :FB_DEBLOAT_SERVICOS
+call :FB_DEBLOAT_PRIVACIDADE
+call :LOG_MSG "INFO" "Remocao de aplicativos indisponivel em Batch. Use Configuracoes / Aplicativos / Aplicativos instalados."
+goto :EOF
+
+:FB_DEBLOAT_SERVICOS
+call :LOG_MSG "INFO" "[Batch] Ajustando servicos e tarefas sem uso (subconjunto seguro)..."
+for %%S in (MapsBroker RetailDemo WMPNetworkSvc Fax RemoteRegistry) do (
+    sc config %%S start= disabled >nul 2>&1
+    sc stop %%S >nul 2>&1
+)
+sc config PrintNotify start= demand >nul 2>&1
+call :LOG_MSG "OK" "Servicos sem uso desabilitados."
+for %%T in (
+    "\Microsoft\Windows\Application Experience\StartupAppTask"
+    "\Microsoft\Windows\Application Experience\PcaPatchDbTask"
+    "\Microsoft\Windows\Windows Error Reporting\QueueReporting"
+    "\Microsoft\Windows\CloudExperienceHost\CreateObjectTask"
+    "\Microsoft\Windows\Maps\MapsToastTask"
+    "\Microsoft\Windows\Maps\MapsUpdateTask"
+    "\Microsoft\Windows\Retail Demo\CleanupOfflineContent"
+    "\Microsoft\Windows\Feedback\Siuf\DmClientOnScenarioDownload"
+) do (
+    schtasks /Change /TN %%T /Disable >nul 2>&1
+)
+call :LOG_MSG "OK" "Tarefas agendadas sem uso desabilitadas."
+goto :EOF
+
+:FB_DEBLOAT_PRIVACIDADE
+call :LOG_MSG "INFO" "[Batch] Aplicando ajustes de privacidade e interface..."
+set "CDM=HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+for %%V in (SilentInstalledAppsEnabled PreInstalledAppsEnabled OemPreInstalledAppsEnabled SystemPaneSuggestionsEnabled SoftLandingEnabled SubscribedContent-338388Enabled SubscribedContent-338389Enabled SubscribedContent-353694Enabled SubscribedContent-353696Enabled) do (
+    reg add "%CDM%" /v %%V /t REG_DWORD /d 0 /f >nul 2>&1
+)
+reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Privacy" /v TailoredExperiencesWithDiagnosticDataEnabled /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\UserProfileEngagement" /v ScoobeSystemSettingEnabled /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKCU\SOFTWARE\Microsoft\InputPersonalization" /v RestrictImplicitTextCollection /t REG_DWORD /d 1 /f >nul 2>&1
+reg add "HKCU\SOFTWARE\Microsoft\InputPersonalization" /v RestrictImplicitInkCollection /t REG_DWORD /d 1 /f >nul 2>&1
+reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" /v BingSearchEnabled /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" /v CortanaConsent /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v HideFileExt /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v LaunchTo /t REG_DWORD /d 1 /f >nul 2>&1
+reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v ShowTaskViewButton /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarDa /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarMn /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds" /v EnableFeeds /t REG_DWORD /d 0 /f >nul 2>&1
+call :LOG_MSG "OK" "Sugestoes, busca web no Iniciar e itens opcionais da barra de tarefas desativados."
+call :LOG_MSG "INFO" "Reinicie o Explorer (menu [5][4]) para ver as mudancas de interface."
+goto :EOF
+
+:FB_DEBLOAT_COMPONENTES
+call :LOG_MSG "INFO" "[Batch] Compactando o armazenamento de componentes. Pode demorar..."
+dism /online /cleanup-image /startcomponentcleanup
+if errorlevel 1 (
+    call :LOG_MSG "WARN" "A limpeza de componentes retornou erro. Verifique se ha reinicio pendente."
+) else (
+    call :LOG_MSG "OK" "Armazenamento de componentes compactado."
+)
+goto :EOF
+
+:FB_DEBLOAT_PONTO
+if "%HAS_WMIC%"=="0" (
+    call :LOG_MSG "ERR" "WMIC ausente. Crie o ponto por: Painel de Controle / Recuperacao / Configurar Restauracao do Sistema."
+    goto :EOF
+)
+call :LOG_MSG "INFO" "[Batch] Criando ponto de restauracao via WMI..."
+wmic.exe /Namespace:\\root\default Path SystemRestore Call CreateRestorePoint "COMPARTDISK - antes do Debloat", 12, 100 >nul 2>&1
+if errorlevel 1 (
+    call :LOG_MSG "WARN" "Nao foi possivel criar o ponto. A Protecao do Sistema pode estar desligada."
+) else (
+    call :LOG_MSG "OK" "Ponto de restauracao criado."
+)
 goto :EOF
 
 :FB_PERFORMANCE
@@ -1428,25 +1733,69 @@ sc query WinDefend
 if "%HAS_WMIC%"=="1" wmic /namespace:\\root\SecurityCenter2 path AntiVirusProduct get displayName,productState 2>nul
 goto :EOF
 
-:FB_USERS
+:FB_USERS_LIST
+:: Somente leitura. Usada pela auditoria de contas, que jamais deve oferecer
+:: alteracao como efeito colateral da consulta.
 echo   %C_CINZA%Contas locais do sistema%C_RESET%
 if "%HAS_WMIC%"=="1" (
     wmic useraccount where "LocalAccount=True" get name,disabled 2>nul
 ) else (
     net user
 )
+goto :EOF
+
+:FB_USERS
+:: Espelha a UX ja adotada no caminho PowerShell (:MOD_USERS_ESCOLHA): a listagem
+:: termina aqui, e qualquer alteracao passa a exigir escolha deliberada. Antes, o
+:: fallback emendava a REMOCAO de senha na listagem e encadeava a ativacao do
+:: Administrador embutido - mais destrutivo que o caminho principal.
+call :FB_USERS_LIST
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_TEXTO%A lista acima e apenas informativa. Nada foi alterado ate aqui.%C_RESET%
+echo.
+echo    %C_CINZA%[1]%C_RESET%  %C_TEXTO%Voltar sem alterar nada%C_RESET%   %C_CINZA%(recomendado)%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Definir uma nova senha para uma conta%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Ativar a conta interna de Administrador%C_RESET%
+echo.
+echo   %C_AMARELO%As opcoes [2] e [3] alteram a forma de entrar no Windows.%C_RESET%
+echo.
+choice /c 123 /n /m "  Opcao: "
+if errorlevel 3 goto FB_USERS_ADMIN_CONFIRMAR
+if errorlevel 2 goto FB_USERS_SENHA
+goto :EOF
+
+:FB_USERS_SENHA
+echo.
+echo   %C_TEXTO%O Windows pedira a nova senha em seguida. Ela nao aparece na tela%C_RESET%
+echo   %C_TEXTO%enquanto voce digita - e o comportamento normal.%C_RESET%
+echo.
+echo   %C_TEXTO%Anote a senha ANTES de digitar. Se voce entra no Windows com um%C_RESET%
+echo   %C_TEXTO%E-MAIL (conta Microsoft), NAO troque a senha aqui.%C_RESET%
 echo.
 set "TARGET_USER="
-set /p "TARGET_USER=Nome EXATO do usuario para remover senha (ou Enter): "
-if not "%TARGET_USER%"=="" (
-    net user "%TARGET_USER%" "" >nul 2>&1
-    if errorlevel 1 (
-        call :LOG_MSG "ERR" "Falha. Verifique se o nome esta correto e tente novamente."
-    ) else (
-        call :LOG_MSG "OK" "Senha do usuario %TARGET_USER% removida."
-    )
+set /p "TARGET_USER=  Nome EXATO da conta, como aparece na lista (Enter cancela): "
+if not defined TARGET_USER goto :EOF
+set "TARGET_USER=%TARGET_USER:"=%"
+if not defined TARGET_USER goto :EOF
+net user "%TARGET_USER%" *
+if errorlevel 1 (
+    call :LOG_MSG "ERR" "Falha ao definir a senha. Verifique se o nome esta correto."
+) else (
+    call :LOG_MSG "OK" "Senha da conta %TARGET_USER% redefinida."
 )
-choice /c SN /n /m "Ativar Administrador padrao/oculto? (S/N): "
+goto :EOF
+
+:FB_USERS_ADMIN_CONFIRMAR
+echo.
+echo   %C_AMARELO%A conta interna de Administrador nasce SEM SENHA.%C_RESET%
+echo.
+echo   %C_TEXTO%Ela passara a aparecer na tela de login, e quem tiver acesso fisico ao%C_RESET%
+echo   %C_TEXTO%computador podera entrar por ela sem digitar nada.%C_RESET%
+echo.
+echo   %C_TEXTO%E util para recuperar acesso. Depois de usar, desative-a.%C_RESET%
+echo.
+choice /c SN /n /m "  Ativar mesmo assim? (S/N): "
 if errorlevel 2 goto :EOF
 goto FB_USERS_ADMIN
 
