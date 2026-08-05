@@ -1,4 +1,4 @@
-﻿<#
+<#
  COMPARTDISK - Inicializador de execucao remota
  DESENVOLVIDO POR EDSILAS
 
@@ -12,6 +12,11 @@
  Launcher.bat da distribuicao oficial, com os mesmos menus e modulos.
 
  Observacoes de implementacao:
+ - Este arquivo NAO pode ter marca de ordem de bytes (BOM). Diferente dos demais
+   .ps1 do projeto, ele nao e carregado do disco: e baixado e avaliado por "iex".
+   O Invoke-RestMethod entrega o BOM como caractere U+FEFF no inicio da cadeia, e
+   o parser do PowerShell 5.1 entao deixa de reconhecer o "<#" da linha 1 como
+   abertura de comentario, quebrando o script inteiro.
  - Executado por "irm | iex", o script nao possui $PSScriptRoot nem parametros
    de linha de comando. Por isso a configuracao vem de variaveis de ambiente.
  - O PowerShell 5.1 do Windows 10 pode negociar TLS 1.0 por padrao, o que faz o
