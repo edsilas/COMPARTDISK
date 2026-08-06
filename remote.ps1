@@ -5,7 +5,7 @@
  Baixa e executa sempre a versao estavel mais recente do COMPARTDISK, sem
  instalacao e sem download manual.
 
-     irm https://raw.githubusercontent.com/edsilas/compartdisk/main/remote.ps1 | iex
+    irm https://raw.githubusercontent.com/edsilas/compartdisk/main/remote.ps1 | iex
 
  Este arquivo e APENAS um metodo adicional de inicializacao. Ele nao altera,
  substitui nem contorna nenhum fluxo do projeto: ao final, executa o mesmo
@@ -39,10 +39,11 @@ $ProgressPreference    = 'SilentlyContinue'   # acelera muito o Invoke-WebReques
 # Sobrescrevivel por variavel de ambiente, para uso corporativo com espelho
 # interno ou versao fixada.
 # ==============================================================================
-$Repo    = if ($env:COMPARTDISK_REPO)  { $env:COMPARTDISK_REPO }  else { 'edsilas/compartdisk' }
-$TagFixa = if ($env:COMPARTDISK_TAG)   { $env:COMPARTDISK_TAG }   else { $null }
-$Origem  = "https://github.com/$Repo"
-$ApiBase = "https://api.github.com/repos/$Repo"
+$Repo     = if ($env:COMPARTDISK_REPO)  { $env:COMPARTDISK_REPO }  else { 'edsilas/compartdisk' }
+$TagFixa  = if ($env:COMPARTDISK_TAG)   { $env:COMPARTDISK_TAG }   else { 'v1.3.1' }
+$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { 'fe0412f72ea21211a6ca8b1319fda117a50d85b979facad3043f428b9f0c4c13' }
+$Origem   = "https://github.com/$Repo"
+$ApiBase  = "https://api.github.com/repos/$Repo"
 
 # ==============================================================================
 # APRESENTACAO
@@ -91,7 +92,7 @@ function Initialize-Tls {
         if ([enum]::GetNames([Net.SecurityProtocolType]) -contains 'Tls13') {
             $alvo = $alvo -bor [Net.SecurityProtocolType]::Tls13
         }
-        [Net.ServicePointManager]::SecurityProtocol =
+        [Net.ServicePointManager]::SecurityProtocol = 
             [Net.ServicePointManager]::SecurityProtocol -bor $alvo
     } catch {
         Write-Marcador WARN 'Nao foi possivel ajustar o protocolo TLS. Prosseguindo.'
@@ -159,7 +160,7 @@ function Get-VersaoMaisRecente {
         Url       = if ($asset) { $asset.browser_download_url } else { $dados.zipball_url }
         Arquivo   = if ($asset) { $asset.name } else { "compartdisk-$($dados.tag_name).zip" }
         Tamanho   = if ($asset) { $asset.size } else { 0 }
-        Hash      = Get-HashPublicado -Corpo $dados.body
+        Hash      = if ($HashFixo) { $HashFixo } else { Get-HashPublicado -Corpo $dados.body }
         TemAsset  = [bool]$asset
     }
 }
@@ -265,9 +266,9 @@ function Test-Administrador {
 # ==============================================================================
 # FLUXO PRINCIPAL
 # ==============================================================================
-$temp    = $null
-$pacote  = $null
-$codigo  = 0
+$temp   = $null
+$pacote = $null
+$codigo = 0
 
 try {
     Clear-Host
