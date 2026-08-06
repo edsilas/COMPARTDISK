@@ -1,6 +1,6 @@
 # Guia de Execução Remota
 
-**COMPARTDISK 1.3.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.3.1** · Desenvolvido por Edsilas
 
 Executa a versão estável mais recente com um único comando, sem download manual e
 sem verificar atualizações.
@@ -79,7 +79,7 @@ pasta `Modules` com a biblioteca central. Um pacote incompleto não é executado
 | Proxy ou firewall bloqueando | Detectado no teste de conectividade, com orientação |
 | Falha momentânea de rede | Três tentativas automáticas, com espera progressiva |
 | Download corrompido | Recusado pela assinatura de arquivo |
-| Pacote adulterado | Recusado pela verificação SHA-256 |
+| Pacote adulterado | Recusado pela verificação SHA-256, **quando a versão publica o hash nas notas** — veja a nota da seção 3 |
 | Conteúdo incompleto | Recusado pela verificação estrutural |
 | Sem privilégio administrativo | Avisa e encerra sem alterar nada |
 

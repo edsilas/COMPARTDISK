@@ -24,6 +24,12 @@
 #>
 
 #requires -Version 5.1
+# Executado por "irm | iex", este arquivo roda NO ESCOPO DO CHAMADOR: tudo que ele
+# define sobrevive ao encerramento. Sem a restauracao no finally, a sessao do
+# administrador continuava em StrictMode 2.0 e com ErrorActionPreference=Stop, e
+# comandos seguintes sem nenhuma relacao com a ferramenta passavam a falhar.
+$__eapAnterior  = $ErrorActionPreference
+$__progAnterior = $ProgressPreference
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'   # acelera muito o Invoke-WebRequest
@@ -221,7 +227,11 @@ function Expand-Pacote {
     try {
         Expand-Archive -LiteralPath $Arquivo -DestinationPath $Destino -Force
     } catch {
-        # Fallback para ambientes onde o cmdlet foi removido da imagem
+        # Fallback para ambientes onde o cmdlet foi removido da imagem.
+        # ExtractToDirectory lanca se algum arquivo de destino ja existir: uma falha no
+        # MEIO do Expand-Archive deixava residuo e mascarava o erro original.
+        Remove-Item -LiteralPath $Destino -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Path $Destino -Force | Out-Null
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::ExtractToDirectory($Arquivo, $Destino)
     }
@@ -361,4 +371,9 @@ finally {
         }
     }
     Write-Linha
+    # Nao ha como consultar o nivel de StrictMode anterior; -Off e o mais proximo de
+    # uma restauracao e ja e melhor que deixar a sessao do administrador em 2.0.
+    Set-StrictMode -Off
+    $ErrorActionPreference = $__eapAnterior
+    $ProgressPreference    = $__progAnterior
 }

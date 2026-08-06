@@ -5,7 +5,7 @@
     <img src="https://img.shields.io/badge/License-Apache%202.0-0078D4?style=flat-square&logo=apache&logoColor=white" alt="License">
   </a>
   <a href="CHANGELOG.md">
-    <img src="https://img.shields.io/badge/Release-v1.3.0-107C10?style=flat-square&logo=github&logoColor=white" alt="Release">
+    <img src="https://img.shields.io/badge/Release-v1.3.1-107C10?style=flat-square&logo=github&logoColor=white" alt="Release">
   </a>
   <a href="#3-pré-requisitos">
     <img src="https://img.shields.io/badge/Platform-Windows-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Platform">
@@ -225,7 +225,7 @@ Instruções detalhadas em [Guia de Instalação](docs/INSTALACAO.md).
 ## 5. Interface
 
 ```text
-  COMPARTDISK  1.3.0
+  COMPARTDISK  1.3.1
   Assistente de Reparo
 
   --------------------------------------------------------------------------
@@ -474,7 +474,7 @@ patrocinado ou endossado pela Microsoft.
 
 <div align="center">
 
-**COMPARTDISK 1.3.0** — Desenvolvido por Edsilas
+**COMPARTDISK 1.3.1** — Desenvolvido por Edsilas
 
 https://github.com/edsilas/compartdisk
 

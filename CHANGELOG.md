@@ -7,6 +7,106 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.3.1] — 2026-08-06
+
+Versão de correção. **Nenhuma tecla de menu mudou de posição, nenhuma ação foi
+adicionada ou removida, nenhuma assinatura de função pública foi alterada.**
+
+### Corrigido
+
+#### Crítico
+
+- **Submenus executavam opções que o usuário não escolheu.** `if errorlevel N`
+  significa "maior ou igual a N", e os oito submenus usavam `call`, que retorna e
+  deixa o encadeamento continuar contra o código de saída do módulo. Um módulo que
+  saía com `WARN` (1), `ERROR` (2) ou `UNSUPPORTED` (3) reativava os testes de baixo.
+  Exemplo reproduzível: `[3]` › `[5]` "Testar Conectividade" numa máquina sem
+  internet devolvia `WARN`, e a redefinição completa da pilha de rede — que não pede
+  confirmação — era executada em seguida. A tecla escolhida passa a ser congelada em
+  `MENU_OPC` e comparada por igualdade.
+
+#### Alto
+
+- **`Defender.ps1`** afirmava "Histórico de ameaças limpo" quando
+  `Get-MpThreatDetection` falhava — situação comum com o Defender em modo passivo.
+  Consulta recusada passa a ser reportada como não verificada.
+- **`Explorer.ps1`** encerrava o shell para limpar o cache de ícones e o reiniciava
+  com uma única tentativa e erro silenciado, informando sucesso. Passa a usar a mesma
+  verificação com três tentativas de `Restart-ShellExplorer`.
+- **`Network.ps1`** gravava o backup do arquivo `hosts` dentro de
+  `System32\drivers\etc`, sem verificar o resultado da cópia e anunciando o backup
+  sempre. O backup passa a ir para o diretório de relatórios e só é anunciado quando
+  o arquivo existe.
+- **`Collectors.ps1`** atribuía o prognóstico SMART ao disco errado em máquinas com
+  mais de um disco: o casamento `-like "*<id>*"` encontrava o dígito em qualquer
+  posição do `InstanceName`. Passa a casar o índice ao final da cadeia.
+- **`Collectors.ps1`** truncava a contagem de eventos em 60 por log antes do
+  agrupamento, sem informar. O truncamento passa a ser registrado.
+- **`Launcher.bat` `:FB_LIMPEZA`** apagava a pasta `Network` dos navegadores
+  Chromium, que guarda `Cookies` e `TransportSecurity` — desconectando o usuário de
+  todos os sites. O caminho PowerShell nunca a tocou, e `:FB_LIMPEZA_NAVEGADORES`
+  também não. As três listas de subcache foram alinhadas.
+
+#### Médio
+
+- `Core.ps1` — `Test-CompartDiskProtectedPath` não cobria a forma `C:` sem barra,
+  que o PowerShell resolve como diretório corrente da unidade.
+- `Core.ps1` — `Invoke-NativeCommand -PassThruOutput` emitia no stream de sucesso e
+  fazia o retorno virar array.
+- `Audit.ps1` — as tabelas de discos, volumes e eventos eram capturadas por
+  `Invoke-SafeCommand` e nunca chegavam à tela.
+- `Audit.ps1` — a seção do Defender sumia do relatório quando a consulta falhava.
+- `Collectors.ps1` — eventos ordenados alfabeticamente por nível colocavam os avisos
+  à frente dos críticos.
+- `Collectors.ps1` — a coluna `SenhaExpira` vinha invertida no caminho de queda WMI.
+- `Hardware.ps1` — falta de privilégio para ler sensores ACPI era reportada como
+  ausência de sensor no firmware.
+- `Hardware.ps1` — WMI degradado produzia o achado "Uso de memória em 0%" com
+  severidade OK.
+- `Smart.ps1` — discos com `Pred Fail`, `Degraded` ou `NonRecover` no caminho WMI não
+  geravam achado algum.
+- `Smart.ps1` — a coluna `TamanhoCluster` publicava o tamanho da partição.
+- `Users.ps1` — falha ao ler o log de Segurança virava "nenhuma falha de logon".
+- `Users.ps1` — nome de conta com curinga podia desativar a guarda de conta Microsoft.
+- `Update.ps1` — reexecutar o reset destruía o backup original de
+  `SoftwareDistribution`, e a própria ferramenta recomenda reexecutar.
+- `Update.ps1` — os serviços eram declarados reconfigurados sem verificação.
+- `Performance.ps1` — os efeitos visuais eram alterados mesmo quando a troca do plano
+  de energia falhava.
+- `Bitlocker.ps1` — a ausência de senha de recuperação era avaliada no conjunto dos
+  volumes, e não no volume do sistema.
+- `Launcher.bat` — `:TRACE` não higienizava o argumento e quebrava quando o caminho
+  da ferramenta continha `&`.
+- `Launcher.bat` — `:FB_USERS_SENHA` existia completa e nenhuma linha a chamava.
+- `Launcher.bat` — dezessete caminhos `C:\Windows` fixos passaram a `%SystemRoot%`.
+- `remote.ps1` — `Set-StrictMode -Version 2.0` e as preferências vazavam para a
+  sessão do administrador, porque `iex` executa no escopo do chamador.
+
+#### Baixo
+
+- `Cleanup.ps1` — "Cache DNS limpo" era emitido sem verificação.
+- `Debloat.ps1` — a reconfirmação de pacotes protegidos não alcançava os
+  provisionados.
+- `Debloat.ps1` — `exit` dentro do `try` fazia `Stop-CompartDiskModule` executar duas
+  vezes nos caminhos de saída antecipada.
+- `Battery.ps1` — o rótulo "Fabricante" exibia o `DeviceID`, e a química da bateria
+  saía como código numérico.
+- `remote.ps1` — o fallback de extração não limpava um destino parcialmente extraído.
+
+### Documentação
+
+- `LIMITACOES.md` — a afirmação de que a ferramenta "não contata servidores" e "não
+  baixa pacotes" foi corrigida: `Test-Internet` contata servidores de teste de
+  conectividade e `Update-MpSignature` baixa definições do Defender.
+- `LIMITACOES.md` — a limitação "o perfil usado é o de quem elevou" listava três
+  operações afetadas; são pelo menos sete.
+- `MANUAL-TECNICO.md` — a proteção de caminhos é por igualdade exata, não
+  hierárquica.
+- `EXECUCAO-REMOTA.md` — a tabela de tratamento de erros prometia recusa
+  incondicional por SHA-256, contradizendo a nota da seção 3.
+
+---
+
 ## [1.3.0] — 2026-08-05
 
 ### Adicionado

@@ -1,6 +1,6 @@
 ﻿<#
 ================================================================================
- COMPARTDISK 1.3.0 - Core.ps1
+ COMPARTDISK 1.3.1 - Core.ps1
  Desenvolvido por Edsilas
  Biblioteca central de funcoes reutilizaveis.
  Compativel com Windows PowerShell 5.1 e PowerShell 7.x (pwsh).
@@ -26,7 +26,7 @@ if (-not $Global:CompartDisk) { $Global:CompartDisk = @{} }
 
 $Global:CompartDisk.CoreDir    = $__CompartDiskCoreDir
 $Global:CompartDisk.Root       = Split-Path -Parent $__CompartDiskCoreDir
-$Global:CompartDisk.Version    = '1.3.0'
+$Global:CompartDisk.Version    = '1.3.1'
 $Global:CompartDisk.Product    = 'COMPARTDISK'
 $Global:CompartDisk.Author     = 'Edsilas'
 $Global:CompartDisk.Signature  = 'DESENVOLVIDO POR EDSILAS'
@@ -431,7 +431,10 @@ function Invoke-NativeCommand {
             StdErr   = $stderr
             Success  = ($proc.ExitCode -eq 0)
         }
-        if ($PassThruOutput -and $stdout) { Write-Output $stdout }
+        # Write-Host, nao Write-Output: emitir no stream de sucesso faz o retorno
+        # virar um array [string, pscustomobject] e $r.ExitCode passa a depender de
+        # enumeracao de membro em vez de acesso direto.
+        if ($PassThruOutput -and $stdout) { Write-Host $stdout }
         return $out
     } finally {
         if ($proc) { $proc.Dispose() }
@@ -823,7 +826,11 @@ function Test-CompartDiskProtectedPath {
         "$env:SystemDrive\"
         "$env:ProgramFiles"
     )
-    $norm = try { (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path } catch { $Path }
+    # "C:" (sem barra) e um caminho RELATIVO A UNIDADE: Resolve-Path devolve o
+    # diretorio corrente daquela unidade, nunca a raiz, e a guarda passava batido.
+    $alvo = "$Path"
+    if ($alvo -match '^[A-Za-z]:$') { $alvo = "$alvo\" }
+    $norm = try { (Resolve-Path -LiteralPath $alvo -ErrorAction Stop).Path } catch { $alvo }
     $norm = "$norm".TrimEnd('\')
     foreach ($p in @($base + $AdditionalPaths)) {
         if ([string]::IsNullOrWhiteSpace($p)) { continue }
@@ -833,7 +840,14 @@ function Test-CompartDiskProtectedPath {
 }
 
 function Remove-CompartDiskPathSafely {
-    <# Remocao idempotente e defensiva: nunca remove a propria pasta raiz, so o conteudo. #>
+    <# Remocao idempotente e defensiva do CONTEUDO de um caminho.
+
+       -KeepRoot preserva a pasta alvo. Sem ele a pasta tambem e removida ao final -
+       e o padrao, porque o unico chamador que precisa disso e o reset de GPO, onde
+       o Windows recria a pasta no gpupdate seguinte. Todos os alvos de limpeza
+       passam -KeepRoot explicitamente.
+
+       Caminhos criticos do sistema sao recusados por Test-CompartDiskProtectedPath. #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string]$Path,

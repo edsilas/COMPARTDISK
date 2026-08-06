@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Smart.ps1
+ COMPARTDISK 1.3.1 - Smart.ps1
  Desenvolvido por Edsilas
  Acoes: Status | Detail | Volumes | Shadow | Spaces
 #>
@@ -29,11 +29,16 @@ function Show-DiskHealth {
 
     foreach ($d in $discos) {
         $saude = "$($d.Saude)"
-        if ($saude -match 'Unhealthy|Warning') {
+        # O ramo de queda de Get-CompartDiskDiskInfo traz Win32_DiskDrive.Status, cujo
+        # vocabulario e outro: 'Pred Fail', 'Degraded', 'Error', 'NonRecover'. Nenhum
+        # casava os padroes originais, e um disco prestes a falhar ficava sem achado.
+        if ($saude -match 'Unhealthy|Warning|Pred Fail|Degraded|Error|NonRecover|Lost Comm|No Contact') {
             Add-CompartDiskFinding -Severity CRIT -Area 'Disco' -Message "Disco '$($d.Modelo)' com saude '$saude'." -Recommendation 'Fazer backup imediato e planejar substituicao.'
             $script:result = 'WARN'
-        } elseif ($saude -match 'Healthy|OK') {
+        } elseif ($saude -match 'Healthy|^OK$') {
             Add-CompartDiskFinding -Severity OK -Area 'Disco' -Message "Disco '$($d.Modelo)': saude $saude."
+        } else {
+            Add-CompartDiskFinding -Severity INFO -Area 'Disco' -Message "Disco '$($d.Modelo)' com saude nao classificada: '$saude'." -Recommendation 'Conferir o estado do disco no utilitario do fabricante.'
         }
         if ($d.PSObject.Properties['SMART_Falha'] -and $d.SMART_Falha -eq 'SIM') {
             Add-CompartDiskFinding -Severity CRIT -Area 'Disco' -Message "SMART preve falha iminente em '$($d.Modelo)'." -Recommendation 'Substituir o disco com urgencia apos backup completo.'
@@ -85,7 +90,11 @@ function Show-Detail {
         Add-CompartDiskSection -Title 'Contadores de confiabilidade' -Status OK -Rows @($rows)
 
         foreach ($r in $rows) {
-            if ([int]("$($r.ErrosNaoCorrig)" -replace '\D', '0') -gt 0) {
+            # O '\D' -> '0' original trocava cada nao-digito por zero em vez de
+            # remove-lo: 'n/d' virava '000' por sorte, e '2 erros' viraria 2000000.
+            $naoCorrig = 0
+            if ("$($r.ErrosNaoCorrig)" -match '^\d+$') { $naoCorrig = [int]"$($r.ErrosNaoCorrig)" }
+            if ($naoCorrig -gt 0) {
                 Add-CompartDiskFinding -Severity CRIT -Area 'Disco' -Message "Disco '$($r.Disco)' com erros de leitura nao corrigidos." -Recommendation 'Backup imediato e substituicao.'
                 $script:result = 'WARN'
             }
@@ -117,7 +126,10 @@ function Show-Volumes {
             [void]$rows.Add([pscustomobject]@{
                 Letra = $v.DriveLetter; Rotulo = $v.FileSystemLabel; Sistema = $v.FileSystem
                 Saude = "$($v.HealthStatus)"; Operacional = "$($v.OperationalStatus)"
-                TamanhoCluster = $(try { (Get-Partition -DriveLetter $v.DriveLetter -ErrorAction Stop).Size } catch { 'n/d' })
+                # Get-Partition nao expoe tamanho de cluster; .Size e o tamanho da
+                # particao - a coluna publicava um numero que nao era o que o rotulo
+                # dizia, e duplicava a tabela de volumes logicos.
+                TamanhoCluster = $(if ($v.PSObject.Properties['AllocationUnitSize'] -and $v.AllocationUnitSize) { "$($v.AllocationUnitSize) bytes" } else { 'n/d' })
             })
         }
         if ($rows.Count -gt 0) { Add-CompartDiskSection -Title 'Estado dos volumes (Storage)' -Status OK -Rows @($rows) }

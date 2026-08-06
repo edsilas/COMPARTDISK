@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Bitlocker.ps1
+ COMPARTDISK 1.3.1 - Bitlocker.ps1
  Desenvolvido por Edsilas
  Acoes: Status | Report | Keys
  Modulo somente leitura: nao altera o estado de criptografia dos volumes.
@@ -77,9 +77,14 @@ function Show-Protectors {
     $rows | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
     Add-CompartDiskSection -Title 'Protetores de chave' -Status INFO -Rows @($rows) -Summary 'Chaves de recuperacao omitidas do relatorio por seguranca'
 
-    $semBackup = @($rows | Where-Object { $_.Tipo -eq 'RecoveryPassword' })
-    if ($semBackup.Count -eq 0) {
-        Add-CompartDiskFinding -Severity WARN -Area 'BitLocker' -Message 'Nenhum protetor do tipo senha de recuperacao encontrado.' -Recommendation 'Garantir o escrow da chave no AD/Entra ID ou conta Microsoft.'
+    # A verificacao precisa ser por volume, e sobretudo no volume do sistema: uma
+    # chave de recuperacao em D: nao ajuda quem perdeu o acesso a C:. A contagem
+    # global deixava C: sem aviso sempre que qualquer outro volume tivesse chave.
+    foreach ($g in ($rows | Group-Object Volume)) {
+        if (@($g.Group | Where-Object { $_.Tipo -eq 'RecoveryPassword' }).Count -gt 0) { continue }
+        $ehSistema = ("$($g.Name)" -like "$($env:SystemDrive)*")
+        Add-CompartDiskFinding -Severity $(if ($ehSistema) { 'CRIT' } else { 'WARN' }) -Area 'BitLocker' -Message "Volume $($g.Name) sem protetor do tipo senha de recuperacao." -Recommendation 'Garantir o escrow da chave no AD/Entra ID ou na conta Microsoft antes de qualquer alteracao de firmware ou placa-mae.'
+        if ($ehSistema) { $script:result = 'WARN' }
     }
     Write-Log OK 'Protetores de chave listados.'
 }

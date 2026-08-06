@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Audit.ps1
+ COMPARTDISK 1.3.1 - Audit.ps1
  Desenvolvido por Edsilas
  Acoes: Full | Quick | Events | Software | License
  -NoOpen suprime a abertura automatica do relatorio (modo desassistido).
@@ -25,6 +25,12 @@ function Invoke-Etapa {
     Write-Color ''
     Write-Color ("  >> {0}" -f $Nome) -Color DarkCyan
     $r = Invoke-SafeCommand -ScriptBlock $Bloco -Activity $Nome
+    # Invoke-SafeCommand faz "$result.Value = & $ScriptBlock": a atribuicao captura o
+    # stream de sucesso, e as tabelas que os blocos emitem com Write-Output nunca
+    # chegavam a tela. Write-CompartDiskKeyValue escapava por descer a Write-Host.
+    if ($null -ne $r.Value) {
+        foreach ($linha in @($r.Value)) { Write-Color ("$linha".TrimEnd()) }
+    }
     if (-not $r.Success) {
         Write-Log WARN "Etapa '$Nome' incompleta: $($r.Error.Exception.Message)"
         $script:result = 'WARN'
@@ -146,6 +152,12 @@ function Invoke-QuickAudit {
             } else {
                 Add-CompartDiskFinding -Severity OK -Area 'Defender' -Message 'Protecao em tempo real ativa.'
             }
+        } else {
+            # Consulta indisponivel nao e o mesmo que protecao em ordem. Sem este ramo
+            # a secao inteira sumia do relatorio e o leitor nao distinguia
+            # "nao verificado" de "sem problema".
+            Add-CompartDiskSection -Title 'Microsoft Defender' -Status INFO -Summary 'Estado nao verificado: modulo Defender indisponivel ou consulta recusada.'
+            Add-CompartDiskFinding -Severity INFO -Area 'Defender' -Message 'Estado do Microsoft Defender nao pode ser consultado nesta maquina.' -Recommendation 'Verificar manualmente em Seguranca do Windows. Antivirus de terceiros pode ter substituido o Defender.'
         }
     }
 

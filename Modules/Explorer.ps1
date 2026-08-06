@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Explorer.ps1
+ COMPARTDISK 1.3.1 - Explorer.ps1
  Desenvolvido por Edsilas
  Acoes: Restart | ClearCache | Spooler | ResetView
 #>
@@ -81,7 +81,21 @@ function Clear-ShellCache {
         } catch { }
     }
 
-    Start-Process -FilePath (Join-Path $env:SystemRoot 'explorer.exe') -ErrorAction SilentlyContinue
+    # Mesma garantia de Restart-ShellExplorer: sem verificacao, uma unica tentativa
+    # falha deixava o usuario sem area de trabalho e sem barra de tarefas, com o log
+    # afirmando sucesso. -ErrorAction SilentlyContinue escondia ate o motivo.
+    Invoke-WithRetry -Activity 'Reiniciar explorer.exe' -Retries 3 -DelaySeconds 2 -ScriptBlock {
+        Start-Process -FilePath (Join-Path $env:SystemRoot 'explorer.exe') -ErrorAction Stop
+        Start-Sleep -Seconds 2
+        if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) { throw 'Explorer nao iniciou.' }
+        $true
+    } | Out-Null
+    if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) {
+        $script:result = 'ERROR'
+        Write-Log ERR 'O Explorer nao voltou a executar. Use Ctrl+Shift+Esc > Arquivo > Executar nova tarefa > explorer.exe'
+        Add-CompartDiskFinding -Severity CRIT -Area 'Explorer' -Message 'Shell do Windows nao reiniciou apos a limpeza de cache.' -Recommendation 'Iniciar explorer.exe manualmente pelo Gerenciador de Tarefas.'
+        return
+    }
 
     Write-Log OK "$removidos arquivo(s) de cache removido(s), $(ConvertTo-CompartDiskSize $liberado) liberados."
     Add-CompartDiskSection -Title 'Cache do Explorer' -Status OK -Pairs ([ordered]@{

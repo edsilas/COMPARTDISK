@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Battery.ps1
+ COMPARTDISK 1.3.1 - Battery.ps1
  Desenvolvido por Edsilas
  Acoes: Info | Report | Sleep
 #>
@@ -39,8 +39,14 @@ function Show-BatteryInfo {
     foreach ($bat in @($b)) {
         $pares = [ordered]@{
             'Bateria'            = $bat.Name
-            'Fabricante'         = $bat.DeviceID
-            'Quimica'            = $bat.Chemistry
+            # Win32_Battery nao expoe fabricante: DeviceID e um identificador, nao um
+            # nome. E Chemistry e um codigo numerico, como BatteryStatus logo abaixo.
+            'Identificador'      = $bat.DeviceID
+            'Quimica'            = $(
+                $q = @{ 1 = 'Outra'; 2 = 'Desconhecida'; 3 = 'Chumbo-acido'; 4 = 'Niquel-cadmio'
+                        5 = 'Niquel-hidreto metalico'; 6 = 'Ions de litio'; 7 = 'Zinco-ar'; 8 = 'Litio-polimero' }
+                if ($q.ContainsKey([int]$bat.Chemistry)) { $q[[int]$bat.Chemistry] } else { "Codigo $($bat.Chemistry)" }
+            )
             'Carga estimada'     = "$($bat.EstimatedChargeRemaining)%"
             'Status'             = $(if ($status.ContainsKey([int]$bat.BatteryStatus)) { $status[[int]$bat.BatteryStatus] } else { $bat.BatteryStatus })
             'Autonomia estimada' = $(if ($bat.EstimatedRunTime -and $bat.EstimatedRunTime -lt 71582788) { "$($bat.EstimatedRunTime) min" } else { 'conectada a energia' })

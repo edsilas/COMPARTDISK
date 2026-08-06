@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Network.ps1
+ COMPARTDISK 1.3.1 - Network.ps1
  Desenvolvido por Edsilas
  Acoes: Info | Reset | Hosts | Firewall | Test | Proxy | Wifi
 #>
@@ -169,9 +169,19 @@ function Reset-NetworkStack {
 function Restore-HostsFile {
     $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
     if (Test-Path -LiteralPath $hosts) {
-        $bkp = "$hosts.compartdiskbak_$($Global:CompartDisk.Session)"
-        Invoke-SafeCommand { Copy-Item -LiteralPath $hosts -Destination $bkp -Force } -Activity 'Backup do arquivo hosts' | Out-Null
-        Write-Log INFO "Backup criado: $bkp"
+        # Backup em OutDir, como todos os demais do projeto, e nao dentro de System32 -
+        # onde acumulava um arquivo por sessao sem limpeza. E o exito e medido pelo
+        # arquivo produzido: a sobrescrita seguinte e irreversivel e nao pode ser
+        # precedida por um "backup criado" que nunca existiu.
+        $bkp = Join-Path $Global:CompartDisk.OutDir "hosts_anterior_$($Global:CompartDisk.Session).txt"
+        $b = Invoke-SafeCommand { Copy-Item -LiteralPath $hosts -Destination $bkp -Force -ErrorAction Stop } -Activity 'Backup do arquivo hosts'
+        if ($b.Success -and (Test-Path -LiteralPath $bkp)) {
+            Write-Log OK "Backup criado: $bkp"
+        } else {
+            Write-Log WARN 'O backup do arquivo hosts falhou; o conteudo anterior nao ficara preservado.'
+            Add-CompartDiskFinding -Severity WARN -Area 'Rede' -Message 'Backup do arquivo hosts nao pode ser gravado.' -Recommendation 'Definir COMPARTDISK_LOGDIR para um diretorio gravavel antes de repetir.'
+            $script:result = 'WARN'
+        }
     }
 
     $conteudo = @(

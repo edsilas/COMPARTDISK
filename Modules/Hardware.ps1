@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Hardware.ps1
+ COMPARTDISK 1.3.1 - Hardware.ps1
  Desenvolvido por Edsilas
  Acoes: Info | Full | Gpu | Memory | Devices | Temperature
 #>
@@ -29,9 +29,17 @@ function Show-Basico {
     Add-CompartDiskSection -Title 'Sistema operacional' -Status OK -Pairs $sis
     Add-CompartDiskSection -Title 'Hardware principal' -Status OK -Pairs $hw
 
-    $uso = 0
-    try { $uso = [double]$hw['RAM em uso (%)'] } catch { }
-    if ($uso -ge 90) {
+    # Get-CompartDiskHardwareInfo devolve a cadeia 'n/d' quando o WMI nao responde.
+    # O "[double]'n/d'" lancava, o catch vazio engolia e $uso ficava em 0: o relatorio
+    # afirmava "Uso de memoria em 0%" com severidade OK numa maquina em que a leitura
+    # simplesmente nao aconteceu.
+    $uso = $null
+    if ("$($hw['RAM em uso (%)'])" -match '^\d+([.,]\d+)?$') {
+        try { $uso = [double]("$($hw['RAM em uso (%)'])" -replace ',', '.') } catch { }
+    }
+    if ($null -eq $uso) {
+        Add-CompartDiskFinding -Severity INFO -Area 'Memoria' -Message 'Uso de memoria nao verificado: leitura do WMI indisponivel.' -Recommendation 'Validar o repositorio WMI antes de interpretar este relatorio.'
+    } elseif ($uso -ge 90) {
         Add-CompartDiskFinding -Severity CRIT -Area 'Memoria' -Message "Uso de memoria em $uso%." -Recommendation 'Fechar aplicativos ou avaliar expansao de RAM.'
         $script:result = 'WARN'
     } elseif ($uso -ge 80) {
@@ -146,8 +154,17 @@ function Show-Temperatura {
     }
 
     if ($rows.Count -eq 0) {
-        Write-Log WARN 'Nenhum sensor termico exposto por este firmware.'
-        Add-CompartDiskFinding -Severity INFO -Area 'Temperatura' -Message 'Firmware nao expoe sensores termicos via ACPI/WMI.' -Recommendation 'Consultar a UEFI/BIOS ou o utilitario do fabricante.'
+        # MSAcpi_ThermalZoneTemperature exige privilegio administrativo, e este modulo
+        # nao o obriga (as outras cinco acoes sao leitura comum). Sem a distincao
+        # abaixo, um Acesso Negado era reportado como ausencia de sensor no firmware,
+        # mandando o usuario a UEFI atras de nada.
+        if (-not (Test-Administrator)) {
+            Write-Log WARN 'Leitura termica indisponivel: os sensores ACPI exigem privilegio administrativo.'
+            Add-CompartDiskFinding -Severity INFO -Area 'Temperatura' -Message 'Sensores termicos nao consultados: execucao sem privilegio administrativo.' -Recommendation 'Reabrir o Launcher.bat como Administrador para ler os sensores ACPI.'
+        } else {
+            Write-Log WARN 'Nenhum sensor termico exposto por este firmware.'
+            Add-CompartDiskFinding -Severity INFO -Area 'Temperatura' -Message 'Firmware nao expoe sensores termicos via ACPI/WMI.' -Recommendation 'Consultar a UEFI/BIOS ou o utilitario do fabricante.'
+        }
         $script:result = 'UNSUPPORTED'
         return
     }

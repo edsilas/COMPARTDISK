@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Cleanup.ps1
+ COMPARTDISK 1.3.1 - Cleanup.ps1
  Desenvolvido por Edsilas
  Acoes: Analyze | Standard | Deep | Browsers | Logs
  Nenhum alvo remove arquivos necessarios ao funcionamento do Windows.
@@ -151,10 +151,12 @@ function Invoke-Cleanup {
     }
 
     # Cache DNS
-    Invoke-SafeCommand {
+    $dns = Invoke-SafeCommand {
         Invoke-NativeCommand -FilePath (Join-Path $env:SystemRoot 'System32\ipconfig.exe') -Arguments @('/flushdns') -TimeoutSeconds 30
-    } -Activity 'Limpar cache DNS' | Out-Null
-    Write-Log OK 'Cache DNS limpo.'
+    } -Activity 'Limpar cache DNS'
+    # A mensagem acompanha o resultado, como ja fazia a linha da Lixeira logo acima.
+    if ($dns.Success -and $dns.Value.ExitCode -eq 0) { Write-Log OK 'Cache DNS limpo.' }
+    else { Write-Log WARN 'O cache DNS nao pode ser limpo.' }
 
     $depoisLivre = 0
     try { $depoisLivre = (Get-CompartDiskCim -Class Win32_LogicalDisk -Filter "DeviceID='$($env:SystemDrive)'").FreeSpace } catch { }

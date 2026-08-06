@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Performance.ps1
+ COMPARTDISK 1.3.1 - Performance.ps1
  Desenvolvido por Edsilas
  Acoes: Analyze | Ultimate | Balanced | Startup | Processes | Services
 #>
@@ -113,12 +113,17 @@ function Set-PowerPlan {
         Add-CompartDiskFinding -Severity WARN -Area 'Desempenho' -Message "Falha ao aplicar o plano de energia '$Nome'." -Recommendation 'Politicas de grupo corporativas podem bloquear a alteracao do plano.'
     }
 
-    if ($Guid -ne $GUID_BALANCED) {
-        Set-CompartDiskRegistryValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -Value 2 -Type DWord | Out-Null
-        Write-Log OK 'Efeitos visuais ajustados para melhor desempenho.'
-    } else {
-        Set-CompartDiskRegistryValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -Value 0 -Type DWord | Out-Null
-        Write-Log OK 'Efeitos visuais restaurados ao controle automatico do Windows.'
+    # O ajuste de efeitos visuais so faz sentido se o plano foi de fato aplicado.
+    # Fora da verificacao, uma diretiva de grupo bloqueando o powercfg deixava o plano
+    # intacto e a interface alterada - uma mudanca parcial e nao pedida.
+    if ($r.ExitCode -eq 0) {
+        $alvoFX = if ($Guid -ne $GUID_BALANCED) { 2 } else { 0 }
+        if (Set-CompartDiskRegistryValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -Value $alvoFX -Type DWord) {
+            Write-Log OK $(if ($alvoFX -eq 2) { 'Efeitos visuais ajustados para melhor desempenho.' } else { 'Efeitos visuais restaurados ao controle automatico do Windows.' })
+        } else {
+            $script:result = 'WARN'
+            Write-Log WARN 'O plano de energia foi aplicado, mas os efeitos visuais nao puderam ser alterados.'
+        }
     }
 
     $atual = Invoke-NativeCommand -FilePath $powercfg -Arguments @('/getactivescheme') -TimeoutSeconds 20
