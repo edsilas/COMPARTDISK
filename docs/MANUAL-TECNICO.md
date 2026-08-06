@@ -214,11 +214,53 @@ Dentro de um bloco `( ... )`, um `)` não escapado encerra o bloco. Em `echo`, e
 |---|---|
 | Código-fonte | ASCII puro, sem acentuação |
 | `.ps1` | Marca de ordem de bytes UTF-8, fim de linha CRLF |
+| `remote.ps1` | **Sem** marca de ordem de bytes, fim de linha CRLF. É baixado e avaliado por `iex`, e o BOM chega como `U+FEFF` no início da cadeia, impedindo o parser de reconhecer a abertura de comentário da linha 1 |
 | `.bat` | **Sem** marca de ordem de bytes, fim de linha CRLF |
 | Documentação | UTF-8 com acentuação |
 | Identificadores PowerShell | Prefixo `CompartDisk` no substantivo |
 | Variáveis de ambiente | Prefixo `COMPARTDISK_` |
 | Versão | Fonte única: `$Global:CompartDisk.Version` e `%COMPARTDISK_VERSION%` |
+
+---
+
+## Estendendo o catálogo do Debloat
+
+O `Debloat.ps1` é o único módulo com catálogo declarativo. Adicionar um item não exige
+tocar em lógica alguma: basta acrescentar uma entrada na lista correspondente dentro de
+`Get-DebloatCatalogo`.
+
+```powershell
+$servicos = @(
+    @{ N = 'NomeDoServico'; Startup = 'Disabled'; L = 'Moderate'; M = 'Motivo tecnico.' }
+)
+```
+
+| Campo | Significado |
+|---|---|
+| `N` | Nome do alvo |
+| `L` | Nível mínimo em que passa a ser elegível |
+| `M` | Motivo técnico, exibido no relatório |
+| `Startup` | Apenas para serviços: tipo de inicialização de destino |
+| `P` `V` | Apenas para registro: caminho da chave e valor de destino |
+
+**Use sempre tabelas de dispersão com chaves nomeadas, nunca arrays posicionais.** O
+PowerShell achata arrays aninhados separados por quebra de linha dentro de `@()`:
+
+```powershell
+$x = @( @('a','b')
+        @('c','d') )   # resulta em 4 elementos, nao 2
+```
+
+O acesso por índice passa então a indexar a cadeia de caracteres, e o erro aparece longe
+da causa. Com chaves nomeadas o problema não existe.
+
+**Depois de adicionar um item**, confirme que ele não colide com as listas de proteção:
+
+```powershell
+. .\Modules\Debloat.ps1 -Action Analyze -Level Aggressive
+```
+
+Um item protegido nunca aparece na simulação, por desenho.
 
 ---
 

@@ -277,6 +277,60 @@ Consulte esta tela primeiro quando algo não funcionar: ela explica o porquê.
 
 ---
 
+## Desbloat: tirar o que veio de fábrica
+
+Seu computador provavelmente veio com programas que você nunca pediu. Jogos, testes de
+antivírus, aplicativos do fabricante. Alguns ficam rodando em segundo plano mesmo sem
+você abrir.
+
+A opção `[4]` e depois `[9]` cuida disso.
+
+### Comece simulando
+
+A primeira opção do submenu, `[1]`, mostra uma lista do que seria removido, com o
+motivo de cada item. **Ela não apaga nada.** Leia com calma antes de decidir.
+
+### Escolha o nível
+
+| Se você | Escolha | Tecla |
+|---|---|:---:|
+| Não tem certeza, ou é seu primeiro uso | Seguro | `[2]` |
+| Sabe que não usa Xbox, Fotos, Câmera nem o Email do Windows | Moderado | `[3]` |
+| É administrador e sabe o que está desligando | Avançado | `[4]` |
+
+O nível Seguro tira apenas o que é propaganda ou foi abandonado pela Microsoft. Nada
+que o Windows precise para funcionar entra na lista, em nenhum nível.
+
+### O que esperar
+
+A tela vai listando cada item e o que aconteceu com ele. Palavras que você vai ver:
+
+| Palavra | Significa |
+|---|---|
+| `Aplicado` | Foi alterado |
+| `Simulado` | Só mostrou, não mexeu |
+| `JaAplicado` | Já estava assim, nada a fazer |
+| `Protegido` | Está na lista do que nunca pode ser tocado |
+| `Falhou` | Não deu certo. O motivo aparece ao lado |
+
+Ao final, reinicie o computador.
+
+### Se você removeu algo que usa
+
+Vá em `[4]` › `[9]` › `[9]` › `[4]` para desfazer. Serviços e configurações voltam
+sozinhos, exatamente como estavam.
+
+**Aplicativos são a exceção.** O Windows não guarda o programa depois de removê-lo,
+então você precisa baixá-lo de novo pela Microsoft Store. O nome exato de cada um
+aparece no relatório. É por isso que a simulação existe.
+
+### A lista completa
+
+Cada nível e cada item estão detalhados no
+[Módulo de Desbloat](DESBLOAT.md).
+
+---
+
 ## Os relatórios
 
 Ao usar o menu `8`, são criados quatro arquivos na pasta `COMPARTDISK_Relatorios`:

@@ -81,6 +81,25 @@ Só passe da linha depois de entender o problema.
 
 ---
 
+## Antes de um desbloat
+
+O desbloat altera o que está instalado e o que roda, não apenas arquivos descartáveis.
+Trate-o com o cuidado que essa diferença pede.
+
+| Prática | Por quê |
+|---|---|
+| Simule primeiro, sempre | A opção `[1]` do submenu lista tudo sem tocar em nada. É a única forma de saber o que sairia |
+| Registre o estado antes | `[9]` › `[2]` cria o retrato de tudo que o catálogo alcança |
+| Confirme a Proteção do Sistema | Sem ela, a rotina completa se recusa a rodar. E ela está certa em recusar |
+| Comece pelo nível Seguro | Rode, use a máquina por alguns dias, e só então avalie subir de nível |
+| Não use o Avançado em máquina de terceiros | Ele desliga a busca do menu Iniciar. Quem usa a máquina no dia a dia vai estranhar |
+| Reinicie ao final | Alterações de serviço e de componente só se consolidam depois |
+
+**A regra que vale mais que todas.** Aplicativos removidos não voltam sozinhos. Se
+existe dúvida sobre um item, exclua-o da execução em vez de removê-lo e torcer.
+
+---
+
 ## Frequência de uso
 
 Não há necessidade de uso periódico. A ferramenta é para quando há um problema.

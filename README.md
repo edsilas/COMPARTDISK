@@ -35,13 +35,14 @@ Compatível atualmente com Windows 10 e Windows 11.
 | [3. Pré-requisitos](#3-pré-requisitos) | O que é necessário antes de começar |
 | [4. Início rápido](#4-início-rápido) | Executar em um comando ou instalar localmente |
 | [5. Interface](#5-interface) | Como a ferramenta se apresenta |
-| [6. Uso avançado](#6-uso-avançado) | Execução desassistida e parque de máquinas |
-| [7. Segurança e privacidade](#7-segurança-e-privacidade) | O que a ferramenta faz e não faz com seus dados |
-| [8. Documentação](#8-documentação) | Índice completo dos guias e manuais |
-| [9. Solução de problemas](#9-solução-de-problemas) | Primeiros passos quando algo falha |
-| [10. Contribuindo](#10-contribuindo) | Como relatar problemas e sugerir melhorias |
-| [11. Licença](#11-licença) | Termos de uso e distribuição |
-| [12. Marcas registradas](#12-marcas-registradas) | Avisos legais |
+| [6. Desbloat do Windows](#6-desbloat-do-windows) | Remover o que veio pré-instalado |
+| [7. Uso avançado](#7-uso-avançado) | Execução desassistida e parque de máquinas |
+| [8. Segurança e privacidade](#8-segurança-e-privacidade) | O que a ferramenta faz e não faz com seus dados |
+| [9. Documentação](#9-documentação) | Índice completo dos guias e manuais |
+| [10. Solução de problemas](#10-solução-de-problemas) | Primeiros passos quando algo falha |
+| [11. Contribuindo](#11-contribuindo) | Como relatar problemas e sugerir melhorias |
+| [12. Licença](#12-licença) | Termos de uso e distribuição |
+| [13. Marcas registradas](#13-marcas-registradas) | Avisos legais |
 
 ---
 
@@ -86,6 +87,7 @@ funcionalidade deixa de existir. Detalhes em [Arquitetura](docs/ARQUITETURA.md).
 | **Limpeza de disco** | Inclui modo de simulação, que mede o espaço recuperável antes de apagar |
 | **Segurança** | Revisa Defender, firewall, contas, BitLocker, TPM e Secure Boot |
 | **Hardware e discos** | Saúde física dos discos, desgaste da bateria, drivers e inventário completo |
+| **Desbloat do Windows** | Remove aplicativos pré-instalados, com simulação, três níveis de risco e reversão |
 | **Operação sem PowerShell** | Cada função possui rotina Batch equivalente para ambientes restritos |
 | **Execução remota** | Um único comando executa a versão mais recente, com validação de integridade |
 
@@ -256,7 +258,65 @@ Mapa completo das telas em [Descrição dos Menus](docs/MENUS.md).
 
 ---
 
-## 6. Uso avançado
+## 6. Desbloat do Windows
+
+O Windows chega ao usuário com programas que ele não escolheu: jogos promocionais,
+testes de antivírus, aplicativos de fabricante, sugestões no menu Iniciar. Somam-se
+serviços e tarefas agendadas que rodam em segundo plano para funções que muita gente
+nunca usa.
+
+O módulo de desbloat remove esses itens de forma controlada. Fica em
+**`[4]` Otimização › `[9]` Desbloat do Windows**.
+
+### Três níveis
+
+| Nível | O que inclui | Segurança | Para quem |
+|---|---|:---:|---|
+| **Seguro** | 104 itens promocionais ou descontinuados | 🟢 Alto | Qualquer pessoa. É o recomendado |
+| **Moderado** | 143 itens, somando Xbox, mídia, Fotos, Câmera, Email | 🟡 Médio | Quem sabe quais aplicativos usa |
+| **Avançado** | 150 itens, somando busca do Iniciar e `/ResetBase` | 🔴 Baixo | Administradores e usuários experientes |
+
+Os níveis são cumulativos.
+
+### O que o distingue
+
+**Simulação é o padrão.** A primeira opção do submenu lista item por item o que seria
+alterado, com o motivo técnico de cada um, sem tocar em nada.
+
+**Proteções com precedência absoluta.** Um conjunto de 48 aplicativos, 7 prefixos de
+família, 56 serviços e 4 ramos de registro nunca é tocado — Microsoft Store, Defender,
+bibliotecas de runtime, autenticação, codecs, Windows Update, rede. Essa verificação
+acontece **depois** de qualquer filtro do operador, de propósito: nem quem opera a
+ferramenta consegue contorná-la.
+
+**Reversão pelo estado anterior.** Cada alteração grava como o item estava antes.
+Serviços, tarefas e ajustes de registro voltam ao valor exato de origem — inclusive
+removendo valores que não existiam, em vez de gravar zero.
+
+**Ponto de restauração como portão.** A rotina completa cria um antes de qualquer
+alteração e se recusa a prosseguir se não conseguir.
+
+### O que não volta
+
+Aplicativos removidos precisam ser reinstalados pela Microsoft Store: o Windows não
+retém o pacote no disco depois de removê-lo. A limpeza de componentes obsoletos
+também é definitiva. Por isso a simulação existe — use antes.
+
+### Antes de executar
+
+| Passo | Menu |
+|---|---|
+| 1. Simule e leia a lista | `[4]` › `[9]` › `[1]` |
+| 2. Registre o estado atual | `[4]` › `[9]` › `[9]` › `[2]` |
+| 3. Execute o nível Seguro | `[4]` › `[9]` › `[2]` |
+| 4. Reinicie | — |
+
+A referência completa — cada nível, cada submódulo, o que exatamente é alterado e como
+reverter — está no [Módulo de Desbloat](docs/DESBLOAT.md).
+
+---
+
+## 7. Uso avançado
 
 ### Parâmetros de linha de comando
 
@@ -288,7 +348,7 @@ Orientações completas em [Manual do Administrador](docs/MANUAL-DO-ADMINISTRADO
 
 ---
 
-## 7. Segurança e privacidade
+## 8. Segurança e privacidade
 
 ### Transparência
 
@@ -317,7 +377,7 @@ senhas, arquivos pessoais ou histórico de navegação.
 
 ---
 
-## 8. Documentação
+## 9. Documentação
 
 ### Introdução
 
@@ -334,6 +394,7 @@ senhas, arquivos pessoais ou histórico de navegação.
 | Documento | Conteúdo |
 |---|---|
 | [Descrição dos Menus](docs/MENUS.md) | Mapa completo de todas as telas e opções |
+| [Módulo de Desbloat](docs/DESBLOAT.md) | Referência completa: níveis, submódulos, proteções e reversão |
 | [Funcionalidades](docs/FUNCIONALIDADES.md) | Descrição técnica de cada recurso |
 | [Requisitos do Sistema](docs/REQUISITOS.md) | O que é necessário para executar |
 | [Compatibilidade](docs/COMPATIBILIDADE.md) | Edições do Windows e comportamento em cada uma |
@@ -367,7 +428,7 @@ senhas, arquivos pessoais ou histórico de navegação.
 
 ---
 
-## 9. Solução de problemas
+## 10. Solução de problemas
 
 | Sintoma | Primeira verificação |
 |---|---|
@@ -382,7 +443,7 @@ Guia completo em [Solução de Problemas](docs/SOLUCAO-DE-PROBLEMAS.md).
 
 ---
 
-## 10. Contribuindo
+## 11. Contribuindo
 
 Relatos de problema, sugestões e melhorias são bem-vindos em
 [Issues](https://github.com/edsilas/compartdisk/issues).
@@ -396,14 +457,14 @@ Ao relatar um problema, inclua:
 
 ---
 
-## 11. Licença
+## 12. Licença
 
 Distribuído sob a Licença Apache 2.0. Consulte o arquivo [LICENSE](LICENSE) para os
 termos completos.
 
 ---
 
-## 12. Marcas registradas
+## 13. Marcas registradas
 
 Windows, Windows 10, Windows 11, PowerShell, Microsoft Defender e BitLocker são
 marcas registradas da Microsoft Corporation. Este projeto não é afiliado,

@@ -144,6 +144,60 @@ atividade de disco ou processador. Havendo, ainda está trabalhando.
 
 ---
 
+## A busca do menu Iniciar parou de funcionar
+
+Sintoma de quem executou o desbloat no nível Avançado: digitar o nome de um programa no
+menu Iniciar não encontra mais nada. Abrir pela lista continua funcionando.
+
+**Causa.** O serviço `WSearch`, responsável pela indexação, foi desativado. É o
+comportamento documentado do nível Avançado.
+
+**Solução.** Use `[4]` › `[9]` › `[9]` › `[4]` para reverter. Ou reative manualmente:
+
+```bat
+sc config WSearch start= delayed-auto
+net start WSearch
+```
+
+A reindexação leva algum tempo depois de religado.
+
+---
+
+## A limpeza de componentes falhou
+
+**Causa mais comum.** Reinício pendente. O DISM não consegue compactar o armazenamento
+de componentes enquanto há atualizações aguardando reinicialização.
+
+**Solução.** Reinicie e execute novamente `[4]` › `[9]` › `[8]`.
+
+Se persistir, rode antes o reparo profundo em `[5]` › `[1]`: uma imagem com
+inconsistências impede a limpeza.
+
+---
+
+## Removi um aplicativo que eu usava
+
+Serviços, tarefas e ajustes voltam sozinhos por `[4]` › `[9]` › `[9]` › `[4]`.
+
+Aplicativos não. O Windows não guarda o pacote no disco depois da remoção. Abra a
+Microsoft Store e reinstale — o nome exato está no relatório da sessão e no manifesto em
+`COMPARTDISK_Restauracao`.
+
+---
+
+## O ponto de restauração não pôde ser criado
+
+**Se a mensagem cita 1440 minutos:** já existe um ponto criado nas últimas 24 horas. O
+módulo reconhece isso e prossegue, tratando o ponto recente como válido. Não é erro.
+
+**Se a mensagem é outra:** a Proteção do Sistema provavelmente está desligada. Ative em
+Sistema › Proteção do Sistema, selecione o disco do Windows e clique em Configurar.
+
+A rotina completa se recusa a rodar sem ponto de restauração, e essa recusa é
+intencional.
+
+---
+
 ## O reset de rede não resolveu
 
 **Reinicie o computador.** Boa parte das alterações de rede só passa a valer depois

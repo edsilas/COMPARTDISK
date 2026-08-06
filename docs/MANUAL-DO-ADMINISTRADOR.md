@@ -125,6 +125,45 @@ Trate os relatórios conforme a política de classificação de informação da 
 
 ---
 
+## Desbloat em ambiente gerenciado
+
+O módulo é interativo por desenho: exige confirmação em tela nos níveis Moderado e
+Avançado, e não está exposto nos parâmetros de linha de comando. Isso é deliberado —
+remover aplicativos de um parque inteiro sem revisão prévia é uma decisão que não deve
+caber a um parâmetro.
+
+### Se for usar mesmo assim
+
+O módulo pode ser chamado diretamente, fora do Launcher:
+
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -File "\\servidor\compartdisk\Modules\Debloat.ps1" -Action Full -Level Safe -Quiet
+```
+
+| Recomendação | Motivo |
+|---|---|
+| Valide numa máquina-piloto antes | O catálogo é o mesmo, mas o parque não é homogêneo |
+| Use `-Action Analyze` e colete o JSON primeiro | Você vê o que sairia em cada máquina, antes de decidir |
+| Prefira `-Level Safe` | Os níveis acima removem aplicativos que setores diferentes usam de forma diferente |
+| Use `-Exclude` para o que sua organização usa | Ex.: `-Exclude '*Xbox*','Microsoft.Windows.Photos'` |
+| Não use `-SkipRestorePoint` | Ele existe para casos excepcionais, não para produção |
+| Colete os manifestos | Ficam em `COMPARTDISK_Restauracao` e são a base de qualquer reversão |
+
+### Conflito com políticas de grupo
+
+Ajustes de privacidade gravados em `HKLM\SOFTWARE\Policies` podem ser sobrescritos no
+próximo ciclo de GPO, se a organização gerencia essas chaves. O módulo grava sem erro e
+a política vence depois. Não há conflito destrutivo, apenas o valor não persiste.
+
+### O que não fazer
+
+Não distribua o nível Avançado por GPO. O `/ResetBase` impede desinstalar atualizações
+já aplicadas, de forma definitiva e em toda a frota ao mesmo tempo.
+
+A referência completa está no [Módulo de Desbloat](DESBLOAT.md).
+
+---
+
 ## Monitoramento e diagnóstico
 
 ### Códigos de saída

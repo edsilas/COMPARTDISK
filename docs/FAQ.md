@@ -85,6 +85,43 @@ de vez em quando para acompanhar a saúde dos discos.
 
 ---
 
+## Desbloat
+
+### O desbloat pode quebrar meu Windows?
+
+Não no nível Seguro. Existe uma lista de itens protegidos que nunca são tocados:
+Microsoft Store, Defender, bibliotecas de runtime, autenticação, codecs de mídia e os
+serviços de atualização e de rede. Essa verificação acontece depois de qualquer filtro,
+para que não possa ser contornada nem por parâmetro.
+
+Os níveis Moderado e Avançado mexem em coisas que muita gente usa. As telas de
+confirmação dizem exatamente o quê, antes de executar.
+
+### Dá para desfazer?
+
+Serviços, tarefas agendadas e ajustes de registro voltam ao valor exato anterior, pela
+opção `[4]` › `[9]` › `[9]` › `[4]`. Cada alteração grava o estado de origem antes de
+mudar qualquer coisa.
+
+Aplicativos são a exceção: o Windows não retém o pacote no disco depois de removê-lo, e
+a reversão apenas lista o que foi removido para você reinstalar pela Microsoft Store.
+
+### Qual nível devo usar?
+
+Seguro, salvo se você tiver motivo específico para outro. Ele já cobre 104 dos 150
+itens do catálogo e não remove nada que a maioria das pessoas use.
+
+### Por que um item apareceu como "Protegido"?
+
+Ele casou com uma lista de proteção. É o comportamento correto, não um erro.
+
+### Por que o SysMain continuou ligado?
+
+Porque a máquina tem disco mecânico. O Superfetch traz ganho real nesse hardware, e o
+módulo o preserva de propósito. Em SSD ele é desativado.
+
+---
+
 ## Relatórios
 
 **Onde ficam os relatórios?**

@@ -199,6 +199,27 @@ recurso externo, usando apenas fontes já presentes no Windows.
 
 ---
 
+## Fronteiras entre módulos que se tocam
+
+Quatro módulos atuam sobre temas vizinhos. A divisão é explícita para que não existam
+duas fontes de verdade para o mesmo alvo:
+
+| Módulo | Território exclusivo |
+|---|---|
+| `Cleanup.ps1` | Arquivos temporários, caches de navegador, logs de eventos, dumps |
+| `Telemetry.ps1` | Dois serviços de telemetria, cinco chaves de política, seis tarefas de coleta clássica |
+| `Performance.ps1` | Plano de energia, efeitos visuais, análise de inicialização e processos |
+| `Debloat.ps1` | Aplicativos da loja, quinze serviços, quatorze tarefas, ajustes de interface, componentes obsoletos |
+
+O `Debloat.ps1` **não** reimplementa nada dos outros três. Onde há sobreposição
+temática, ele delega e registra a delegação no log: a limpeza de temporários aponta
+para o Cleanup, a telemetria aponta para o Telemetry.
+
+Essa separação é o que permite executar qualquer combinação de módulos sem que um
+desfaça o trabalho do outro.
+
+---
+
 ## Princípios de projeto aplicados
 
 | Princípio | Como aparece |

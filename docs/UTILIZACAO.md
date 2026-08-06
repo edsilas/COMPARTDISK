@@ -92,6 +92,23 @@ Leva de 20 a 60 minutos. Ao terminar, **reinicie o computador**.
 
 ---
 
+### Roteiro 5 — Computador novo, cheio de aplicativos de fábrica
+
+| Passo | Teclas | O que acontece |
+|---|---|---|
+| 1 | `8` `2` | Auditoria rápida, para ter o retrato inicial |
+| 2 | `4` `9` `1` | Simula o desbloat e lista o que seria removido |
+| 3 | `4` `9` `9` `2` | Registra o estado atual, antes de mudar qualquer coisa |
+| 4 | `4` `9` `2` | Executa o nível Seguro |
+| 5 | `4` `9` `8` | Compacta os componentes obsoletos |
+| 6 | — | Reinicia |
+| 7 | `8` `3` | Consolida o relatório da sessão |
+
+Reserve de vinte a quarenta minutos, quase todos no passo 5. Se algum programa fizer
+falta depois, `4` `9` `9` `4` desfaz.
+
+---
+
 ## Lendo o relatório HTML
 
 O relatório abre no navegador e tem três partes:

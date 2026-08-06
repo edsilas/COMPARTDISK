@@ -91,6 +91,47 @@ nunca remove a pasta do Windows, `System32` ou raiz de unidade.
 
 ---
 
+## Desbloat
+
+`Debloat.ps1` — remove aplicativos pré-instalados, ajusta serviços e tarefas agendadas,
+aplica ajustes de privacidade e compacta o armazenamento de componentes.
+
+| Ação | O que faz |
+|---|---|
+| `Analyze` | Simula todas as categorias. Não altera nada |
+| `Apps` | Remove aplicativos da loja, por usuário e no provisionamento |
+| `Services` | Ajusta o tipo de inicialização de 15 serviços |
+| `Tasks` | Desativa 14 tarefas agendadas |
+| `Privacy` | Grava 23 valores de registro contra sugestões e coleta implícita |
+| `Tweaks` | Grava 10 valores de preferência de interface e sistema |
+| `Components` | `AnalyzeComponentStore` e `StartComponentCleanup` via DISM |
+| `Full` | Ponto de restauração, backup e todas as categorias em sequência |
+| `Backup` | Retrato do estado atual de todos os alvos, sem alterar |
+| `Restore` | Reverte pelo manifesto |
+| `RestorePoint` | Cria um ponto de restauração do sistema |
+
+**Catálogo declarativo.** Todas as ações derivam de uma fonte única, com 150 itens que
+declaram tipo, categoria, nível mínimo, motivo técnico e reversibilidade. Simulação,
+execução e relatório usam o mesmo catálogo, o que garante que a prévia descreva
+exatamente o que a execução fará.
+
+**Níveis cumulativos.** `Safe` seleciona 104 itens, `Moderate` 143 e `Aggressive` 150.
+
+**Proteção com precedência.** As listas — 48 aplicativos por nome, 7 por prefixo de
+família, 56 serviços e 4 ramos de registro — são avaliadas depois de `-Include`, para
+que não possam ser contornadas por parâmetro. Pacotes casados por curinga são
+reconferidos pelo nome real antes da remoção.
+
+**Manifesto.** Cada alteração grava o estado anterior em JSON, em duas cópias: no
+diretório da sessão e em `COMPARTDISK_Restauracao`, fora dela.
+
+**Decisão por hardware.** O `SysMain` é preservado em disco mecânico e só desativado em
+estado sólido. A decisão ocorre em tempo de execução e o motivo aparece no relatório.
+
+Referência completa em [Módulo de Desbloat](DESBLOAT.md).
+
+---
+
 ## Segurança
 
 **Postura de segurança** reporta Secure Boot, TPM, segurança baseada em virtualização,

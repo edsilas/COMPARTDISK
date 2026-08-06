@@ -39,6 +39,25 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
   de restauração, mantendo a promessa de degradação sem PowerShell. A remoção de
   aplicativos não tem equivalente Batch e é informada como tal.
 
+### Documentação
+
+- **`docs/DESBLOAT.md`** — referência completa do módulo: os três níveis com objetivo,
+  público, cenários, impactos, grau de segurança, tempo e necessidade de reinício; os
+  sete submódulos com o que exatamente alteram, componentes do Windows envolvidos,
+  dependências, compatibilidade e reversibilidade; as listas de proteção; o manifesto
+  de reversão; parâmetros de linha de comando e a cobertura em modo Batch.
+- README ganhou seção própria sobre o desbloat e índice renumerado para treze seções.
+- Manual do Usuário explica o módulo em linguagem simples, com o significado de cada
+  palavra que aparece na tela durante a execução.
+- Manual do Administrador registra por que o módulo não está exposto na linha de
+  comando, e como usá-lo em parque quando essa for a decisão.
+- Manual Técnico documenta como estender o catálogo, incluindo o motivo de usar chaves
+  nomeadas em vez de arrays posicionais.
+- Arquitetura passa a declarar as fronteiras entre Cleanup, Telemetry, Performance e
+  Debloat, para que não existam duas fontes de verdade sobre o mesmo alvo.
+- Guia de Utilização, Boas Práticas, FAQ e Solução de Problemas cobrem o módulo nos
+  respectivos recortes.
+
 ### Correção de defeitos
 
 Correção de defeitos e endurecimento de guardas de segurança. Nenhuma funcionalidade
