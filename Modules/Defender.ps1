@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Defender.ps1
+ COMPARTDISK 1.3.1 - Defender.ps1
  Desenvolvido por Edsilas
  Acoes: Status | Update | QuickScan | FullScan | CustomScan | Exclusions | History
 #>
@@ -142,7 +142,14 @@ function Show-ThreatHistory {
         }
     }
 
-    if ($rows.Count -eq 0) {
+    if (-not $r.Success) {
+        # Consulta que falhou nao e historico limpo. Get-MpThreatDetection recusa em
+        # modo passivo (antivirus de terceiros ativo) e com o WinDefend parado, e
+        # afirmar "limpo" nesses casos e um atestado de seguranca sem base.
+        Write-Log WARN 'O historico de ameacas nao pode ser consultado.'
+        Add-CompartDiskFinding -Severity INFO -Area 'Defender' -Message 'Historico de ameacas nao verificado: a consulta ao Defender foi recusada.' -Recommendation 'Conferir em Seguranca do Windows > Protecao contra virus e ameacas > Historico de protecao. O Defender pode estar em modo passivo.'
+        $script:result = 'WARN'
+    } elseif ($rows.Count -eq 0) {
         Write-Log OK 'Nenhuma ameaca registrada no historico.'
         Add-CompartDiskFinding -Severity OK -Area 'Defender' -Message 'Historico de ameacas limpo.'
     } else {

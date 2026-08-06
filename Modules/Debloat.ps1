@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Debloat.ps1
+ COMPARTDISK 1.3.1 - Debloat.ps1
  Desenvolvido por Edsilas
  Acoes: Analyze | Apps | Services | Tasks | Privacy | Tweaks | Components | Full
         Backup | Restore | RestorePoint
@@ -634,6 +634,11 @@ function Invoke-DebloatAppx {
     # Reconfirma a protecao com o nome real do pacote: o catalogo pode ter usado
     # curinga, e um curinga amplo nao pode arrastar um pacote protegido junto.
     $bloqueados = @($pacotes | Where-Object { Test-AppxProtegido -Nome $_.Name })
+    # A reconfirmacao cobria apenas $pacotes. Um curinga que casasse um pacote
+    # PROVISIONADO protegido e nao instalado para nenhum usuario passava direto,
+    # porque $bloqueados ficava vazio. Nenhum curinga do catalogo atual exercita esse
+    # caminho; a guarda fecha o buraco para os que vierem.
+    $prov = @($prov | Where-Object { -not (Test-AppxProtegido -Nome "$($_.DisplayName)") })
     if ($bloqueados.Count -gt 0) {
         $saida.Resultado = 'Protegido'
         $saida.Detalhe   = "Pacote protegido: $(($bloqueados | ForEach-Object { $_.Name }) -join ', ')"
@@ -1193,7 +1198,10 @@ try {
             Add-CompartDiskFinding -Severity CRIT -Area 'Debloat' -Message 'Pre-requisitos nao atendidos; nenhuma alteracao foi feita.' `
                 -Recommendation ($pre.Impeditivos -join ' | ')
             $result = 'ERROR'
-            exit (Stop-CompartDiskModule -Result $result -Quiet:$Quiet)
+            # 'return' e nao 'exit': 'exit' dentro do try dispara o finally, que chama
+            # Stop-CompartDiskModule de novo e duplica a linha de encerramento no log
+            # justamente num caminho de erro. O codigo de saida final e o mesmo.
+            return
         }
     }
 
@@ -1249,7 +1257,7 @@ try {
                     Add-CompartDiskFinding -Severity CRIT -Area 'Debloat' -Message 'Rotina completa interrompida por ausencia de ponto de restauracao.' `
                         -Recommendation 'Habilitar a Protecao do Sistema, ou reexecutar com -SkipRestorePoint assumindo o risco.'
                     $result = 'ERROR'
-                    exit (Stop-CompartDiskModule -Result $result -Quiet:$Quiet)
+                    return
                 }
                 Invoke-DebloatBackup -Manifesto $manifesto | Out-Null
                 Write-Color ''

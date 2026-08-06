@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Users.ps1
+ COMPARTDISK 1.3.1 - Users.ps1
  Desenvolvido por Edsilas
  Acoes: List | Groups | Audit | ClearPassword | SetPassword | EnableAdmin | DisableAdmin
  Toda alteracao de conta e registrada no log como evento de seguranca.
@@ -113,8 +113,15 @@ function Show-Audit {
             [pscustomobject]@{ Data = $_.TimeCreated; Evento = $_.Id; Mensagem = (($_.Message -split '\r?\n')[0]) }
         })
         Add-CompartDiskSection -Title 'Falhas de logon (7 dias)' -Status WARN -Rows $rows
-    } else {
+    } elseif ($falhas.Error -and "$($falhas.Error.Exception.Message)" -match 'No events were found|Nenhum evento') {
         Add-CompartDiskFinding -Severity OK -Area 'Contas' -Message 'Nenhuma falha de logon relevante nos ultimos 7 dias.'
+    } else {
+        # Consulta que falhou nao e ausencia de falhas: sem privilegio o log de
+        # Seguranca recusa leitura, e afirmar "nenhuma falha" transforma um erro de
+        # acesso em atestado de seguranca. A acao Audit nao exige elevacao.
+        $motivo = if (-not (Test-Administrator)) { 'execucao sem privilegio administrativo' } else { 'o log de Seguranca nao pode ser lido' }
+        Write-Log WARN "Falhas de logon nao verificadas: $motivo."
+        Add-CompartDiskFinding -Severity INFO -Area 'Contas' -Message "Falhas de logon nao verificadas ($motivo)." -Recommendation 'Reexecutar como Administrador para auditar o log de Seguranca.'
     }
 }
 
@@ -123,6 +130,16 @@ function Set-UserPassword {
 
     if ([string]::IsNullOrWhiteSpace($Nome)) {
         Write-Log ERR 'Nenhum usuario informado.'
+        $script:result = 'ERROR'
+        return
+    }
+
+    # Get-LocalUser -Name aceita curinga: "Admin*" pode devolver varias contas, e
+    # $conta como array faria a verificacao de PrincipalSource comparar a concatenacao
+    # dos valores - a guarda de conta Microsoft deixaria de casar. Nome de conta do
+    # Windows nunca contem curinga: recusar e mais seguro que adivinhar.
+    if ($Nome -match '[\*\?\[\]]') {
+        Write-Log ERR "Nome de conta invalido: '$Nome'. Informe o nome exato, sem curingas."
         $script:result = 'ERROR'
         return
     }

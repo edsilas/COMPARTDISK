@@ -1,6 +1,6 @@
 @echo off
 :: ==============================================================================
-:: COMPARTDISK 1.3.0 - ASSISTENTE DE REPARO PARA WINDOWS 10 E WINDOWS 11
+:: COMPARTDISK 1.3.1 - ASSISTENTE DE REPARO PARA WINDOWS 10 E WINDOWS 11
 :: DESENVOLVIDO POR EDSILAS
 ::
 :: Arquitetura hibrida: Batch como interface, navegacao, controle de fluxo,
@@ -52,7 +52,7 @@ chcp 65001 >nul 2>&1
 :: Se o processo morrer de forma abrupta, a ultima linha deste arquivo aponta
 :: exatamente o estagio em que a falha ocorreu.
 :: ==============================================================================
-set "COMPARTDISK_VERSION=1.3.0"
+set "COMPARTDISK_VERSION=1.3.1"
 set "COMPARTDISK_ROOT=%~dp0"
 set "COMPARTDISK_MODULES=%~dp0Modules"
 set "COMPARTDISK_SELF=%~f0"
@@ -423,14 +423,19 @@ echo %C_CINZA%  ----------------------------------------------------------------
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
 choice /c 12345670 /n /m "  Opcao: "
-if errorlevel 8 goto MENU_PRINCIPAL
-if errorlevel 7 call :MOD_REDE_WIFI
-if errorlevel 6 call :MOD_REDE_PROXY
-if errorlevel 5 call :MOD_REDE_TESTE
-if errorlevel 4 call :MOD_REDE_INFO
-if errorlevel 3 call :MOD_FIREWALL
-if errorlevel 2 call :MOD_REDE_HOSTS
-if errorlevel 1 call :MOD_REDE_RESET
+:: MENU_OPC congela a tecla escolhida. "if errorlevel N" testa ">= N", e cada
+:: "call" abaixo devolve o codigo de saida do modulo (0/1/2/3): sem congelar,
+:: um modulo que retorna WARN reativava os testes de baixo e executava opcoes
+:: que o usuario nao escolheu.
+set "MENU_OPC=%errorlevel%"
+if "%MENU_OPC%"=="8" goto MENU_PRINCIPAL
+if "%MENU_OPC%"=="7" call :MOD_REDE_WIFI
+if "%MENU_OPC%"=="6" call :MOD_REDE_PROXY
+if "%MENU_OPC%"=="5" call :MOD_REDE_TESTE
+if "%MENU_OPC%"=="4" call :MOD_REDE_INFO
+if "%MENU_OPC%"=="3" call :MOD_FIREWALL
+if "%MENU_OPC%"=="2" call :MOD_REDE_HOSTS
+if "%MENU_OPC%"=="1" call :MOD_REDE_RESET
 pause & goto MENU_REDE
 
 :MENU_OTIMIZACAO
@@ -457,16 +462,17 @@ echo %C_CINZA%  ----------------------------------------------------------------
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
 choice /c 1234567890 /n /m "  Opcao: "
-if errorlevel 10 goto MENU_PRINCIPAL
-if errorlevel 9 goto MENU_DEBLOAT
-if errorlevel 8 call :MOD_PERF_BALANCED
-if errorlevel 7 call :MOD_TELEMETRIA_ON
-if errorlevel 6 call :MOD_PERF_ANALISE
-if errorlevel 5 call :MOD_LIMPEZA_NAVEGADORES
-if errorlevel 4 call :MOD_LIMPEZA_SIMULACAO
-if errorlevel 3 call :MOD_PERFORMANCE
-if errorlevel 2 call :MOD_TELEMETRIA
-if errorlevel 1 call :MOD_TEMP_LOGS
+set "MENU_OPC=%errorlevel%"
+if "%MENU_OPC%"=="10" goto MENU_PRINCIPAL
+if "%MENU_OPC%"=="9" goto MENU_DEBLOAT
+if "%MENU_OPC%"=="8" call :MOD_PERF_BALANCED
+if "%MENU_OPC%"=="7" call :MOD_TELEMETRIA_ON
+if "%MENU_OPC%"=="6" call :MOD_PERF_ANALISE
+if "%MENU_OPC%"=="5" call :MOD_LIMPEZA_NAVEGADORES
+if "%MENU_OPC%"=="4" call :MOD_LIMPEZA_SIMULACAO
+if "%MENU_OPC%"=="3" call :MOD_PERFORMANCE
+if "%MENU_OPC%"=="2" call :MOD_TELEMETRIA
+if "%MENU_OPC%"=="1" call :MOD_TEMP_LOGS
 pause & goto MENU_OTIMIZACAO
 
 :MENU_DEBLOAT
@@ -496,16 +502,17 @@ echo %C_CINZA%  ----------------------------------------------------------------
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
 choice /c 1234567890 /n /m "  Opcao: "
-if errorlevel 10 goto MENU_OTIMIZACAO
-if errorlevel 9 goto MENU_DEBLOAT_REVERSAO
-if errorlevel 8 call :MOD_DEBLOAT_COMPONENTES
-if errorlevel 7 call :MOD_DEBLOAT_PRIVACIDADE
-if errorlevel 6 call :MOD_DEBLOAT_SERVICOS
-if errorlevel 5 call :MOD_DEBLOAT_APPS
-if errorlevel 4 call :MOD_DEBLOAT_AVANCADO
-if errorlevel 3 call :MOD_DEBLOAT_MODERADO
-if errorlevel 2 call :MOD_DEBLOAT_SEGURO
-if errorlevel 1 call :MOD_DEBLOAT_SIMULAR
+set "MENU_OPC=%errorlevel%"
+if "%MENU_OPC%"=="10" goto MENU_OTIMIZACAO
+if "%MENU_OPC%"=="9" goto MENU_DEBLOAT_REVERSAO
+if "%MENU_OPC%"=="8" call :MOD_DEBLOAT_COMPONENTES
+if "%MENU_OPC%"=="7" call :MOD_DEBLOAT_PRIVACIDADE
+if "%MENU_OPC%"=="6" call :MOD_DEBLOAT_SERVICOS
+if "%MENU_OPC%"=="5" call :MOD_DEBLOAT_APPS
+if "%MENU_OPC%"=="4" call :MOD_DEBLOAT_AVANCADO
+if "%MENU_OPC%"=="3" call :MOD_DEBLOAT_MODERADO
+if "%MENU_OPC%"=="2" call :MOD_DEBLOAT_SEGURO
+if "%MENU_OPC%"=="1" call :MOD_DEBLOAT_SIMULAR
 pause & goto MENU_DEBLOAT
 
 :MENU_DEBLOAT_REVERSAO
@@ -531,11 +538,12 @@ echo %C_CINZA%  ----------------------------------------------------------------
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
 choice /c 12340 /n /m "  Opcao: "
-if errorlevel 5 goto MENU_DEBLOAT
-if errorlevel 4 call :MOD_DEBLOAT_REVERTER
-if errorlevel 3 call :MOD_DEBLOAT_REVERTER_SIMULAR
-if errorlevel 2 call :MOD_DEBLOAT_BACKUP
-if errorlevel 1 call :MOD_DEBLOAT_PONTO
+set "MENU_OPC=%errorlevel%"
+if "%MENU_OPC%"=="5" goto MENU_DEBLOAT
+if "%MENU_OPC%"=="4" call :MOD_DEBLOAT_REVERTER
+if "%MENU_OPC%"=="3" call :MOD_DEBLOAT_REVERTER_SIMULAR
+if "%MENU_OPC%"=="2" call :MOD_DEBLOAT_BACKUP
+if "%MENU_OPC%"=="1" call :MOD_DEBLOAT_PONTO
 pause & goto MENU_DEBLOAT_REVERSAO
 
 :MENU_REPARO
@@ -562,16 +570,17 @@ echo %C_CINZA%  ----------------------------------------------------------------
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
 choice /c 1234567890 /n /m "  Opcao: "
-if errorlevel 10 goto MENU_PRINCIPAL
-if errorlevel 9 call :MOD_EXPLORER_CACHE
-if errorlevel 8 call :MOD_UPDATE_CACHE
-if errorlevel 7 call :MOD_UPDATE_BUSCAR
-if errorlevel 6 call :MOD_UPDATE_STATUS
-if errorlevel 5 call :MOD_CHKDSK
-if errorlevel 4 call :MOD_EXPLORER
-if errorlevel 3 call :MOD_SPOOLER
-if errorlevel 2 call :MOD_UPDATE_RESET
-if errorlevel 1 call :MOD_SFC_DISM
+set "MENU_OPC=%errorlevel%"
+if "%MENU_OPC%"=="10" goto MENU_PRINCIPAL
+if "%MENU_OPC%"=="9" call :MOD_EXPLORER_CACHE
+if "%MENU_OPC%"=="8" call :MOD_UPDATE_CACHE
+if "%MENU_OPC%"=="7" call :MOD_UPDATE_BUSCAR
+if "%MENU_OPC%"=="6" call :MOD_UPDATE_STATUS
+if "%MENU_OPC%"=="5" call :MOD_CHKDSK
+if "%MENU_OPC%"=="4" call :MOD_EXPLORER
+if "%MENU_OPC%"=="3" call :MOD_SPOOLER
+if "%MENU_OPC%"=="2" call :MOD_UPDATE_RESET
+if "%MENU_OPC%"=="1" call :MOD_SFC_DISM
 pause & goto MENU_REPARO
 
 :MENU_SEGURANCA
@@ -598,16 +607,17 @@ echo %C_CINZA%  ----------------------------------------------------------------
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
 choice /c 1234567890 /n /m "  Opcao: "
-if errorlevel 10 goto MENU_PRINCIPAL
-if errorlevel 9 call :MOD_USERS_AUDIT
-if errorlevel 8 call :MOD_DEFENDER_EXCL
-if errorlevel 7 call :MOD_DEFENDER_FULL
-if errorlevel 6 call :MOD_DEFENDER_STATUS
-if errorlevel 5 call :MOD_SEGURANCA_STATUS
-if errorlevel 4 call :MOD_TAKEOWN
-if errorlevel 3 call :MOD_DEFENDER
-if errorlevel 2 call :MOD_USERS
-if errorlevel 1 call :MOD_GPO_RESET
+set "MENU_OPC=%errorlevel%"
+if "%MENU_OPC%"=="10" goto MENU_PRINCIPAL
+if "%MENU_OPC%"=="9" call :MOD_USERS_AUDIT
+if "%MENU_OPC%"=="8" call :MOD_DEFENDER_EXCL
+if "%MENU_OPC%"=="7" call :MOD_DEFENDER_FULL
+if "%MENU_OPC%"=="6" call :MOD_DEFENDER_STATUS
+if "%MENU_OPC%"=="5" call :MOD_SEGURANCA_STATUS
+if "%MENU_OPC%"=="4" call :MOD_TAKEOWN
+if "%MENU_OPC%"=="3" call :MOD_DEFENDER
+if "%MENU_OPC%"=="2" call :MOD_USERS
+if "%MENU_OPC%"=="1" call :MOD_GPO_RESET
 pause & goto MENU_SEGURANCA
 
 :MENU_HARDWARE
@@ -634,16 +644,17 @@ echo %C_CINZA%  ----------------------------------------------------------------
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
 choice /c 1234567890 /n /m "  Opcao: "
-if errorlevel 10 goto MENU_PRINCIPAL
-if errorlevel 9 call :MOD_DRIVERS_PROBLEMAS
-if errorlevel 8 call :MOD_VOLUMES
-if errorlevel 7 call :MOD_SMART_DETALHE
-if errorlevel 6 call :MOD_HARDWARE_FULL
-if errorlevel 5 call :MOD_SYSINFO
-if errorlevel 4 call :MOD_DRIVERS
-if errorlevel 3 call :MOD_BITLOCKER
-if errorlevel 2 call :MOD_BATTERY
-if errorlevel 1 call :MOD_SMART
+set "MENU_OPC=%errorlevel%"
+if "%MENU_OPC%"=="10" goto MENU_PRINCIPAL
+if "%MENU_OPC%"=="9" call :MOD_DRIVERS_PROBLEMAS
+if "%MENU_OPC%"=="8" call :MOD_VOLUMES
+if "%MENU_OPC%"=="7" call :MOD_SMART_DETALHE
+if "%MENU_OPC%"=="6" call :MOD_HARDWARE_FULL
+if "%MENU_OPC%"=="5" call :MOD_SYSINFO
+if "%MENU_OPC%"=="4" call :MOD_DRIVERS
+if "%MENU_OPC%"=="3" call :MOD_BITLOCKER
+if "%MENU_OPC%"=="2" call :MOD_BATTERY
+if "%MENU_OPC%"=="1" call :MOD_SMART
 pause & goto MENU_HARDWARE
 
 :MENU_DIAGNOSTICO
@@ -670,16 +681,17 @@ echo %C_CINZA%  ----------------------------------------------------------------
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
 choice /c 1234567890 /n /m "  Opcao: "
-if errorlevel 10 goto MENU_PRINCIPAL
-if errorlevel 9 call :MOD_RELATORIO_ABRIR
-if errorlevel 8 call :MOD_DRIVERS_EXPORT
-if errorlevel 7 call :MOD_LICENCA
-if errorlevel 6 call :MOD_SOFTWARE
-if errorlevel 5 call :MOD_EVENTOS_30
-if errorlevel 4 call :MOD_EVENTOS_7
-if errorlevel 3 call :MOD_RELATORIO
-if errorlevel 2 call :MOD_AUDITORIA_RAPIDA
-if errorlevel 1 call :MOD_AUDITORIA_COMPLETA
+set "MENU_OPC=%errorlevel%"
+if "%MENU_OPC%"=="10" goto MENU_PRINCIPAL
+if "%MENU_OPC%"=="9" call :MOD_RELATORIO_ABRIR
+if "%MENU_OPC%"=="8" call :MOD_DRIVERS_EXPORT
+if "%MENU_OPC%"=="7" call :MOD_LICENCA
+if "%MENU_OPC%"=="6" call :MOD_SOFTWARE
+if "%MENU_OPC%"=="5" call :MOD_EVENTOS_30
+if "%MENU_OPC%"=="4" call :MOD_EVENTOS_7
+if "%MENU_OPC%"=="3" call :MOD_RELATORIO
+if "%MENU_OPC%"=="2" call :MOD_AUDITORIA_RAPIDA
+if "%MENU_OPC%"=="1" call :MOD_AUDITORIA_COMPLETA
 pause & goto MENU_DIAGNOSTICO
 
 :MENU_AMBIENTE
@@ -1201,7 +1213,10 @@ set "TARGET_USER=%TARGET_USER:"=%"
 if not defined TARGET_USER goto MOD_USERS_ESCOLHA
 set "PS_ARGS=-Action SetPassword -User "%TARGET_USER%""
 call :RUN_PS "Users.ps1"
-if errorlevel 9000 call :LOG_MSG "WARN" "A troca de senha por aqui exige PowerShell. Sem ele, use: net user <conta> *"
+:: :FB_USERS_SENHA ja existia completa (net user <conta> *, com verificacao de
+:: errorlevel) e nenhuma linha a chamava. Executar a rotina e melhor do que
+:: instruir o usuario a digitar o mesmo comando a mao.
+if errorlevel 9000 goto FB_USERS_SENHA
 goto :EOF
 
 :MOD_USERS_ADMIN
@@ -1447,17 +1462,25 @@ netsh wlan show profiles
 goto :EOF
 
 :FB_LIMPEZA
-del /q /f /s "%TEMP%\*" >nul 2>&1
-del /q /f /s "C:\Windows\Temp\*" >nul 2>&1
-rd /s /q %systemdrive%\$Recycle.bin >nul 2>&1
-del /q /f /s "C:\Windows\Prefetch\*" >nul 2>&1
-del /q /f /s "C:\Windows\SoftwareDistribution\Download\*" >nul 2>&1
-rd /s /q "C:\Windows\SoftwareDistribution\DeliveryOptimization" >nul 2>&1
+:: Preserva os arquivos da propria ferramenta em %TEMP%, como Cleanup.ps1 ja faz
+:: com -ExcludePatterns: na execucao remota os modulos vivem em
+:: %TEMP%\COMPARTDISK_<id>, o trace fica em %TEMP%\COMPARTDISK_Bootstrap.log e
+:: LOGDIR pode ter caido para %TEMP%, com o log da sessao dentro.
+for /f "delims=" %%T in ('dir /b /a-d "%TEMP%" 2^>nul ^| findstr /v /i /b "COMPARTDISK_ Relatorio_Manutencao"') do del /q /f "%TEMP%\%%T" >nul 2>&1
+for /f "delims=" %%T in ('dir /b /ad "%TEMP%" 2^>nul ^| findstr /v /i /b "COMPARTDISK_"') do rd /s /q "%TEMP%\%%T" >nul 2>&1
+del /q /f /s "%SystemRoot%\Temp\*" >nul 2>&1
+rd /s /q "%SystemDrive%\$Recycle.bin" >nul 2>&1
+del /q /f /s "%SystemRoot%\Prefetch\*" >nul 2>&1
+del /q /f /s "%SystemRoot%\SoftwareDistribution\Download\*" >nul 2>&1
+rd /s /q "%SystemRoot%\SoftwareDistribution\DeliveryOptimization" >nul 2>&1
 :: Limpeza avancada Chromium (Cobre multiplos caches em TODOS os perfis)
 for %%N in ("Google\Chrome", "Microsoft\Edge") do (
     if exist "%LocalAppData%\%%~N\User Data" (
         for /d %%D in ("%LocalAppData%\%%~N\User Data\*") do (
-            for %%C in ("Cache", "Code Cache", "GPUCache", "ShaderCache", "Service Worker\CacheStorage", "Network") do (
+            :: Lista identica a de Cleanup.ps1:62. "Network" NAO entra: guarda Cookies e
+            :: TransportSecurity, nao cache - apaga-la desconecta o usuario de todos os
+            :: sites. :FB_LIMPEZA_NAVEGADORES, a rotina dedicada, ja a excluia.
+            for %%C in ("Cache", "Code Cache", "GPUCache", "ShaderCache", "GrShaderCache", "Service Worker\CacheStorage", "Service Worker\ScriptCache") do (
                 if exist "%%D\%%~C" rd /s /q "%%D\%%~C" >nul 2>&1
             )
         )
@@ -1471,7 +1494,7 @@ goto :EOF
 for %%N in ("Google\Chrome", "Microsoft\Edge", "BraveSoftware\Brave-Browser") do (
     if exist "%LocalAppData%\%%~N\User Data" (
         for /d %%D in ("%LocalAppData%\%%~N\User Data\*") do (
-            for %%C in ("Cache", "Code Cache", "GPUCache", "ShaderCache", "Service Worker\CacheStorage") do (
+            for %%C in ("Cache", "Code Cache", "GPUCache", "ShaderCache", "GrShaderCache", "Service Worker\CacheStorage", "Service Worker\ScriptCache") do (
                 if exist "%%D\%%~C" rd /s /q "%%D\%%~C" >nul 2>&1
             )
         )
@@ -1482,10 +1505,10 @@ goto :EOF
 
 :FB_LIMPEZA_LOGS
 for /F "tokens=*" %%G in ('wevtutil.exe el') DO (wevtutil.exe cl "%%G" >nul 2>&1)
-del /q /f /s "C:\Windows\Logs\CBS\*" >nul 2>&1
-del /q /f /s "C:\Windows\Logs\DISM\*" >nul 2>&1
-del /q /f /s "C:\Windows\Minidump\*" >nul 2>&1
-del /q /f "C:\Windows\Memory.dmp" >nul 2>&1
+del /q /f /s "%SystemRoot%\Logs\CBS\*" >nul 2>&1
+del /q /f /s "%SystemRoot%\Logs\DISM\*" >nul 2>&1
+del /q /f /s "%SystemRoot%\Minidump\*" >nul 2>&1
+del /q /f "%SystemRoot%\Memory.dmp" >nul 2>&1
 rd /s /q "C:\ProgramData\Microsoft\Windows\WER\ReportQueue" >nul 2>&1
 call :LOG_MSG "OK" "Dumps e Event Logs apagados."
 goto :EOF
@@ -1634,10 +1657,14 @@ net stop cryptSvc >nul 2>&1
 net stop bits >nul 2>&1
 
 :: Tratamento rigoroso SoftwareDistribution
-if exist "C:\Windows\SoftwareDistribution.old" rd /s /q "C:\Windows\SoftwareDistribution.old" >nul 2>&1
-if exist "C:\Windows\SoftwareDistribution" (
-    ren "C:\Windows\SoftwareDistribution" "SoftwareDistribution.old" >nul 2>&1
-    if exist "C:\Windows\SoftwareDistribution" (
+:: O .old de uma execucao anterior guarda o estado real anterior a ferramenta.
+:: Apaga-lo fazia com que a segunda passada preservasse apenas a pasta ja vazia -
+:: e a propria ferramenta recomenda repetir o reset quando algo fica bloqueado.
+set "FB_SD_DEST=SoftwareDistribution.old"
+if exist "%SystemRoot%\SoftwareDistribution.old" set "FB_SD_DEST=SoftwareDistribution.old_%COMPARTDISK_SESSION%"
+if exist "%SystemRoot%\SoftwareDistribution" (
+    ren "%SystemRoot%\SoftwareDistribution" "%FB_SD_DEST%" >nul 2>&1
+    if exist "%SystemRoot%\SoftwareDistribution" (
         call :LOG_MSG "WARN" "SoftwareDistribution esta bloqueada por processo ativo."
     ) else (
         call :LOG_MSG "OK" "Pasta SoftwareDistribution redefinida."
@@ -1645,10 +1672,10 @@ if exist "C:\Windows\SoftwareDistribution" (
 )
 
 :: Tratamento rigoroso Catroot2
-if exist "C:\Windows\System32\catroot2.old" rd /s /q "C:\Windows\System32\catroot2.old" >nul 2>&1
-if exist "C:\Windows\System32\catroot2" (
-    ren "C:\Windows\System32\catroot2" "catroot2.old" >nul 2>&1
-    if exist "C:\Windows\System32\catroot2" (
+if exist "%SystemRoot%\System32\catroot2.old" rd /s /q "%SystemRoot%\System32\catroot2.old" >nul 2>&1
+if exist "%SystemRoot%\System32\catroot2" (
+    ren "%SystemRoot%\System32\catroot2" "catroot2.old" >nul 2>&1
+    if exist "%SystemRoot%\System32\catroot2" (
         call :LOG_MSG "WARN" "Catroot2 bloqueada (CryptSvc ativo?)."
     ) else (
         call :LOG_MSG "OK" "Pasta Catroot2 redefinida."
@@ -1669,7 +1696,7 @@ goto :EOF
 :FB_UPDATE_CACHE
 net stop wuauserv >nul 2>&1
 net stop bits >nul 2>&1
-del /q /f /s "C:\Windows\SoftwareDistribution\Download\*" >nul 2>&1
+del /q /f /s "%SystemRoot%\SoftwareDistribution\Download\*" >nul 2>&1
 net start wuauserv >nul 2>&1
 net start bits >nul 2>&1
 call :LOG_MSG "OK" "Cache de downloads do Windows Update limpo."
@@ -1931,7 +1958,18 @@ goto :EOF
 :TRACE
 :: Escritor de trace minimo e sem dependencias. Usado desde a primeira linha do
 :: bootstrap, inclusive antes de LOGFILE existir. Nunca deve falhar nem abortar.
->> "%TRACEFILE%" echo [%DATE% %TIME%] %~1
+setlocal EnableExtensions DisableDelayedExpansion
+set "TRC=%~1"
+if not defined TRC set "TRC=(sem mensagem)"
+:: Mesma higienizacao de :LOG_MSG. O trace recebe LOGDIR, que vem de %~dp0 e pode
+:: conter "&": fora de aspas, %~1 com "&" parte a linha em dois comandos e trunca
+:: justamente o diagnostico de partida.
+set "TRC=%TRC:|=/%"
+set "TRC=%TRC:&=+%"
+set "TRC=%TRC:<=(%"
+set "TRC=%TRC:>=)%"
+>> "%TRACEFILE%" echo [%DATE% %TIME%] %TRC%
+endlocal
 exit /b 0
 
 :TESTAR_ESCRITA

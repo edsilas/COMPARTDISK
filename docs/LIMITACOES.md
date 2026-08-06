@@ -1,6 +1,6 @@
 # Limitações Conhecidas
 
-**COMPARTDISK 1.3.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.3.1** · Desenvolvido por Edsilas
 
 Ser honesto sobre o que a ferramenta **não** faz é tão importante quanto documentar o
 que ela faz. Esta página lista os limites reais.
@@ -24,9 +24,15 @@ limites:
 
 ### Não instala nem baixa nada
 
-Não atualiza drivers pela internet, não baixa pacotes de reparo e não contata
-servidores. O backup de drivers salva os que já estão instalados; ele não busca
-versões novas.
+Não atualiza drivers pela internet e não baixa pacotes de reparo do Windows. O backup
+de drivers salva os que já estão instalados; ele não busca versões novas.
+
+Há exatamente dois pontos em que a ferramenta contata a rede, ambos explícitos na
+interface: o **teste de conectividade** (`[3]` › `[5]`), que consulta os servidores de
+teste da Microsoft e o DNS público `8.8.8.8`; e a **atualização de definições do
+Defender** (`[6]` › `[3]`, também executada pelo Reparo Geral Automático), que baixa
+as assinaturas dos servidores da Microsoft. Nenhum dado da máquina é enviado em
+nenhum dos dois.
 
 ### Não altera arquivos pessoais
 
@@ -67,7 +73,12 @@ não sobre o de quem está logado. Isso afeta:
 
 - limpeza de caches de navegadores;
 - redefinição das preferências de exibição de pastas;
-- inventário de programas instalados apenas para o usuário.
+- inventário de programas instalados apenas para o usuário;
+- ajuste dos efeitos visuais pelos planos de energia (`[2]` › `[1]` e `[2]` › `[2]`);
+- identificador de publicidade e retorno de experiência, no módulo de telemetria;
+- sugestões e conteúdo entregue pelo Windows, no módulo de desbloat;
+- leitura da configuração de proxy (`[3]` › `[6]`), que reporta o proxy do
+  administrador, não o do usuário logado.
 
 Quando a elevação é a do próprio usuário (o caso doméstico, em que o Windows apenas
 pede a confirmação do Controle de Conta de Usuário), o perfil é o mesmo e não há

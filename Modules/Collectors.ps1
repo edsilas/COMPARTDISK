@@ -1,6 +1,6 @@
 ﻿<#
 ================================================================================
- COMPARTDISK 1.3.0 - Collectors.ps1
+ COMPARTDISK 1.3.1 - Collectors.ps1
  Desenvolvido por Edsilas
  Coletores de dados reutilizaveis (somente leitura, nao alteram o sistema).
  Carregado automaticamente pelo Core.ps1.
@@ -168,7 +168,16 @@ function Get-CompartDiskDiskInfo {
     # SMART bruto (preditivo de falha) - disponivel na maioria dos controladores
     try {
         foreach ($s in (Get-CompartDiskCim -Class MSStorageDriver_FailurePredictStatus -Namespace 'root\wmi')) {
-            $alvo = $rows | Where-Object { $s.InstanceName -like "*$($_.Id)*" } | Select-Object -First 1
+            # O InstanceName termina em "_<indice do disco>". O casamento anterior era
+            # -like "*<id>*", que procurava o digito em QUALQUER posicao: em
+            # "...&1ec0a2c0&0&000000_0" o padrao "*1*" casa dentro do identificador
+            # hexadecimal, e o prognostico de um disco era gravado em outro.
+            # Com um unico disco o casamento frouxo e inofensivo e continua servindo
+            # de rede de seguranca caso o formato do InstanceName seja outro.
+            $m = [regex]::Match("$($s.InstanceName)", '_(\d+)$')
+            $alvo = $null
+            if ($m.Success) { $alvo = $rows | Where-Object { "$($_.Id)" -eq $m.Groups[1].Value } | Select-Object -First 1 }
+            if (-not $alvo -and $rows.Count -eq 1) { $alvo = $rows[0] }
             if ($alvo) {
                 $alvo | Add-Member -NotePropertyName 'SMART_Falha' -NotePropertyValue $(if ($s.PredictFailure) { 'SIM' } else { 'Nao' }) -Force
             }
@@ -564,6 +573,12 @@ function Get-CompartDiskEventSummary {
         try {
             $filtro = @{ LogName = $log; StartTime = $inicio; Level = 1, 2, 3 }
             $ev = Get-WinEvent -FilterHashtable $filtro -MaxEvents $MaxPerLog -ErrorAction Stop
+            # O corte de -MaxEvents e aplicado ANTES do agrupamento e devolve apenas os
+            # mais RECENTES: ao ser atingido, as contagens viram um piso e eventos mais
+            # antigos da janela nem aparecem. Isso precisa ficar dito.
+            if (@($ev).Count -ge $MaxPerLog) {
+                Write-Log WARN ("Log '{0}': limite de {1} eventos atingido. As contagens sao um piso e eventos mais antigos da janela de {2} dia(s) podem nao aparecer." -f $log, $MaxPerLog, $Days)
+            }
             $grupos = $ev | Group-Object -Property Id, ProviderName | Sort-Object Count -Descending
             foreach ($g in $grupos) {
                 $primeiro = $g.Group[0]
@@ -584,7 +599,13 @@ function Get-CompartDiskEventSummary {
             Write-Log DEBUG "Eventos '$log' indisponiveis: $($_.Exception.Message)" -NoConsole
         }
     }
-    return @($rows | Sort-Object -Property @{Expression = 'Nivel'; Descending = $false }, @{Expression = 'Ocorrencias'; Descending = $true })
+    # Ordenar por 'Nivel' como cadeia da a ordem alfabetica Aviso < Critico < Erro:
+    # os avisos vinham primeiro e os criticos caiam abaixo do corte de 15 linhas que
+    # Audit.ps1 exibe. O peso explicito ordena por gravidade real.
+    $peso = @{ 'Critico' = 0; 'Erro' = 1; 'Aviso' = 2; 'Info' = 3 }
+    return @($rows | Sort-Object `
+        -Property @{ Expression = { if ($peso.ContainsKey("$($_.Nivel)")) { $peso["$($_.Nivel)"] } else { 9 } } }, `
+                  @{ Expression = 'Ocorrencias'; Descending = $true })
 }
 
 function Get-CompartDiskLocalUsers {
@@ -611,7 +632,11 @@ function Get-CompartDiskLocalUsers {
     foreach ($u in (Get-CompartDiskCim -Class Win32_UserAccount -Filter 'LocalAccount=True')) {
         [void]$rows.Add([pscustomobject]@{
             Usuario = $u.Name; Habilitado = (-not $u.Disabled); Administrador = 'n/d'
-            SenhaExpira = (-not $u.PasswordExpires); UltimoLogon = 'n/d'
+            # Win32_UserAccount.PasswordExpires e Boolean ($true = a senha expira),
+            # enquanto Get-LocalUser devolve a DATA de expiracao. O "-not" invertia o
+            # sentido: a coluna dizia False justamente quando a senha expirava.
+            SenhaExpira = $(if ($u.PasswordExpires) { 'Sim' } else { 'Nunca' })
+            UltimoLogon = 'n/d'
             SenhaRequerida = $u.PasswordRequired; Descricao = $u.Description
         })
     }

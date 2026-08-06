@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.3.0 - Update.ps1
+ COMPARTDISK 1.3.1 - Update.ps1
  Desenvolvido por Edsilas
  Acoes: Status | History | Reset | Cache | Services | Search
 #>
@@ -116,9 +116,20 @@ function Repair-UpdateServices {
             }
         } -Activity "Configurar servico $n" | Out-Null
     }
-    Set-CompartDiskServiceState -Name @('cryptsvc', 'bits', 'wuauserv') -Action Start | Out-Null
-    Write-Log OK 'Servicos do Windows Update reconfigurados.'
-    Add-CompartDiskFinding -Severity OK -Area 'Windows Update' -Message 'Servicos do Windows Update verificados e habilitados.'
+    $iniciados = @(Set-CompartDiskServiceState -Name @('cryptsvc', 'bits', 'wuauserv') -Action Start)
+    $naoIniciados = @($iniciados | Where-Object { -not $_.Success })
+    # A afirmacao acompanha o resultado: em parque gerenciado, uma diretiva de grupo
+    # pode forcar wuauserv como Disabled e a reconfiguracao nao pega. O relatorio
+    # trazia lado a lado o CRIT do diagnostico e um OK dizendo que fora resolvido.
+    if ($naoIniciados.Count -eq 0) {
+        Write-Log OK 'Servicos do Windows Update reconfigurados.'
+        Add-CompartDiskFinding -Severity OK -Area 'Windows Update' -Message 'Servicos do Windows Update verificados e habilitados.'
+    } else {
+        $script:result = 'WARN'
+        $nomes = ($naoIniciados | ForEach-Object { $_.Service }) -join ', '
+        Write-Log WARN "Servicos do Windows Update nao iniciados: $nomes"
+        Add-CompartDiskFinding -Severity WARN -Area 'Windows Update' -Message "Nem todos os servicos do Windows Update puderam ser habilitados: $nomes." -Recommendation 'Verificar diretiva de grupo que force o tipo de inicializacao, ou politica corporativa de atualizacao.'
+    }
 }
 
 function Clear-UpdateCache {
@@ -166,13 +177,13 @@ function Reset-UpdateComponents {
         try {
             $destino = "$($item.N).old"
             if (Test-Path -LiteralPath $old) {
-                Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
-                # Um backup anterior preso por outro processo nao pode impedir o reset:
-                # neste caso usa-se um nome datado em vez de abortar a operacao.
-                if (Test-Path -LiteralPath $old) {
-                    $destino = "$($item.N).old_{0}" -f (Get-Date -Format 'yyyyMMdd_HHmmss')
-                    Write-Log INFO "Backup anterior de '$($item.N)' esta em uso. Novo backup: $destino"
-                }
+                # O .old de uma execucao anterior guarda o estado REAL anterior a
+                # ferramenta. Apaga-lo destruia justamente o que a renomeacao existe
+                # para preservar - e a recomendacao emitida quando uma pasta fica
+                # bloqueada e "executar o reset novamente", tornando esse o caminho
+                # mais provavel em vez do mais raro.
+                $destino = "$($item.N).old_{0}" -f (Get-Date -Format 'yyyyMMdd_HHmmss')
+                Write-Log INFO "Backup anterior de '$($item.N)' preservado. Novo backup: $destino"
             }
             if (Test-Path -LiteralPath $item.P) {
                 Rename-Item -LiteralPath $item.P -NewName $destino -Force -ErrorAction Stop

@@ -1,6 +1,6 @@
 # Manual Técnico
 
-**COMPARTDISK 1.3.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.3.1** · Desenvolvido por Edsilas
 
 Para quem vai ler, manter ou estender o código.
 
@@ -12,7 +12,7 @@ Todos os dezessete módulos de domínio seguem exatamente esta estrutura:
 
 ```powershell
 <#
- COMPARTDISK 1.3.0 - Exemplo.ps1
+ COMPARTDISK 1.3.1 - Exemplo.ps1
  Desenvolvido por Edsilas
  Acoes: Acao1 | Acao2
 #>
@@ -111,7 +111,7 @@ vazio, o que mantém a coleta funcionando em máquinas com WMI degradado.
 
 | Função | Proteção |
 |---|---|
-| `Remove-CompartDiskPathSafely` | Lista de caminhos protegidos; nunca remove pasta do Windows, `System32` ou raiz |
+| `Remove-CompartDiskPathSafely` | Lista de caminhos protegidos, comparada por **igualdade exata** após normalização: recusa a raiz da unidade, a pasta do Windows, `System32` e `Program Files`. Não é hierárquica — subpastas como `System32\GroupPolicy` são removíveis, e o reset de diretivas depende disso |
 | `Set-CompartDiskRegistryValue` | Idempotente; registra o valor anterior |
 | `Set-CompartDiskServiceState` | Trata serviço inexistente sem lançar exceção |
 
