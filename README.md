@@ -31,18 +31,19 @@ Compatível atualmente com Windows 10 e Windows 11.
 | Seção | Conteúdo |
 |---|---|
 | [1. Visão geral](#1-visão-geral) | O que a ferramenta faz e a quem se destina |
-| [2. Recursos](#2-recursos) | Capacidades principais |
-| [3. Pré-requisitos](#3-pré-requisitos) | O que é necessário antes de começar |
-| [4. Início rápido](#4-início-rápido) | Executar em um comando ou instalar localmente |
-| [5. Interface](#5-interface) | Como a ferramenta se apresenta |
-| [6. Desbloat do Windows](#6-desbloat-do-windows) | Remover o que veio pré-instalado |
-| [7. Uso avançado](#7-uso-avançado) | Execução desassistida e parque de máquinas |
-| [8. Segurança e privacidade](#8-segurança-e-privacidade) | O que a ferramenta faz e não faz com seus dados |
-| [9. Documentação](#9-documentação) | Índice completo dos guias e manuais |
-| [10. Solução de problemas](#10-solução-de-problemas) | Primeiros passos quando algo falha |
-| [11. Contribuindo](#11-contribuindo) | Como relatar problemas e sugerir melhorias |
-| [12. Licença](#12-licença) | Termos de uso e distribuição |
-| [13. Marcas registradas](#13-marcas-registradas) | Avisos legais |
+| [2. Como funciona](#2-como-funciona) | Fluxo de execução, do comando ao relatório |
+| [3. Recursos](#3-recursos) | Capacidades principais |
+| [4. Pré-requisitos](#4-pré-requisitos) | O que é necessário antes de começar |
+| [5. Início rápido](#5-início-rápido) | Executar em um comando ou instalar localmente |
+| [6. Interface](#6-interface) | Como a ferramenta se apresenta e o mapa dos menus |
+| [7. Desbloat do Windows](#7-desbloat-do-windows) | Remover o que veio pré-instalado |
+| [8. Uso avançado](#8-uso-avançado) | Execução desassistida e parque de máquinas |
+| [9. Segurança e privacidade](#9-segurança-e-privacidade) | O que a ferramenta faz e não faz com seus dados |
+| [10. Documentação](#10-documentação) | Índice completo dos guias e manuais |
+| [11. Solução de problemas](#11-solução-de-problemas) | Primeiros passos quando algo falha |
+| [12. Contribuindo](#12-contribuindo) | Como relatar problemas e sugerir melhorias |
+| [13. Licença](#13-licença) | Termos de uso e distribuição |
+| [14. Marcas registradas](#14-marcas-registradas) | Avisos legais |
 
 ---
 
@@ -68,16 +69,80 @@ arquivo de log.
 > [!NOTE]
 > Não é preciso saber programar. Não é preciso conhecer PowerShell nem Batch.
 
-### Arquitetura em uma frase
+---
 
-O arquivo `Launcher.bat` concentra a interface e o controle de fluxo; os módulos
-PowerShell executam as operações complexas. Quando o PowerShell está ausente ou
-bloqueado por política, cada função recorre a uma rotina Batch equivalente — nenhuma
-funcionalidade deixa de existir. Detalhes em [Arquitetura](docs/ARQUITETURA.md).
+## 2. Como funciona
+
+O arquivo `Launcher.bat` **é o programa**: nele estão a interface, os menus, a
+autoelevação, a detecção de ambiente e o controle de fluxo. O PowerShell é um **motor
+acoplável** — quando existe, assume as operações complexas; quando não existe, o
+Batch executa a mesma funcionalidade por rotinas próprias.
+
+> **Regra de ouro do projeto:** nenhuma funcionalidade deixa de existir por ausência
+> de PowerShell.
+
+### Fluxo de execução
+
+```mermaid
+flowchart TD
+    R["<b>Execução remota</b><br/>um comando no PowerShell"]
+    L["<b>Instalação local</b><br/>Launcher.bat"]
+
+    R --> DL["Baixa o pacote, confere a assinatura ZIP<br/>e valida SHA-256 quando publicado"]
+    DL --> P
+    L --> P
+
+    P{"Tem privilégio de<br/>administrador?"}
+    P -- "não" --> UAC["Solicita elevação via UAC<br/>e relança com sentinela interna"]
+    UAC --> P
+    P -- "sim" --> BOOT
+
+    BOOT["<b>Inicialização</b> — 12 etapas<br/>cada uma registrada em<br/>COMPARTDISK_Bootstrap.log"]
+    BOOT --> ENG{"Seleção do motor<br/>validada na prática"}
+
+    ENG -- "1º" --> PS7["PowerShell 7"]
+    ENG -- "2º" --> PS5["Windows PowerShell 5.1"]
+    ENG -- "nenhum responde" --> BAT["Batch puro"]
+
+    PS7 --> MENU
+    PS5 --> MENU
+    BAT --> MENU
+
+    MENU(["<b>Menu principal</b><br/>tecla numérica, sem Enter"])
+    MENU --> MOD["Módulo correspondente<br/>em Modules"]
+    MOD --> EXIT{"Código de saída"}
+
+    EXIT -- "0 · 1 · 2 · 3" --> LOG["Resultado registrado no log<br/>e nas constatações da sessão"]
+    EXIT -- "9001 · 9002" --> FB["<b>Rotina Batch equivalente</b><br/>PowerShell indisponível<br/>ou módulo ausente"]
+    FB --> LOG
+    LOG --> MENU
+
+    MENU -- "tecla 0" --> FIM["Relatório salvo<br/>temporários removidos"]
+
+    classDef entrada fill:#0078D4,stroke:#005A9E,color:#fff
+    classDef fallback fill:#FFF4CE,stroke:#9D5D00,color:#3B2300
+    classDef final fill:#DFF6DD,stroke:#107C10,color:#0B5A0B
+    class R,L entrada
+    class FB fallback
+    class FIM final
+```
+
+Se a partida falhar, a última linha de `%TEMP%\COMPARTDISK_Bootstrap.log` aponta
+exatamente em qual das doze etapas o processo parou.
+
+### Detecção de privilégio
+
+A verificação é feita em três camadas, nesta ordem: `fltmc`, `net session` e escrita
+de teste em `HKLM`. O `net session` não é usado isoladamente porque falha quando o
+serviço *Server* está parado — comum em Windows Home e imagens corporativas
+endurecidas, cenário em que um administrador legítimo seria classificado como usuário
+comum.
+
+Detalhes completos em [Arquitetura](docs/ARQUITETURA.md).
 
 ---
 
-## 2. Recursos
+## 3. Recursos
 
 | Recurso | Descrição |
 |---|---|
@@ -93,7 +158,7 @@ funcionalidade deixa de existir. Detalhes em [Arquitetura](docs/ARQUITETURA.md).
 
 ---
 
-## 3. Pré-requisitos
+## 4. Pré-requisitos
 
 ### Sistema operacional
 
@@ -129,7 +194,7 @@ Detalhes completos em [Requisitos do Sistema](docs/REQUISITOS.md) e
 
 ---
 
-## 4. Início rápido
+## 5. Início rápido
 
 Há dois métodos de execução. Ambos rodam **o mesmo programa**, com os mesmos menus,
 módulos e fluxos.
@@ -216,13 +281,13 @@ Instruções detalhadas em [Guia de Instalação](docs/INSTALACAO.md).
 | Critério | Execução remota | Instalação local |
 |---|---|---|
 | Versão executada | Sempre a mais recente | A que você baixou |
-| Ocupa espaço em disco | Não | Cerca de 2 MB |
+| Ocupa espaço em disco | Não | Menos de 1 MB |
 | Funciona sem internet | Não | Sim |
 | Indicado para | Uso pontual, suporte técnico | Uso recorrente, parque de máquinas |
 
 ---
 
-## 5. Interface
+## 6. Interface
 
 ```text
   COMPARTDISK  1.3.1
@@ -254,11 +319,45 @@ A navegação é feita por teclas numéricas, sem necessidade de pressionar Ente
 tecla `0` retorna à tela anterior. O rodapé indica qual motor está em uso e onde o
 registro está sendo gravado.
 
-Mapa completo das telas em [Descrição dos Menus](docs/MENUS.md).
+### Mapa dos menus
+
+Duas opções executam direto; as demais abrem submenus. O número entre parênteses é a
+quantidade de opções de cada tela.
+
+```mermaid
+flowchart LR
+    MP(["<b>Menu principal</b>"])
+
+    MP --> M1["<b>1</b> · Reparo Geral Automático<br/><i>executa direto — 20 a 60 min</i>"]
+    MP --> M2["<b>2</b> · Atualizar Programas<br/><i>executa direto — Winget</i>"]
+    MP --> M3["<b>3</b> · Rede, Internet e Conectividade<br/><i>7 opções — 4 leem, 3 alteram</i>"]
+    MP --> M4["<b>4</b> · Otimização, Limpeza e Privacidade<br/><i>9 opções — 2 leem, 2 irreversíveis</i>"]
+    MP --> M5["<b>5</b> · Reparo do Sistema e Update<br/><i>9 opções — 2 leem, 7 alteram</i>"]
+    MP --> M6["<b>6</b> · Contas, Permissões e Segurança<br/><i>9 opções — 4 leem, 3 irreversíveis</i>"]
+    MP --> M7["<b>7</b> · Discos, Drivers e Hardware<br/><i>9 opções — 8 leem, 1 grava</i>"]
+    MP --> M8["<b>8</b> · Diagnóstico e Relatórios<br/><i>9 opções — todas somente leitura</i>"]
+    MP --> M9["<b>9</b> · Ambiente de Execução<br/><i>2 opções — somente leitura</i>"]
+
+    M4 --> DB["<b>4 › 9</b> · Desbloat do Windows<br/><i>9 opções — 3 níveis, 1 simula</i>"]
+    DB --> BK["<b>4 › 9 › 9</b> · Backup e reversão<br/><i>4 opções</i>"]
+
+    classDef leitura fill:#DFF6DD,stroke:#107C10,color:#0B5A0B
+    classDef altera fill:#FFF4CE,stroke:#9D5D00,color:#3B2300
+    classDef critico fill:#FDE7E9,stroke:#A4262C,color:#6E0811
+    class M8,M9 leitura
+    class M2,M3,M5,DB,BK altera
+    class M1,M4,M6 critico
+    class M7 leitura
+```
+
+<sub>🟩 somente leitura · 🟨 altera e é reversível · 🟥 contém operação definitiva</sub>
+
+Mapa completo das telas, opção por opção, em
+[Descrição dos Menus](docs/MENUS.md).
 
 ---
 
-## 6. Desbloat do Windows
+## 7. Desbloat do Windows
 
 O Windows chega ao usuário com programas que ele não escolheu: jogos promocionais,
 testes de antivírus, aplicativos de fabricante, sugestões no menu Iniciar. Somam-se
@@ -278,10 +377,27 @@ O módulo de desbloat remove esses itens de forma controlada. Fica em
 
 Os níveis são cumulativos.
 
-### O que o distingue
+### Ordem recomendada
 
-**Simulação é o padrão.** A primeira opção do submenu lista item por item o que seria
-alterado, com o motivo técnico de cada um, sem tocar em nada.
+```mermaid
+flowchart LR
+    S1["<b>1.</b> Simular<br/><code>4 › 9 › 1</code>"]
+    S2["<b>2.</b> Registrar estado<br/><code>4 › 9 › 9 › 2</code>"]
+    S3["<b>3.</b> Executar nível Seguro<br/><code>4 › 9 › 2</code>"]
+    S4["<b>4.</b> Reiniciar"]
+    S1 --> S2 --> S3 --> S4
+    S3 -.-> RV["Reverter, se necessário<br/><code>4 › 9 › 9 › 4</code>"]
+
+    classDef seguro fill:#DFF6DD,stroke:#107C10,color:#0B5A0B
+    classDef reverter fill:#EAF3FB,stroke:#0078D4,color:#00457A
+    class S1,S2,S3,S4 seguro
+    class RV reverter
+```
+
+A simulação lista item por item o que seria alterado, com o motivo técnico de cada
+um, **sem tocar em nada**.
+
+### O que o distingue
 
 **Proteções com precedência absoluta.** Um conjunto de 48 aplicativos, 7 prefixos de
 família, 56 serviços e 4 ramos de registro nunca é tocado — Microsoft Store, Defender,
@@ -302,21 +418,12 @@ Aplicativos removidos precisam ser reinstalados pela Microsoft Store: o Windows 
 retém o pacote no disco depois de removê-lo. A limpeza de componentes obsoletos
 também é definitiva. Por isso a simulação existe — use antes.
 
-### Antes de executar
-
-| Passo | Menu |
-|---|---|
-| 1. Simule e leia a lista | `[4]` › `[9]` › `[1]` |
-| 2. Registre o estado atual | `[4]` › `[9]` › `[9]` › `[2]` |
-| 3. Execute o nível Seguro | `[4]` › `[9]` › `[2]` |
-| 4. Reinicie | — |
-
 A referência completa — cada nível, cada submódulo, o que exatamente é alterado e como
 reverter — está no [Módulo de Desbloat](docs/DESBLOAT.md).
 
 ---
 
-## 7. Uso avançado
+## 8. Uso avançado
 
 ### Parâmetros de linha de comando
 
@@ -348,7 +455,7 @@ Orientações completas em [Manual do Administrador](docs/MANUAL-DO-ADMINISTRADO
 
 ---
 
-## 8. Segurança e privacidade
+## 9. Segurança e privacidade
 
 ### Transparência
 
@@ -377,7 +484,7 @@ senhas, arquivos pessoais ou histórico de navegação.
 
 ---
 
-## 9. Documentação
+## 10. Documentação
 
 ### Introdução
 
@@ -428,7 +535,7 @@ senhas, arquivos pessoais ou histórico de navegação.
 
 ---
 
-## 10. Solução de problemas
+## 11. Solução de problemas
 
 | Sintoma | Primeira verificação |
 |---|---|
@@ -443,7 +550,7 @@ Guia completo em [Solução de Problemas](docs/SOLUCAO-DE-PROBLEMAS.md).
 
 ---
 
-## 11. Contribuindo
+## 12. Contribuindo
 
 Relatos de problema, sugestões e melhorias são bem-vindos em
 [Issues](https://github.com/edsilas/compartdisk/issues).
@@ -457,14 +564,14 @@ Ao relatar um problema, inclua:
 
 ---
 
-## 12. Licença
+## 13. Licença
 
 Distribuído sob a Licença Apache 2.0. Consulte o arquivo [LICENSE](LICENSE) para os
 termos completos.
 
 ---
 
-## 13. Marcas registradas
+## 14. Marcas registradas
 
 Windows, Windows 10, Windows 11, PowerShell, Microsoft Defender e BitLocker são
 marcas registradas da Microsoft Corporation. Este projeto não é afiliado,
