@@ -1639,11 +1639,53 @@ if errorlevel 1 (
 )
 goto :EOF
 
+:FB_PERF_BALANCED
+set "TARGET_GUID=381b4222-f694-41f0-9685-ff5bb260df2e"
+
+:: 1. Confirma se o plano Equilibrado esta disponivel neste sistema.
+powercfg -l | findstr /i "381b4222-f694-41f0-9685-ff5bb260df2e" >nul
+if errorlevel 1 (
+    call :LOG_MSG "WARN" "[Batch] Plano Equilibrado nao esta disponivel neste dispositivo."
+    goto :EOF
+)
+
+:: 2. Ativa o plano Equilibrado.
+powercfg -setactive %TARGET_GUID% >nul 2>&1
+if errorlevel 1 (
+    call :LOG_MSG "WARN" "[Batch] Falha ao restaurar o plano de energia Equilibrado."
+    goto :EOF
+)
+
+:: 3. Valida o esquema efetivamente ativo.
+powercfg /getactivescheme | findstr /i "%TARGET_GUID%" >nul
+if errorlevel 1 (
+    call :LOG_MSG "WARN" "[Batch] O Windows nao confirmou o plano Equilibrado como ativo."
+    goto :EOF
+)
+
+:: 4. Restaura os efeitos visuais ao controle automatico do Windows,
+:: alinhando o fallback ao comportamento do Performance.ps1.
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 0 /f >nul 2>&1
+call :LOG_MSG "OK" "[Batch] Plano de energia Equilibrado restaurado com sucesso."
+goto :EOF
+
 :FB_PERF_ANALISE
 echo.
+call :LOG_MSG "INFO" "[Batch] Executando analise reduzida de desempenho."
 powercfg /getactivescheme
 echo.
+echo --- PROCESSOS POR MEMORIA ---
 wmic process get Name,WorkingSetSize /format:table 2>nul
+echo.
+echo --- INICIALIZACAO ---
+wmic startup get Caption,Command,User /format:table 2>nul
+echo.
+echo --- MEMORIA ---
+wmic OS get TotalVisibleMemorySize,FreePhysicalMemory /value 2>nul
+echo.
+echo --- SERVICOS EM EXECUCAO ---
+sc query type= service state= active 2>nul
+call :LOG_MSG "OK" "[Batch] Analise reduzida de desempenho concluida."
 goto :EOF
 
 :FB_SFC_DISM
