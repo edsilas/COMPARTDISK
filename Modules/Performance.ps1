@@ -1,4 +1,4 @@
-﻿<#
+<#
  COMPARTDISK 1.3.1 - Performance.ps1
  Desenvolvido por Edsilas
  Acoes: Analyze | Ultimate | Balanced | Startup | Processes | Services
@@ -11,7 +11,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'Core.ps1')
+
+# Verificacao de dependencia antes do import
+$corePath = Join-Path $PSScriptRoot 'Core.ps1'
+if (-not (Test-Path $corePath)) {
+    throw "Dependencia critica nao encontrada: Arquivo Core.ps1 ausente em $PSScriptRoot."
+}
+. $corePath
 
 $result = 'OK'
 $powercfg = Join-Path $env:SystemRoot 'System32\powercfg.exe'
@@ -37,7 +43,10 @@ function Show-Analysis {
     try {
         $c = Get-CompartDiskCim -Class Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'"
         if ($c) { $cpu = "$($c.PercentProcessorTime)%" }
-    } catch { }
+    } catch { 
+        Write-Log WARN "Falha ao consultar uso de CPU via CIM: $($_.Exception.Message)"
+    }
+    
     $hw = Get-CompartDiskHardwareInfo
     $pares = [ordered]@{
         'CPU (instantaneo)' = $cpu
@@ -46,10 +55,14 @@ function Show-Analysis {
         'RAM em uso (%)'    = $hw['RAM em uso (%)']
         'Processos ativos'  = (@(Get-Process -ErrorAction SilentlyContinue).Count)
     }
+    
     try {
         $pf = Get-CompartDiskCim -Class Win32_PageFileUsage
         if ($pf) { $pares['Arquivo de paginacao'] = "$($pf.CurrentUsage) MB de $($pf.AllocatedBaseSize) MB" }
-    } catch { }
+    } catch { 
+        Write-Log WARN "Falha ao consultar Win32_PageFileUsage: $($_.Exception.Message)"
+    }
+    
     Write-Color ''
     foreach ($k in $pares.Keys) { Write-CompartDiskKeyValue $k $pares[$k] -Pad 24 }
     Add-CompartDiskSection -Title 'Carga do sistema' -Status OK -Pairs $pares
@@ -70,7 +83,10 @@ function Show-Analysis {
     # Servicos
     $svc = Get-CompartDiskServiceDiagnostics
     $problemas = @($svc | Where-Object { $_.Diagnostico -ne 'OK' })
+    $statusServicos = 'OK' # Corrigido: Usando variavel para nao sobrepor status
+
     if ($problemas.Count -gt 0) {
+        $statusServicos = 'WARN'
         Write-Color ''
         $problemas | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
         Add-CompartDiskSection -Title 'Servicos essenciais com desvio' -Status WARN -Rows $problemas
@@ -81,7 +97,7 @@ function Show-Analysis {
     } else {
         Add-CompartDiskFinding -Severity OK -Area 'Servicos' -Message 'Todos os servicos essenciais operando normalmente.'
     }
-    Add-CompartDiskSection -Title 'Servicos essenciais' -Status OK -Rows $svc
+    Add-CompartDiskSection -Title 'Servicos essenciais' -Status $statusServicos -Rows $svc
 
     Write-Log OK 'Analise de desempenho concluida.'
 }
@@ -94,7 +110,13 @@ function Set-PowerPlan {
         if ($lista.StdOut -notmatch [regex]::Escape($Guid)) {
             Write-Log INFO 'Plano Desempenho Maximo ausente. Duplicando a partir do modelo do Windows...'
             $d = Invoke-NativeCommand -FilePath $powercfg -Arguments @('-duplicatescheme', $Guid) -TimeoutSeconds 60
-            if ($d.ExitCode -ne 0) {
+            
+            # Corrigido: Captura o novo GUID gerado pelo comando em caso de sucesso
+            if ($d.ExitCode -eq 0) {
+                if ($d.StdOut -match '([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})') {
+                    $Guid = $Matches[1]
+                }
+            } else {
                 Write-Log WARN 'Este dispositivo nao expoe o plano Desempenho Maximo (comum em notebooks com Modern Standby).'
                 Write-Log INFO 'Aplicando o plano Alto Desempenho como alternativa nativa.'
                 $Guid = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
@@ -116,6 +138,7 @@ function Set-PowerPlan {
     # O ajuste de efeitos visuais so faz sentido se o plano foi de fato aplicado.
     # Fora da verificacao, uma diretiva de grupo bloqueando o powercfg deixava o plano
     # intacto e a interface alterada - uma mudanca parcial e nao pedida.
+    # ATENCAO: Sendo executado via Admin, este HKCU pode afetar a hive do Administrador em vez do usuario logado.
     if ($r.ExitCode -eq 0) {
         $alvoFX = if ($Guid -ne $GUID_BALANCED) { 2 } else { 0 }
         if (Set-CompartDiskRegistryValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -Value $alvoFX -Type DWord) {
@@ -133,6 +156,7 @@ function Set-PowerPlan {
 try {
     $precisaAdmin = @('Ultimate', 'Balanced') -contains $Action
     if (-not (Start-CompartDiskModule -Name 'Performance' -Action $Action -RequireAdmin:$precisaAdmin -Quiet:$Quiet)) { exit $Global:CompartDisk.Exit.ERROR }
+    
     switch ($Action) {
         'Analyze'   { Show-Analysis }
         'Ultimate'  { Set-PowerPlan -Guid $GUID_ULTIMATE -Nome 'Desempenho Maximo' }
