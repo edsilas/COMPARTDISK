@@ -1609,23 +1609,34 @@ if errorlevel 1 (
 goto :EOF
 
 :FB_PERFORMANCE
-powercfg -l | findstr "e9a42b02-d5df-448d-aa00-03f14749eb61" >nul
-if errorlevel 1 (
-    powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 >nul 2>&1
-)
-powercfg -setactive e9a42b02-d5df-448d-aa00-03f14749eb61 >nul 2>&1
-if errorlevel 1 (
-    call :LOG_MSG "WARN" "Falha ao aplicar esquema de energia Ultimate."
-) else (
-    call :LOG_MSG "OK" "Desempenho Maximo ativado."
-)
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f >nul 2>&1
-goto :EOF
+set "TARGET_GUID="
 
-:FB_PERF_BALANCED
-powercfg -setactive 381b4222-f694-41f0-9685-ff5bb260df2e >nul 2>&1
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 0 /f >nul 2>&1
-call :LOG_MSG "OK" "Plano Equilibrado restaurado."
+:: 1. Tenta ver se o GUID original ja esta nativamente visivel
+powercfg -l | findstr "e9a42b02-d5df-448d-aa00-03f14749eb61" >nul
+if not errorlevel 1 (
+    set "TARGET_GUID=e9a42b02-d5df-448d-aa00-03f14749eb61"
+) else (
+    :: 2. Duplica o modelo oculto e captura o novo GUID gerado
+    :: O "delims=:" funciona perfeitamente para capturar apos "GUID de Esquema de Energia:" (PT-BR) ou "Power Scheme GUID:" (EN-US)
+    for /f "tokens=2 delims=:" %%A in ('powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2^>nul') do (
+        for /f "tokens=1" %%B in ("%%A") do set "TARGET_GUID=%%B"
+    )
+)
+
+:: 3. Se falhou ao duplicar (Notebooks Modern Standby), cai para o plano de "Alto Desempenho" padrao
+if not defined TARGET_GUID (
+    call :LOG_MSG "WARN" "[Batch] Desempenho Maximo nao suportado. Aplicando Alto Desempenho nativo."
+    set "TARGET_GUID=8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+)
+
+:: 4. Ativa o plano capturado
+powercfg -setactive %TARGET_GUID% >nul 2>&1
+if errorlevel 1 (
+    call :LOG_MSG "WARN" "Falha ao aplicar esquema de energia Maximo/Alto."
+) else (
+    call :LOG_MSG "OK" "Plano de energia de Desempenho ativado com sucesso."
+    reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f >nul 2>&1
+)
 goto :EOF
 
 :FB_PERF_ANALISE
