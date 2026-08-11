@@ -255,9 +255,15 @@ function Show-Analysis {
         'RAM total'         = $hw['RAM total']
         'RAM disponivel'    = $hw['RAM disponivel']
         'RAM em uso (%)'    = $hw['RAM em uso (%)']
-        'Processos ativos'  = @(
-            Get-Process -ErrorAction SilentlyContinue
-        ).Count
+        'Processos ativos'  = 'n/d'
+    }
+
+    try {
+        $pares['Processos ativos'] = @(Get-Process -ErrorAction Stop).Count
+    }
+    catch {
+        $script:result = 'WARN'
+        Write-Log WARN "Falha ao consultar processos ativos: $($_.Exception.Message)"
     }
 
     # -----------------------------------------------------------------------
@@ -442,130 +448,6 @@ function Get-PowerSchemeByName {
     return $null
 }
 
-function Get-PowerSchemes {
-    [CmdletBinding()]
-    param()
-
-    $r = Invoke-NativeCommand `
-        -FilePath $powercfg `
-        -Arguments @('/list') `
-        -TimeoutSeconds 30
-
-    if ($r.ExitCode -ne 0) {
-        $detail = if ($r.StdErr) { " stderr=$($r.StdErr.Trim())" } else { '' }
-        throw "Falha ao listar esquemas de energia (codigo $($r.ExitCode)).$detail"
-    }
-
-    $texto = @($r.StdOut) -join "`n"
-    $guidRegex = '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
-    $resultado = @()
-
-    foreach ($linha in ($texto -split "`r?`n")) {
-        if ($linha -match $guidRegex) {
-            $guid = $Matches[0].ToLowerInvariant()
-            $nome = $null
-            $ativo = $linha -match '(?i)\*\s*$'
-
-            if ($linha -match '\(([^()]*)\)\s*(?:\*\s*)?$') {
-                $nome = $Matches[1].Trim()
-            }
-
-            $resultado += [pscustomobject]@{
-                Guid   = $guid
-                Name   = $nome
-                Active = [bool]$ativo
-            }
-        }
-    }
-
-    return @($resultado | Sort-Object Guid -Unique)
-}
-
-function Remove-OtherPowerSchemes {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$KeepGuid
-    )
-
-    $keep = $KeepGuid.ToLowerInvariant()
-    $schemes = @(Get-PowerSchemes)
-    $failed = 0
-
-    foreach ($scheme in $schemes) {
-        if ($scheme.Guid -eq $keep) {
-            continue
-        }
-
-        $delete = Invoke-NativeCommand `
-            -FilePath $powercfg `
-            -Arguments @('/delete', $scheme.Guid) `
-            -TimeoutSeconds 30
-
-        if ($delete.ExitCode -ne 0) {
-            $failed++
-            $detail = if ($delete.StdErr) { "; stderr=$($delete.StdErr.Trim())" } else { '' }
-            Write-Log WARN "Nao foi possivel excluir o esquema '$($scheme.Name)' [$($scheme.Guid)] (codigo $($delete.ExitCode))$detail."
-        }
-        else {
-            Write-Log INFO "Esquema removido: $($scheme.Name) [$($scheme.Guid)]."
-        }
-    }
-
-    $remaining = @(Get-PowerSchemes)
-    $unexpected = @($remaining | Where-Object { $_.Guid -ne $keep })
-
-    if ($unexpected.Count -gt 0) {
-        $failed = [Math]::Max($failed, $unexpected.Count)
-        Write-Log WARN "Permanecem $($unexpected.Count) esquema(s) alem do perfil definitivo."
-    }
-
-    if ($failed -gt 0) {
-        return $false
-    }
-
-    if ($remaining.Count -ne 1 -or $remaining[0].Guid -ne $keep) {
-        Write-Log WARN 'O Windows nao confirmou que o perfil definitivo e o unico esquema restante.'
-        return $false
-    }
-
-    Write-Log OK 'Perfil definitivo confirmado como unico esquema de energia.'
-    return $true
-}
-
-function Restore-DefaultPowerSchemesIfMissing {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$RequiredGuid
-    )
-
-    if (Test-PowerSchemeExists -Guid $RequiredGuid) {
-        return $true
-    }
-
-    Write-Log INFO 'O esquema de energia solicitado nao existe. Restaurando os esquemas padrao do Windows.'
-
-    $restore = Invoke-NativeCommand `
-        -FilePath $powercfg `
-        -Arguments @('/restoredefaultschemes') `
-        -TimeoutSeconds 60
-
-    if ($restore.ExitCode -ne 0) {
-        $detail = if ($restore.StdErr) { "; stderr=$($restore.StdErr.Trim())" } else { '' }
-        Write-Log ERR "Falha ao restaurar os esquemas padrao do Windows (codigo $($restore.ExitCode))$detail."
-        return $false
-    }
-
-    if (-not (Test-PowerSchemeExists -Guid $RequiredGuid)) {
-        Write-Log ERR "O Windows nao confirmou a recriacao do esquema solicitado: $RequiredGuid."
-        return $false
-    }
-
-    Write-Log OK 'Esquemas padrao do Windows restaurados.'
-    return $true
-}
-
 function Set-PowerSetting {
     [CmdletBinding()]
     param(
@@ -713,23 +595,6 @@ function Set-PowerPlan {
     $requestedGuid = $Guid.ToLowerInvariant()
     $performanceMode = $false
 
-    # O modo Ultimate pode remover todos os demais esquemas. Quando outra acao
-    # for solicitada posteriormente, restaura os esquemas padrao somente se o
-    # esquema necessario nao existir, preservando a funcionalidade original.
-    if (($requestedGuid -eq $GUID_BALANCED -or $requestedGuid -eq $GUID_HIGH) -and
-        -not (Test-PowerSchemeExists -Guid $requestedGuid)) {
-
-        if (-not (Restore-DefaultPowerSchemesIfMissing -RequiredGuid $requestedGuid)) {
-            $script:result = 'WARN'
-            Add-CompartDiskFinding `
-                -Severity WARN `
-                -Area 'Desempenho' `
-                -Message "O esquema solicitado '$Nome' nao esta disponivel e nao pode ser restaurado." `
-                -Recommendation 'Restaurar os esquemas padrao do Windows e tentar novamente.'
-            return
-        }
-    }
-
     # -----------------------------------------------------------------------
     # Desempenho Maximo real
     #
@@ -751,130 +616,134 @@ function Set-PowerPlan {
 
     if ($requestedGuid -eq $GUID_ULTIMATE) {
 
-        # Nome canonico sem depender da codificacao do arquivo-fonte.
         $customName = 'Desempenho M' + [char]0x00E1 + 'ximo'
-        $schemes = @(Get-PowerSchemes)
+        $existingCustomGuid = Get-PowerSchemeByName -Name $customName
 
-        # Prioridade: esquema Ultimate oficial. Se ele nao existir, reutiliza
-        # somente um esquema ja canonico. Variacoes antigas do CompartDisk sao
-        # tratadas como duplicatas e serao removidas ao final.
-        $target = $schemes | Where-Object { $_.Guid -eq $GUID_ULTIMATE } | Select-Object -First 1
-
-        if (-not $target) {
-            $target = $schemes |
-                Where-Object { $_.Name -and $_.Name -ieq $customName } |
-                Select-Object -First 1
-        }
-
-        if ($target) {
-            $Guid = $target.Guid
+        if ($existingCustomGuid) {
+            $Guid = $existingCustomGuid
             $Nome = $customName
             $performanceMode = $true
-            Write-Log INFO "Perfil definitivo reutilizado: $Guid."
+
+            Write-Log INFO "Plano personalizado ja existente: $Guid."
         }
         else {
-            # Ultimate Performance e o modelo preferencial. Se nao estiver
-            # exposto, usa High Performance como base e, por ultimo, Equilibrado.
-            $baseGuid = $null
-            $baseName = $null
-
-            if ($schemes.Guid -contains $GUID_ULTIMATE) {
-                $baseGuid = $GUID_ULTIMATE
-                $baseName = 'Desempenho Maximo'
-            }
-            elseif ($schemes.Guid -contains $GUID_HIGH) {
-                $baseGuid = $GUID_HIGH
-                $baseName = 'Alto Desempenho'
-                Write-Log WARN 'Ultimate Performance nao esta exposto. Usando Alto Desempenho como base.'
-            }
-            elseif ($schemes.Guid -contains $GUID_BALANCED) {
-                $baseGuid = $GUID_BALANCED
-                $baseName = 'Equilibrado'
-                Write-Log WARN 'Ultimate/Alto Desempenho nao estao disponiveis. Usando Equilibrado como base.'
-            }
-
-            if (-not $baseGuid) {
-                $script:result = 'WARN'
-                Write-Log WARN 'Nenhum esquema de energia utilizavel foi localizado.'
-                Add-CompartDiskFinding `
-                    -Severity WARN `
-                    -Area 'Desempenho' `
-                    -Message 'Nao foi possivel localizar um esquema de energia para criar o perfil de Desempenho Maximo.' `
-                    -Recommendation 'Verificar politicas de energia e suporte do Windows.'
-                return
-            }
-
-            Write-Log INFO "Criando perfil '$customName' a partir de '$baseName'."
-
-            $antes = @($schemes.Guid)
-            $d = Invoke-NativeCommand `
-                -FilePath $powercfg `
-                -Arguments @('/duplicatescheme', $baseGuid) `
-                -TimeoutSeconds 60
-
-            $novoGuid = $null
-            $textoDuplicacao = @($d.StdOut, $d.StdErr) -join "`n"
-
-            if ($textoDuplicacao -match '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b') {
-                $novoGuid = $Matches[0].ToLowerInvariant()
-            }
-
-            if ($d.ExitCode -eq 0 -and [string]::IsNullOrWhiteSpace($novoGuid)) {
-                $depois = @(Get-PowerSchemes)
-                $novos = @($depois | Where-Object { $antes -notcontains $_.Guid })
-                if ($novos.Count -eq 1) {
-                    $novoGuid = $novos[0].Guid
-                }
-            }
+            # Reaproveita uma copia antiga criada por versoes anteriores,
+            # desde que ela nao seja o esquema oficial do Windows.
+            $legacyGuid = Get-PowerSchemeByName -Name 'Desempenho Maximo'
 
             if (
-                ($d.ExitCode -ne 0) -or
-                [string]::IsNullOrWhiteSpace($novoGuid) -or
-                (-not (Test-PowerSchemeExists -Guid $novoGuid))
+                $legacyGuid -and
+                $legacyGuid -ne $GUID_ULTIMATE
             ) {
-                $script:result = 'WARN'
-                $detail = if ($d.StdErr) { "; stderr=$($d.StdErr.Trim())" } else { '' }
-                Write-Log WARN "Nao foi possivel criar o perfil definitivo de Desempenho Maximo (codigo $($d.ExitCode))$detail."
-                Add-CompartDiskFinding `
-                    -Severity WARN `
-                    -Area 'Desempenho' `
-                    -Message 'Falha ao criar o perfil definitivo de Desempenho Maximo.' `
-                    -Recommendation 'Verificar permissoes administrativas e politicas de energia do Windows.'
-                return
-            }
+                $Guid = $legacyGuid
+                $Nome = $customName
+                $performanceMode = $true
 
-            $Guid = $novoGuid
-            $Nome = $customName
-            $performanceMode = $true
-            Write-Log OK "Perfil criado com GUID $Guid."
+                Write-Log INFO "Plano personalizado existente reutilizado: $Guid."
+            }
+            else {
+                # Ultimate Performance e o modelo preferencial.
+                # Se nao estiver exposto, usa High Performance como base.
+                $baseGuid = $null
+                $baseName = $null
+
+                if (Test-PowerSchemeExists -Guid $GUID_ULTIMATE) {
+                    $baseGuid = $GUID_ULTIMATE
+                    $baseName = 'Desempenho Maximo'
+                }
+                elseif (Test-PowerSchemeExists -Guid $GUID_HIGH) {
+                    $baseGuid = $GUID_HIGH
+                    $baseName = 'Alto Desempenho'
+                    Write-Log WARN 'Ultimate Performance nao esta exposto. Usando Alto Desempenho como base.'
+                }
+                elseif (Test-PowerSchemeExists -Guid $GUID_BALANCED) {
+                    $baseGuid = $GUID_BALANCED
+                    $baseName = 'Equilibrado'
+                    Write-Log WARN 'Ultimate/Alto Desempenho nao estao disponiveis. Usando Equilibrado como base.'
+                }
+
+                if (-not $baseGuid) {
+                    $script:result = 'WARN'
+
+                    Write-Log WARN 'Nenhum esquema de energia utilizavel foi localizado.'
+                    Add-CompartDiskFinding `
+                        -Severity WARN `
+                        -Area 'Desempenho' `
+                        -Message 'Nao foi possivel localizar um esquema de energia para criar o perfil de Desempenho Maximo.' `
+                        -Recommendation 'Verificar politicas de energia e suporte do Windows.'
+
+                    return
+                }
+
+                Write-Log INFO "Criando perfil '$customName' a partir de '$baseName'."
+
+                $d = Invoke-NativeCommand `
+                    -FilePath $powercfg `
+                    -Arguments @('/duplicatescheme', $baseGuid) `
+                    -TimeoutSeconds 60
+
+                $novoGuid = $null
+
+                $textoDuplicacao = @(
+                    $d.StdOut
+                    $d.StdErr
+                ) -join "`n"
+
+                if (
+                    $textoDuplicacao -match '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+                ) {
+                    $novoGuid = $Matches[0].ToLowerInvariant()
+                }
+
+                if (
+                    ($d.ExitCode -eq 0) -and
+                    [string]::IsNullOrWhiteSpace($novoGuid)
+                ) {
+                    $novoGuid = Get-PowerSchemeByName -Name $baseName
+
+                    if ($novoGuid -eq $baseGuid) {
+                        $novoGuid = $null
+                    }
+                }
+
+                if (
+                    ($d.ExitCode -ne 0) -or
+                    [string]::IsNullOrWhiteSpace($novoGuid) -or
+                    (-not (Test-PowerSchemeExists -Guid $novoGuid))
+                ) {
+                    $script:result = 'WARN'
+
+                    Write-Log WARN 'Nao foi possivel criar o perfil personalizado de Desempenho Maximo.'
+
+                    Add-CompartDiskFinding `
+                        -Severity WARN `
+                        -Area 'Desempenho' `
+                        -Message 'Falha ao criar o perfil personalizado de Desempenho Maximo.' `
+                        -Recommendation 'Verificar permissoes administrativas e politicas de energia do Windows.'
+
+                    return
+                }
+
+                $Guid = $novoGuid
+                $Nome = $customName
+                $performanceMode = $true
+
+                Write-Log OK "Perfil criado com GUID $Guid."
+            }
         }
 
-        # Altera somente o nome. A descricao anterior do esquema e preservada;
-        # nenhuma descricao personalizada do CompartDisk e gravada.
+        # Garante nome consistente e deixa claro que o perfil e do CompartDisk.
         $rename = Invoke-NativeCommand `
             -FilePath $powercfg `
             -Arguments @('/changename', $Guid, $customName) `
             -TimeoutSeconds 30
 
         if ($rename.ExitCode -ne 0) {
-            $detail = if ($rename.StdErr) { "; stderr=$($rename.StdErr.Trim())" } else { '' }
-            Write-Log WARN "Nao foi possivel atualizar o nome do perfil (codigo $($rename.ExitCode))$detail."
+            Write-Log WARN "Nao foi possivel atualizar o nome/descricao do perfil (codigo $($rename.ExitCode))."
         }
-
-        $renamedScheme = @(Get-PowerSchemes | Where-Object { $_.Guid -eq $Guid }) | Select-Object -First 1
-        if (-not $renamedScheme -or $renamedScheme.Name -ine $customName) {
-            $script:result = 'WARN'
-            Write-Log WARN "O Windows nao confirmou o nome definitivo '$customName' no perfil $Guid."
-            Add-CompartDiskFinding `
-                -Severity WARN `
-                -Area 'Desempenho' `
-                -Message 'O perfil de Desempenho Maximo foi localizado, mas o nome final nao foi confirmado.' `
-                -Recommendation 'Verificar permissoes administrativas e executar novamente como administrador.'
-            return
+        else {
+            $Nome = $customName
         }
-
-        $Nome = $customName
-        Write-Log OK 'Nome do perfil atualizado e confirmado.'
     }
 
     # -----------------------------------------------------------------------
@@ -1200,25 +1069,6 @@ function Set-PowerPlan {
                 -Recommendation 'Consultar as opcoes avancadas do plano e verificar politicas de energia.'
 
             return
-        }
-    }
-
-    # -----------------------------------------------------------------------
-    # Limpeza final dos esquemas de energia
-    # -----------------------------------------------------------------------
-    # Executada somente no modo Desempenho Maximo. O perfil ja foi ativado e
-    # validado, portanto todos os demais esquemas podem ser removidos sem
-    # tentar excluir o esquema ativo.
-    if ($requestedGuid -eq $GUID_ULTIMATE) {
-        $cleanupOk = Remove-OtherPowerSchemes -KeepGuid $Guid
-
-        if (-not $cleanupOk) {
-            $script:result = 'WARN'
-            Add-CompartDiskFinding `
-                -Severity WARN `
-                -Area 'Desempenho' `
-                -Message 'O perfil de Desempenho Maximo foi aplicado, mas nem todos os outros esquemas puderam ser removidos.' `
-                -Recommendation 'Executar novamente a opcao de Desempenho Maximo como administrador e verificar politicas de energia.'
         }
     }
 
