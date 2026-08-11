@@ -544,9 +544,80 @@ function Get-PowerSettingCurrentAcValue {
         [string]$Setting
     )
 
+    # Preferimos a fonte estruturada do Windows (registro de PowerSchemes),
+    # pois ela nao depende do idioma nem do formato textual do powercfg /query.
+    # O fallback para /query preserva compatibilidade caso a chave nao esteja
+    # disponivel no ambiente.
+    $settingGuids = @{
+        PROCTHROTTLEMIN = '893dee8e-2bef-41e0-89c6-b55d0929964c'
+        PROCTHROTTLEMAX = 'bc5038f7-23e0-4960-96da-33abaf5935ec'
+        SYSCOOLPOL      = '94d3a615-a899-4ac5-ae2b-e4d8f634367f'
+        ASPM            = 'ee12f906-d277-404b-b6da-e5fa1a576df5'
+        DISKIDLE        = '6738e2c4-e8a5-4a42-b16a-e040e769756e'
+        STANDBYIDLE     = '29f6c1db-86da-48c5-9fdb-f2b67b1f44da'
+        HIBERNATEIDLE   = '9d7815a6-7ee4-497e-8888-515a05f02364'
+    }
+
+    $subGroupGuids = @{
+        SUB_PROCESSOR  = '54533251-82be-4824-96c1-47b60b740d00'
+        SUB_PCIEXPRESS = '501a4d13-42af-4429-9fd1-a8218c268e20'
+        SUB_DISK       = '0012ee47-9041-4b5d-9b77-535fba8b1442'
+        SUB_SLEEP      = '238c9fa8-0aad-41ed-83f4-97be242c8f20'
+    }
+
+    $normalizedScheme = $SchemeGuid.ToLowerInvariant()
+    $settingGuid = $null
+    $subGroupGuid = $null
+
+    if ($settingGuids.ContainsKey($Setting)) {
+        $settingGuid = $settingGuids[$Setting]
+    }
+
+    if ($subGroupGuids.ContainsKey($SubGroup)) {
+        $subGroupGuid = $subGroupGuids[$SubGroup]
+    }
+
+    if ($settingGuid -and $subGroupGuid) {
+        $registryPath = Join-Path `
+            'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes' `
+            "$normalizedScheme\$($subGroupGuid.ToLowerInvariant())\$($settingGuid.ToLowerInvariant())"
+
+        try {
+            $property = Get-ItemProperty -LiteralPath $registryPath -Name 'ACSettingIndex' -ErrorAction Stop
+
+            if ($null -ne $property.ACSettingIndex) {
+                $raw = $property.ACSettingIndex
+
+                if ($raw -is [byte[]]) {
+                    if ($raw.Length -lt 4) {
+                        throw "ACSettingIndex de '$Setting' possui tamanho invalido."
+                    }
+
+                    $bytes = $raw[0..3]
+                    $value = [BitConverter]::ToInt32($bytes, 0)
+                }
+                else {
+                    $value = [Convert]::ToInt64([string]$raw, 10)
+                }
+
+                Write-Verbose "Valor AC de '$Setting' obtido do registro: $value."
+                return $value
+            }
+        }
+        catch [System.Management.Automation.ItemNotFoundException] {
+            # Chave ausente: usar fallback /query.
+        }
+        catch [System.Management.Automation.PSArgumentException] {
+            # Valor ausente/incompativel: usar fallback /query.
+        }
+        catch {
+            Write-Verbose "Registro indisponivel para '$Setting': $($_.Exception.Message)"
+        }
+    }
+
     $r = Invoke-NativeCommand `
         -FilePath $powercfg `
-        -Arguments @('/query', $SchemeGuid, $SubGroup, $Setting) `
+        -Arguments @('/query', $SchemeGuid, $SubGroup) `
         -TimeoutSeconds 30
 
     $texto = @(
@@ -563,30 +634,54 @@ function Get-PowerSettingCurrentAcValue {
         throw "powercfg /query retornou uma resposta vazia para '$Setting'."
     }
 
-    # A saida do powercfg e localizada. Portanto, nao dependemos de textos
-    # como 'Current AC Power Setting Index'. A estrutura do /query, porem,
-    # termina com os dois indices atuais: AC e DC.
-    #
-    # Importante: usamos somente valores no formato hexadecimal 0x..., sem
-    # depender de GUIDs, nomes traduzidos ou da ordem de GUIDs no texto.
-    $hexMatches = [regex]::Matches(
-        $texto,
-        '(?i)0x[0-9a-f]+'
+    # /query pode retornar todo o subgrupo. Primeiro isolamos o bloco da
+    # configuracao pelo GUID conhecido; isso evita confundir os indices de
+    # outra configuracao com o valor solicitado.
+    $settingGuidPattern = [regex]::Escape($settingGuid)
+    $blockPattern = '(?is)Power Setting GUID:\s*\{?' + $settingGuidPattern + '\}?\b.*?(?=\r?\n\s*Power Setting GUID:|\r?\n\s*Subgroup GUID:|\z)'
+    $blockMatch = [regex]::Match($texto, $blockPattern)
+
+    $bloco = if ($blockMatch.Success) { $blockMatch.Value } else { $texto }
+
+    # O formato textual oficial mostra Current AC/DC como valores hexadecimais.
+    # O regex aceita espacos/formatacao intermediaria e permanece independente
+    # dos nomes localizados das configuracoes.
+    $acPatterns = @(
+        '(?im)Current\s+AC\s+Power\s+Setting\s+Index\s*:\s*0x([0-9a-f]+)',
+        '(?im)AC\s+Power\s+Setting\s+Index\s*:\s*0x([0-9a-f]+)'
     )
 
-    if ($hexMatches.Count -lt 2) {
-        throw "Indices AC/DC de '$Setting' nao foram localizados na consulta do powercfg."
+    foreach ($pattern in $acPatterns) {
+        $match = [regex]::Match($bloco, $pattern)
+
+        if ($match.Success) {
+            try {
+                return [Convert]::ToInt64($match.Groups[1].Value, 16)
+            }
+            catch {
+                throw "Indice AC de '$Setting' possui formato invalido: $($match.Groups[1].Value)."
+            }
+        }
     }
 
-    $acToken = $hexMatches[$hexMatches.Count - 2].Value
+    # Ultimo fallback: em um bloco especifico de configuracao, os dois indices
+    # atuais sao os dois ultimos valores 0x..., conforme a estrutura documentada
+    # do powercfg. Nunca aplicamos essa heuristica sobre a saida inteira.
+    $hexMatches = [regex]::Matches($bloco, '(?i)0x[0-9a-f]+')
 
-    try {
-        $hexValue = $acToken.Substring(2)
-        return [Convert]::ToInt64($hexValue, 16)
+    if ($hexMatches.Count -ge 2) {
+        try {
+            return [Convert]::ToInt64(
+                $hexMatches[$hexMatches.Count - 2].Value.Substring(2),
+                16
+            )
+        }
+        catch {
+            throw "Indice AC de '$Setting' possui formato invalido na resposta do powercfg."
+        }
     }
-    catch {
-        throw "Indice AC de '$Setting' possui formato invalido: $acToken."
-    }
+
+    throw "Indice AC de '$Setting' nao foi localizado de forma deterministica no registro nem na consulta do powercfg."
 }
 
 function Test-PowerSetting {
