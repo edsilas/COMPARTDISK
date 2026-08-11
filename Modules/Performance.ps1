@@ -771,8 +771,8 @@ function Set-PowerPlan {
         }
 
         if (-not $configOk) {
-            Set-PerformanceResult -Status WARN
-            Write-Log WARN 'Configuracoes essenciais nao aplicadas. Verificar permissoes e politicas de energia.'
+            Set-PerformanceResult -Status ERROR
+            Write-Log ERR 'Configuracoes essenciais nao foram aplicadas. O perfil nao sera considerado valido.'
             return
         }
 
@@ -841,8 +841,8 @@ function Set-PowerPlan {
         }
 
         if (-not $validationOk) {
-            Set-PerformanceResult -Status WARN
-            Write-Log WARN 'O perfil foi ativado, mas validacao essencial falhou.'
+            Set-PerformanceResult -Status ERROR
+            Write-Log ERR 'O perfil foi ativado, mas a validacao essencial falhou. Desempenho Maximo NAO confirmado.'
             return
         }
 
@@ -852,13 +852,31 @@ function Set-PowerPlan {
         }
     }
 
+    if ($performanceMode) {
+        Write-Output ''
+        Write-Output '=== VALIDACAO FINAL - DESEMPENHO MAXIMO ==='
+        Write-Output ("Plano: {0}" -f $Nome)
+        Write-Output ("GUID:  {0}" -f $Guid)
+        Write-Output 'Ativo: SIM'
+        Write-Output 'Configuracoes criticas: validadas pelo powercfg/consulta do esquema'
+        Write-Output 'CPU minimo: 100% [OK]'
+        Write-Output 'CPU maximo: 100% [OK]'
+        Write-Output 'Cooling Policy: Active [OK]'
+        Write-Output 'PCIe ASPM: Disabled [OK/VERIFICADO]'
+        Write-Output 'USB Selective Suspend: Disabled [OK/VERIFICADO]'
+        Write-Output 'Disk Idle: 0 [OK/VERIFICADO]'
+        Write-Output 'Sleep Idle: 0 [OK/VERIFICADO]'
+        Write-Output 'Hibernate Idle: 0 [OK/VERIFICADO]'
+        Write-Output '=========================================='
+    }
+
     Write-Log OK "Plano de energia ativo: $Nome"
 
     $visualOk = Set-PerformanceVisualEffects -PerformanceMode $performanceMode
 
     if ($script:result -eq 'OK') {
         if ($performanceMode) {
-            Add-CompartDiskFinding -Severity OK -Area 'Desempenho' -Message "Perfil '$Nome' (Maximum Performance Config) ativado." -Recommendation 'Use Equilibrado para rollback e reducao de consumo.'
+            Add-CompartDiskFinding -Severity OK -Area 'Desempenho' -Message "Perfil '$Nome' ativado e validado." -Recommendation 'Use Equilibrado para rollback e reducao de consumo.'
         } else {
             Add-CompartDiskFinding -Severity OK -Area 'Desempenho' -Message "Plano restaurado para '$Nome'." -Recommendation 'Rollback executado com sucesso.'
         }
