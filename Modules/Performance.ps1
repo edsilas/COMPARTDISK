@@ -482,8 +482,9 @@ function Set-PowerSetting {
                 Write-Log ERR "Falha ao configurar '$Description' (codigo $($r.ExitCode))."
                 return $false
             }
+            # Log suavizado para configuracoes ausentes no hardware atual
             Set-PerformanceResult -Status WARN
-            Write-Log WARN "Configuracao '$Description' nao foi aplicada neste dispositivo (codigo $($r.ExitCode))."
+            Write-Log WARN "Configuracao '$Description' omitida (Nao suportada pelo hardware/OS atual)."
             return $false
         }
         Write-Log OK "Configuracao aplicada: $Description = $Value"
@@ -629,7 +630,10 @@ function Set-PowerPlan {
     $performanceMode = $false
 
     if ($requestedGuid -eq $GUID_ULTIMATE) {
-        $customName = 'Desempenho M' + [char]0x00E1 + 'ximo'
+        # Removido o acento ('Máximo') para evitar falhas silenciosas de codificacao (Code Page)
+        # do console do Windows durante a inspecao do stdout do powercfg.
+        $customName = 'Desempenho Maximo'
+        
         $existingCustomGuid = Get-PowerSchemeByName -Name $customName
 
         if ($existingCustomGuid) {
@@ -744,7 +748,7 @@ function Set-PowerPlan {
             [pscustomobject]@{ SubGroup = 'SUB_SLEEP';      Setting = 'HIBERNATEIDLE'; Value = 0;   Description = 'Hibernacao por ociosidade AC'; Required = $false }
             
             # Parametros USB e Conectividade
-            [pscustomobject]@{ SubGroup = 'SUB_USB';        Setting = 'USBSUSP';       Value = 0;   Description = 'Suspensao Seletiva USB AC (Disabled)'; Required = $false }
+            [pscustomobject]@{ SubGroup = 'SUB_USB';        Setting = 'USBSUSP';       Value = 0;   Description = 'Suspensao Seletiva USB AC'; Required = $false }
             [pscustomobject]@{ SubGroup = 'SUB_WIFI';       Setting = 'WIFIPOWER';     Value = 0;   Description = 'Desempenho Maximo do Adaptador Sem Fio AC'; Required = $false }
         )
 
@@ -811,10 +815,12 @@ function Set-PowerPlan {
     if ($performanceMode) {
         Clear-PowerSchemeCache
         $registeredGuid = Get-PowerSchemeByName -Name $Nome
+        
+        # O RETURN FOI REMOVIDO DAQUI. O nome incorreto no cache nao pode abortar
+        # a validacao das configuracoes vitais aplicadas.
         if ([string]::IsNullOrWhiteSpace($registeredGuid) -or $registeredGuid -ne $Guid.ToLowerInvariant()) {
             Set-PerformanceResult -Status WARN
-            Write-Log WARN "Esquema $Guid ativo, mas nome '$Nome' nao confirmado."
-            return
+            Write-Log WARN "O Esquema $Guid esta ativo, mas o nome '$Nome' nao foi confirmado pelo parser (Encoding mismatch)."
         }
 
         $validationOk = $true
@@ -842,7 +848,7 @@ function Set-PowerPlan {
 
         if ($optionalValidationIssue -or $optionalConfigIssue) {
             Set-PerformanceResult -Status WARN
-            Write-Log WARN 'Configuracoes de hardware opcionais ignoradas pelo Firmware do dispositivo. (Esperado em alguns firmwares).'
+            Write-Log WARN 'Configuracoes opcionais ignoradas (Comportamento esperado em hardwares sem suporte a legado).'
         }
     }
 
@@ -881,12 +887,12 @@ try {
         }
         'Ultimate' {
             Set-PowerPlan -Guid $GUID_ULTIMATE -Nome 'Desempenho Maximo'
-            Set-WindowsPerformanceFeatures -PerformanceMode $true
+            # [void] supre o vazamento do booleano (Aquele "True" aleatorio na tela)
+            [void](Set-WindowsPerformanceFeatures -PerformanceMode $true)
         }
         'Balanced' {
-            # Executa o Rollback completo (Restore)
             Set-PowerPlan -Guid $GUID_BALANCED -Nome 'Equilibrado (padrao)'
-            Set-WindowsPerformanceFeatures -PerformanceMode $false
+            [void](Set-WindowsPerformanceFeatures -PerformanceMode $false)
         }
         'Startup' {
             $s = @(Get-CompartDiskStartupItems)
