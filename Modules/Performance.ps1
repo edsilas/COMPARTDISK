@@ -20,6 +20,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Erros de cmdlets devem interromper a operacao corrente e chegar ao tratamento
+# apropriado. Comandos nativos sao validados explicitamente por ExitCode.
+# Nenhuma falha operacional deve ser convertida silenciosamente em sucesso.
+
 # ---------------------------------------------------------------------------
 # Dependencias
 # ---------------------------------------------------------------------------
@@ -37,6 +41,35 @@ if (-not (Test-Path -LiteralPath $corePath -PathType Leaf)) {
 # ---------------------------------------------------------------------------
 
 $script:result = 'OK'
+$script:powerSchemeCache = $null
+$script:powerSchemeCacheLoaded = $false
+
+function Set-PerformanceResult {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('OK', 'WARN', 'ERROR')]
+        [string]$Status
+    )
+
+    $severity = @{
+        OK    = 0
+        WARN  = 1
+        ERROR = 2
+    }
+
+    if ($severity[$Status] -gt $severity[$script:result]) {
+        $script:result = $Status
+    }
+}
+
+function Clear-PowerSchemeCache {
+    [CmdletBinding()]
+    param()
+
+    $script:powerSchemeCache = $null
+    $script:powerSchemeCacheLoaded = $false
+}
 
 # ---------------------------------------------------------------------------
 # PowerCfg
@@ -57,9 +90,13 @@ $GUID_HIGH     = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
 # Funcoes auxiliares
 # ---------------------------------------------------------------------------
 
-function Get-PowerSchemeGuids {
+function Get-PowerSchemes {
     [CmdletBinding()]
     param()
+
+    if ($script:powerSchemeCacheLoaded) {
+        return @($script:powerSchemeCache)
+    }
 
     $r = Invoke-NativeCommand `
         -FilePath $powercfg `
@@ -71,17 +108,49 @@ function Get-PowerSchemeGuids {
         $r.StdErr
     ) -join "`n"
 
+    if ($r.ExitCode -ne 0) {
+        throw "powercfg /list falhou com codigo $($r.ExitCode). Saida: $($texto.Trim())"
+    }
+
     if ([string]::IsNullOrWhiteSpace($texto)) {
+        $script:powerSchemeCache = @()
+        $script:powerSchemeCacheLoaded = $true
         return @()
     }
 
-    $regex = '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+    $guidRegex = '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+    $schemes = [System.Collections.Generic.List[object]]::new()
 
-    return @(
-        [regex]::Matches($texto, $regex) |
-        ForEach-Object { $_.Value.ToLowerInvariant() } |
-        Select-Object -Unique
-    )
+    foreach ($linha in ($texto -split "`r?`n")) {
+        $guidMatch = [regex]::Match($linha, $guidRegex)
+        if (-not $guidMatch.Success) {
+            continue
+        }
+
+        $guid = $guidMatch.Value.ToLowerInvariant()
+        $nameMatch = [regex]::Match($linha, '\(([^()]*)\)\s*$')
+        $name = if ($nameMatch.Success) { $nameMatch.Groups[1].Value.Trim() } else { $null }
+        $isActive = $linha -match '\*\s*$'
+
+        if (-not ($schemes.Guid -contains $guid)) {
+            $schemes.Add([pscustomobject]@{
+                Guid     = $guid
+                Name     = $name
+                IsActive = $isActive
+            })
+        }
+    }
+
+    $script:powerSchemeCache = @($schemes)
+    $script:powerSchemeCacheLoaded = $true
+    return @($script:powerSchemeCache)
+}
+
+function Get-PowerSchemeGuids {
+    [CmdletBinding()]
+    param()
+
+    return @((Get-PowerSchemes).Guid)
 }
 
 function Test-PowerSchemeExists {
@@ -91,9 +160,7 @@ function Test-PowerSchemeExists {
         [string]$Guid
     )
 
-    $guids = Get-PowerSchemeGuids
-
-    return $guids -contains $Guid.ToLowerInvariant()
+    return (Get-PowerSchemeGuids) -contains $Guid.ToLowerInvariant()
 }
 
 function Get-InteractiveUserName {
@@ -240,7 +307,7 @@ function Show-Analysis {
         }
     }
     catch {
-        $script:result = 'WARN'
+        Set-PerformanceResult -Status WARN
         Write-Log WARN "Falha ao consultar uso de CPU via CIM: $($_.Exception.Message)"
     }
 
@@ -262,8 +329,8 @@ function Show-Analysis {
         $pares['Processos ativos'] = @(Get-Process -ErrorAction Stop).Count
     }
     catch {
-        $script:result = 'WARN'
-        Write-Log WARN "Falha ao consultar processos ativos: $($_.Exception.Message)"
+        Set-PerformanceResult -Status WARN
+        Write-Log WARN "Falha ao consultar processos ativos: $($_.Exception.Message)" -ErrorRecord $_
     }
 
     # -----------------------------------------------------------------------
@@ -281,7 +348,7 @@ function Show-Analysis {
         }
     }
     catch {
-        $script:result = 'WARN'
+        Set-PerformanceResult -Status WARN
         Write-Log WARN "Falha ao consultar Win32_PageFileUsage: $($_.Exception.Message)"
     }
 
@@ -335,7 +402,7 @@ function Show-Analysis {
                 -Message "$($startup.Count) programas configurados para iniciar com o Windows." `
                 -Recommendation 'Revisar em Gerenciador de Tarefas > Aplicativos de inicializacao.'
 
-            $script:result = 'WARN'
+            Set-PerformanceResult -Status WARN
         }
     }
     else {
@@ -387,7 +454,7 @@ function Show-Analysis {
                 -Recommendation 'Restaurar o tipo de inicializacao padrao e iniciar o servico.'
         }
 
-        $script:result = 'WARN'
+        Set-PerformanceResult -Status WARN
     }
     else {
         Add-CompartDiskFinding `
@@ -415,34 +482,12 @@ function Get-PowerSchemeByName {
         [string]$Name
     )
 
-    $r = Invoke-NativeCommand `
-        -FilePath $powercfg `
-        -Arguments @('/list') `
-        -TimeoutSeconds 30
+    $scheme = Get-PowerSchemes | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_.Name) -and $_.Name -ieq $Name
+    } | Select-Object -First 1
 
-    $texto = @(
-        $r.StdOut
-        $r.StdErr
-    ) -join "`n"
-
-    if ([string]::IsNullOrWhiteSpace($texto)) {
-        return $null
-    }
-
-    $guidRegex = '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
-
-    foreach ($linha in ($texto -split "`r?`n")) {
-        if ($linha -match $guidRegex) {
-            $guid = $Matches[0].ToLowerInvariant()
-
-            if ($linha -match '\(([^()]*)\)\s*$') {
-                $nomeEncontrado = $Matches[1].Trim()
-
-                if ($nomeEncontrado -ieq $Name) {
-                    return $guid
-                }
-            }
-        }
+    if ($scheme) {
+        return $scheme.Guid
     }
 
     return $null
@@ -481,8 +526,9 @@ function Set-PowerSetting {
                 return $false
             }
 
+            Set-PerformanceResult -Status WARN
             Write-Log WARN "Configuracao '$Description' nao foi aplicada neste dispositivo (codigo $($r.ExitCode))."
-            return $true
+            return $false
         }
 
         Write-Log OK "Configuracao aplicada: $Description = $Value"
@@ -494,8 +540,9 @@ function Set-PowerSetting {
             return $false
         }
 
+        Set-PerformanceResult -Status WARN
         Write-Log WARN "Configuracao '$Description' indisponivel neste dispositivo: $($_.Exception.Message)"
-        return $true
+        return $false
     }
 }
 
@@ -521,42 +568,91 @@ function Test-PowerSetting {
     )
 
     try {
-        $r = Invoke-NativeCommand `
-            -FilePath $powercfg `
-            -Arguments @('/query', $SchemeGuid, $SubGroup, $Setting) `
-            -TimeoutSeconds 30
-
-        $texto = @(
-            $r.StdOut
-            $r.StdErr
-        ) -join "`n"
-
-        if ($r.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($texto)) {
-            if ($Required) {
-                Write-Log ERR "Nao foi possivel validar '$Description'."
-                return $false
-            }
-
-            Write-Log WARN "Nao foi possivel validar '$Description' neste dispositivo."
-            return $true
+        # O valor AC armazenado pelo Windows e independente do idioma da saida
+        # do powercfg. O caminho por GUID e estavel por esquema/subgrupo/configuracao.
+        $subGroupGuids = @{
+            'SUB_PROCESSOR'   = '54533251-82be-4824-96c1-47b60b740d00'
+            'SUB_PCIEXPRESS'  = '501a4d13-42af-4429-9fd1-a8218c268e20'
+            'SUB_DISK'        = '0012ee47-9041-4b5d-9b77-535fba8b1442'
+            'SUB_SLEEP'       = '238c9fa8-0aad-41ed-83f4-97be242c8f20'
         }
 
-        $m = [regex]::Match(
-            $texto,
-            '(?im)^\s*Current AC Power Setting Index:\s*0x([0-9a-f]+)'
-        )
-
-        if (-not $m.Success) {
-            if ($Required) {
-                Write-Log ERR "Valor AC de '$Description' nao foi localizado na consulta."
-                return $false
-            }
-
-            Write-Log WARN "Valor AC de '$Description' nao foi localizado na consulta."
-            return $true
+        $settingGuids = @{
+            'PROCTHROTTLEMIN' = '893dee8e-2bef-41e0-89c6-b55d0929964c'
+            'PROCTHROTTLEMAX' = 'bc5038f7-23e0-4960-96da-33abaf5935ec'
+            'SYSCOOLPOL'      = '94d3a615-a899-4ac5-ae2b-e4d8f634367f'
+            'ASPM'            = 'ee12f906-d277-404b-b6da-e5fa1a576df5'
+            'DISKIDLE'        = '6738e2c4-e8a5-4a42-b16a-e040e769756e'
+            'STANDBYIDLE'     = '29f6c1db-86da-48c5-9fdb-f2b67b1f44da'
+            'HIBERNATEIDLE'   = '9d7815a6-7ee4-497e-8888-515a05f02364'
         }
 
-        $actual = [Convert]::ToInt32($m.Groups[1].Value, 16)
+        $actual = $null
+        $registryPath = $null
+
+        if ($subGroupGuids.ContainsKey($SubGroup) -and $settingGuids.ContainsKey($Setting)) {
+            $registryPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes\$SchemeGuid\$($subGroupGuids[$SubGroup])\$($settingGuids[$Setting])"
+
+            try {
+                $property = Get-ItemProperty -LiteralPath $registryPath -Name 'ACSettingIndex' -ErrorAction Stop
+                $actual = [int]$property.ACSettingIndex
+            }
+            catch {
+                # O Registro e a fonte primaria. Se a chave nao estiver disponivel,
+                # usa-se uma consulta pontual ao powercfg como fallback.
+                $actual = $null
+            }
+        }
+
+        if ($null -eq $actual) {
+            $r = Invoke-NativeCommand `
+                -FilePath $powercfg `
+                -Arguments @('/query', $SchemeGuid, $SubGroup, $Setting) `
+                -TimeoutSeconds 30
+
+            $texto = @(
+                $r.StdOut
+                $r.StdErr
+            ) -join "`n"
+
+            if ($r.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($texto)) {
+                if ($Required) {
+                    Write-Log ERR "Nao foi possivel validar '$Description' (codigo $($r.ExitCode))."
+                    return $false
+                }
+
+                Write-Log WARN "Nao foi possivel validar '$Description' neste dispositivo."
+                return $true
+            }
+
+            # A saida do powercfg e localizada. Nao procurar texto como
+            # 'Current AC Power Setting Index'. Em uma consulta especifica,
+            # os dois ultimos indices hexadecimais sao AC e DC.
+            $indices = @(
+                [regex]::Matches($texto, '(?i)0x[0-9a-f]+') |
+                ForEach-Object {
+                    try {
+                        [Convert]::ToInt32($_.Value.Substring(2), 16)
+                    }
+                    catch {
+                        $null
+                    }
+                } |
+                Where-Object { $null -ne $_ }
+            )
+
+            if ($indices.Count -lt 2) {
+                if ($Required) {
+                    Write-Log ERR "Valor AC de '$Description' nao foi localizado na consulta."
+                    return $false
+                }
+
+                Write-Log WARN "Valor AC de '$Description' nao foi localizado na consulta."
+                return $true
+            }
+
+            $actual = [int]$indices[$indices.Count - 2]
+        }
 
         if ($actual -ne $ExpectedValue) {
             if ($Required) {
@@ -616,7 +712,7 @@ function Set-PowerPlan {
 
     if ($requestedGuid -eq $GUID_ULTIMATE) {
 
-        $customName = 'Desempenho M' + [char]0x00E1 + 'ximo'
+        $customName = 'CompartDisk - Desempenho Maximo'
         $existingCustomGuid = Get-PowerSchemeByName -Name $customName
 
         if ($existingCustomGuid) {
@@ -663,7 +759,7 @@ function Set-PowerPlan {
                 }
 
                 if (-not $baseGuid) {
-                    $script:result = 'WARN'
+                    Set-PerformanceResult -Status WARN
 
                     Write-Log WARN 'Nenhum esquema de energia utilizavel foi localizado.'
                     Add-CompartDiskFinding `
@@ -695,14 +791,19 @@ function Set-PowerPlan {
                     $novoGuid = $Matches[0].ToLowerInvariant()
                 }
 
-                if (
-                    ($d.ExitCode -eq 0) -and
-                    [string]::IsNullOrWhiteSpace($novoGuid)
-                ) {
-                    $novoGuid = Get-PowerSchemeByName -Name $baseName
+                if ($d.ExitCode -eq 0) {
+                    Clear-PowerSchemeCache
 
-                    if ($novoGuid -eq $baseGuid) {
-                        $novoGuid = $null
+                    if ([string]::IsNullOrWhiteSpace($novoGuid)) {
+                        $novoGuid = @(
+                            Get-PowerSchemes |
+                            Where-Object {
+                                $_.Guid -ne $baseGuid -and
+                                -not [string]::IsNullOrWhiteSpace($_.Name) -and
+                                $_.Name -ieq $baseName
+                            }
+                        ) |
+                        Select-Object -ExpandProperty Guid -First 1
                     }
                 }
 
@@ -711,7 +812,7 @@ function Set-PowerPlan {
                     [string]::IsNullOrWhiteSpace($novoGuid) -or
                     (-not (Test-PowerSchemeExists -Guid $novoGuid))
                 ) {
-                    $script:result = 'WARN'
+                    Set-PerformanceResult -Status WARN
 
                     Write-Log WARN 'Nao foi possivel criar o perfil personalizado de Desempenho Maximo.'
 
@@ -735,10 +836,11 @@ function Set-PowerPlan {
         # Garante nome consistente e deixa claro que o perfil e do CompartDisk.
         $rename = Invoke-NativeCommand `
             -FilePath $powercfg `
-            -Arguments @('/changename', $Guid, $customName) `
+            -Arguments @('/changename', $Guid, $customName, 'Perfil de energia otimizado pelo CompartDisk para desempenho maximo em AC.') `
             -TimeoutSeconds 30
 
         if ($rename.ExitCode -ne 0) {
+            Set-PerformanceResult -Status WARN
             Write-Log WARN "Nao foi possivel atualizar o nome/descricao do perfil (codigo $($rename.ExitCode))."
         }
         else {
@@ -754,7 +856,7 @@ function Set-PowerPlan {
 
         if (-not (Test-PowerSchemeExists -Guid $GUID_HIGH)) {
 
-            $script:result = 'WARN'
+            Set-PerformanceResult -Status WARN
 
             Write-Log WARN 'O plano Alto Desempenho nao esta disponivel neste dispositivo.'
 
@@ -778,7 +880,7 @@ function Set-PowerPlan {
 
         if (-not (Test-PowerSchemeExists -Guid $GUID_BALANCED)) {
 
-            $script:result = 'WARN'
+            Set-PerformanceResult -Status WARN
 
             Write-Log WARN 'O plano Equilibrado nao foi localizado neste dispositivo.'
 
@@ -853,6 +955,7 @@ function Set-PowerPlan {
         )
 
         $configOk = $true
+        $optionalConfigIssue = $false
 
         foreach ($setting in $settings) {
 
@@ -869,12 +972,17 @@ function Set-PowerPlan {
             }
 
             if (-not (Set-PowerSetting @args)) {
-                $configOk = $false
+                if ($setting.Required) {
+                    $configOk = $false
+                }
+                else {
+                    $optionalConfigIssue = $true
+                }
             }
         }
 
         if (-not $configOk) {
-            $script:result = 'WARN'
+            Set-PerformanceResult -Status WARN
 
             Write-Log WARN 'Uma ou mais configuracoes essenciais de desempenho nao puderam ser aplicadas.'
 
@@ -895,7 +1003,7 @@ function Set-PowerPlan {
 
         if ($apply.ExitCode -ne 0) {
 
-            $script:result = 'WARN'
+            Set-PerformanceResult -Status WARN
 
             Write-Log WARN "Nao foi possivel ativar o perfil configurado (codigo $($apply.ExitCode))."
 
@@ -921,7 +1029,7 @@ function Set-PowerPlan {
 
         if ($apply.ExitCode -ne 0) {
 
-            $script:result = 'WARN'
+            Set-PerformanceResult -Status WARN
 
             Write-Log WARN "Nao foi possivel ativar o plano '$Nome' (codigo $($apply.ExitCode))."
 
@@ -950,6 +1058,17 @@ function Set-PowerPlan {
         $atual.StdErr
     ) -join "`n"
 
+    if ($atual.ExitCode -ne 0) {
+        Set-PerformanceResult -Status WARN
+        Write-Log WARN "Nao foi possivel consultar o esquema ativo (codigo $($atual.ExitCode))."
+        Add-CompartDiskFinding `
+            -Severity WARN `
+            -Area 'Desempenho' `
+            -Message 'O Windows nao permitiu confirmar o esquema de energia ativo.' `
+            -Recommendation 'Verificar permissoes administrativas e politicas de energia.'
+        return
+    }
+
     if (
         $activeText -match '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
     ) {
@@ -960,7 +1079,7 @@ function Set-PowerPlan {
         [string]::IsNullOrWhiteSpace($activeGuid) -or
         $activeGuid -ne $Guid.ToLowerInvariant()
     ) {
-        $script:result = 'WARN'
+        Set-PerformanceResult -Status WARN
 
         Write-Log WARN "O Windows nao confirmou o plano '$Nome' como esquema ativo."
 
@@ -1036,6 +1155,7 @@ function Set-PowerPlan {
         )
 
         $validationOk = $true
+        $optionalValidationIssue = $false
 
         foreach ($setting in $validation) {
 
@@ -1052,13 +1172,18 @@ function Set-PowerPlan {
             }
 
             if (-not (Test-PowerSetting @args)) {
-                $validationOk = $false
+                if ($setting.Required) {
+                    $validationOk = $false
+                }
+                else {
+                    $optionalValidationIssue = $true
+                }
             }
         }
 
         if (-not $validationOk) {
 
-            $script:result = 'WARN'
+            Set-PerformanceResult -Status WARN
 
             Write-Log WARN 'O perfil foi ativado, mas a validacao das configuracoes de desempenho falhou.'
 
@@ -1070,6 +1195,11 @@ function Set-PowerPlan {
 
             return
         }
+
+        if ($optionalValidationIssue -or $optionalConfigIssue) {
+            Set-PerformanceResult -Status WARN
+            Write-Log WARN 'Uma ou mais configuracoes opcionais de desempenho nao puderam ser aplicadas ou confirmadas.'
+        }
     }
 
     # -----------------------------------------------------------------------
@@ -1078,21 +1208,6 @@ function Set-PowerPlan {
 
     Write-Log OK "Plano de energia ativo: $Nome"
 
-    if ($performanceMode) {
-        Add-CompartDiskFinding `
-            -Severity OK `
-            -Area 'Desempenho' `
-            -Message "Perfil '$Nome' aplicado e validado para desempenho maximo em AC." `
-            -Recommendation 'Use Equilibrado quando a prioridade for menor consumo ou maior autonomia.'
-    }
-    else {
-        Add-CompartDiskFinding `
-            -Severity OK `
-            -Area 'Desempenho' `
-            -Message "Plano de energia definido como '$Nome'." `
-            -Recommendation 'Em notebooks, planos de alto desempenho podem reduzir a autonomia da bateria.'
-    }
-
     # -----------------------------------------------------------------------
     # Efeitos visuais
     # -----------------------------------------------------------------------
@@ -1100,9 +1215,41 @@ function Set-PowerPlan {
     $visualOk = Set-PerformanceVisualEffects -PerformanceMode $performanceMode
 
     if (-not $visualOk) {
-        $script:result = 'WARN'
-
+        Set-PerformanceResult -Status WARN
         Write-Log WARN 'O plano de energia foi aplicado, mas os efeitos visuais nao puderam ser ajustados.'
+    }
+
+    if ($script:result -eq 'OK') {
+        if ($performanceMode) {
+            Add-CompartDiskFinding `
+                -Severity OK `
+                -Area 'Desempenho' `
+                -Message "Perfil '$Nome' aplicado e validado para desempenho maximo em AC." `
+                -Recommendation 'Use Equilibrado quando a prioridade for menor consumo ou maior autonomia.'
+        }
+        else {
+            Add-CompartDiskFinding `
+                -Severity OK `
+                -Area 'Desempenho' `
+                -Message "Plano de energia definido como '$Nome'." `
+                -Recommendation 'Em notebooks, planos de alto desempenho podem reduzir a autonomia da bateria.'
+        }
+    }
+    else {
+        if ($performanceMode) {
+            Add-CompartDiskFinding `
+                -Severity WARN `
+                -Area 'Desempenho' `
+                -Message "Perfil '$Nome' aplicado, mas existem avisos de validacao ou configuracao." `
+                -Recommendation 'Revise os avisos registrados antes de considerar o perfil totalmente validado.'
+        }
+        else {
+            Add-CompartDiskFinding `
+                -Severity WARN `
+                -Area 'Desempenho' `
+                -Message "Plano de energia '$Nome' foi aplicado, mas existem avisos de validacao ou configuracao." `
+                -Recommendation 'Revise os avisos registrados para confirmar o estado final.'
+        }
     }
 
     # -----------------------------------------------------------------------
@@ -1134,7 +1281,7 @@ try {
                 -Quiet:$Quiet
         )
     ) {
-        $script:result = 'ERROR'
+        Set-PerformanceResult -Status ERROR
         throw 'Falha ao iniciar o modulo Performance.'
     }
 
@@ -1189,7 +1336,7 @@ try {
             }
 
             if ($s.Count -gt 12) {
-                $script:result = 'WARN'
+                Set-PerformanceResult -Status WARN
 
                 Add-CompartDiskFinding `
                     -Severity WARN `
@@ -1248,7 +1395,7 @@ try {
 
             if ($problemas.Count -gt 0) {
 
-                $script:result = 'WARN'
+                Set-PerformanceResult -Status WARN
 
                 foreach ($p in $problemas) {
                     Add-CompartDiskFinding `
@@ -1279,7 +1426,7 @@ try {
 }
 catch {
 
-    $script:result = 'ERROR'
+    Set-PerformanceResult -Status ERROR
 
     Write-Log `
         ERR `
