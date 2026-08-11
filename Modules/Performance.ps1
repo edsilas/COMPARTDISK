@@ -678,6 +678,47 @@ function Test-PowerSetting {
     }
 }
 
+function Invoke-PowerCfgChangeName {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Guid,
+
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $powercfg
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.Arguments = '/changename "{0}" "{1}"' -f $Guid, $Name
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $psi
+
+    try {
+        if (-not $process.Start()) {
+            throw 'Nao foi possivel iniciar o powercfg.exe para renomear o esquema.'
+        }
+
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut   = $stdout
+            StdErr   = $stderr
+        }
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
 function Set-PowerPlan {
     [CmdletBinding()]
     param(
@@ -833,18 +874,19 @@ function Set-PowerPlan {
             }
         }
 
-        # Garante nome consistente e deixa claro que o perfil e do CompartDisk.
-        $rename = Invoke-NativeCommand `
-            -FilePath $powercfg `
-            -Arguments @('/changename', $Guid, $customName, 'Perfil de energia otimizado pelo CompartDisk para desempenho maximo em AC.') `
-            -TimeoutSeconds 30
+        # Atualiza somente o nome. Nao envia descricao personalizada.
+        # O /changename e isolado do wrapper nativo porque o log real mostrou
+        # falha especifica nessa operacao, enquanto as demais chamadas funcionam.
+        $rename = Invoke-PowerCfgChangeName -Guid $Guid -Name $customName
 
         if ($rename.ExitCode -ne 0) {
+            $stderr = if ([string]::IsNullOrWhiteSpace($rename.StdErr)) { 'sem detalhes' } else { $rename.StdErr.Trim() }
             Set-PerformanceResult -Status WARN
-            Write-Log WARN "Nao foi possivel atualizar o nome/descricao do perfil (codigo $($rename.ExitCode))."
+            Write-Log WARN "Nao foi possivel atualizar o nome do perfil (codigo $($rename.ExitCode); stderr=$stderr)."
         }
         else {
             $Nome = $customName
+            Write-Log OK 'Nome do perfil atualizado.'
         }
     }
 
@@ -1094,6 +1136,36 @@ function Set-PowerPlan {
         }
 
         return
+    }
+
+    # -----------------------------------------------------------------------
+    # Validacao do nome efetivamente registrado no esquema ativo
+    # -----------------------------------------------------------------------
+    if ($performanceMode) {
+        $listResult = Invoke-NativeCommand -FilePath $powercfg -Arguments @('/list') -TimeoutSeconds 30
+        $schemesText = @($listResult.StdOut, $listResult.StdErr) -join "`n"
+        $nomeAtivo = $null
+
+        foreach ($linha in ($schemesText -split "`r?`n")) {
+            if ($linha -match '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b') {
+                $linhaGuid = $Matches[0].ToLowerInvariant()
+                if ($linhaGuid -eq $Guid.ToLowerInvariant() -and $linha -match '\(([^()]*)\)\s*$') {
+                    $nomeAtivo = $Matches[1].Trim()
+                    break
+                }
+            }
+        }
+
+        if ([string]::IsNullOrWhiteSpace($nomeAtivo) -or $nomeAtivo -ine $Nome) {
+            Set-PerformanceResult -Status WARN
+            Write-Log WARN "O esquema $Guid esta ativo, mas o nome registrado e '$nomeAtivo' em vez de '$Nome'."
+            Add-CompartDiskFinding `
+                -Severity WARN `
+                -Area 'Desempenho' `
+                -Message 'O perfil foi ativado, mas o nome registrado pelo Windows nao corresponde ao nome esperado.' `
+                -Recommendation 'Verificar a execucao do powercfg /changename e as permissoes administrativas.'
+            return
+        }
     }
 
     # -----------------------------------------------------------------------
