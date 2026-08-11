@@ -37,7 +37,6 @@ if (-not (Test-Path -LiteralPath $corePath -PathType Leaf)) {
 # ---------------------------------------------------------------------------
 
 $script:result = 'OK'
-$script:PowerSchemeCache = $null
 
 # ---------------------------------------------------------------------------
 # PowerCfg
@@ -58,22 +57,9 @@ $GUID_HIGH     = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
 # Funcoes auxiliares
 # ---------------------------------------------------------------------------
 
-function Clear-PowerSchemeCache {
+function Get-PowerSchemeGuids {
     [CmdletBinding()]
     param()
-
-    $script:PowerSchemeCache = $null
-}
-
-function Get-PowerSchemes {
-    [CmdletBinding()]
-    param(
-        [switch]$Refresh
-    )
-
-    if ($script:PowerSchemeCache -and -not $Refresh) {
-        return @($script:PowerSchemeCache)
-    }
 
     $r = Invoke-NativeCommand `
         -FilePath $powercfg `
@@ -85,53 +71,16 @@ function Get-PowerSchemes {
         $r.StdErr
     ) -join "`n"
 
-    if ($r.ExitCode -ne 0) {
-        throw "powercfg /list falhou com codigo $($r.ExitCode). $($r.StdErr)"
-    }
-
     if ([string]::IsNullOrWhiteSpace($texto)) {
-        throw 'powercfg /list nao retornou nenhum esquema de energia.'
+        return @()
     }
 
-    $guidRegex = '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
-    $schemes = @(
-        foreach ($linha in ($texto -split "`r?`n")) {
-            $mGuid = [regex]::Match($linha, $guidRegex)
-
-            if (-not $mGuid.Success) {
-                continue
-            }
-
-            $guid = $mGuid.Value.ToLowerInvariant()
-            $name = $null
-
-            if ($linha -match '\(([^()]*)\)\s*$') {
-                $name = $Matches[1].Trim()
-            }
-
-            [pscustomobject]@{
-                Guid = $guid
-                Name = $name
-            }
-        }
-    )
-
-    if ($schemes.Count -eq 0) {
-        throw 'powercfg /list retornou uma resposta sem GUIDs de esquemas de energia.'
-    }
-
-    $script:PowerSchemeCache = @($schemes)
-    return @($script:PowerSchemeCache)
-}
-
-function Get-PowerSchemeGuids {
-    [CmdletBinding()]
-    param()
+    $regex = '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
 
     return @(
-        Get-PowerSchemes |
-            ForEach-Object { $_.Guid } |
-            Select-Object -Unique
+        [regex]::Matches($texto, $regex) |
+        ForEach-Object { $_.Value.ToLowerInvariant() } |
+        Select-Object -Unique
     )
 }
 
@@ -142,30 +91,9 @@ function Test-PowerSchemeExists {
         [string]$Guid
     )
 
-    $normalizedGuid = $Guid.ToLowerInvariant()
-    return [bool](
-        Get-PowerSchemes |
-            Where-Object { $_.Guid -eq $normalizedGuid } |
-            Select-Object -First 1
-    )
-}
+    $guids = Get-PowerSchemeGuids
 
-function Get-PowerSchemeByName {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$Name
-    )
-
-    $scheme = Get-PowerSchemes |
-        Where-Object { $_.Name -and $_.Name -ieq $Name } |
-        Select-Object -First 1
-
-    if ($scheme) {
-        return $scheme.Guid
-    }
-
-    return $null
+    return $guids -contains $Guid.ToLowerInvariant()
 }
 
 function Get-InteractiveUserName {
@@ -327,15 +255,9 @@ function Show-Analysis {
         'RAM total'         = $hw['RAM total']
         'RAM disponivel'    = $hw['RAM disponivel']
         'RAM em uso (%)'    = $hw['RAM em uso (%)']
-        'Processos ativos'  = 'n/d'
-    }
-
-    try {
-        $pares['Processos ativos'] = @(Get-Process -ErrorAction Stop).Count
-    }
-    catch {
-        $script:result = 'WARN'
-        Write-Log WARN "Falha ao consultar processos ativos: $($_.Exception.Message)"
+        'Processos ativos'  = @(
+            Get-Process -ErrorAction SilentlyContinue
+        ).Count
     }
 
     # -----------------------------------------------------------------------
@@ -480,6 +402,170 @@ function Show-Analysis {
 # Gerenciamento de planos de energia
 # ---------------------------------------------------------------------------
 
+function Get-PowerSchemeByName {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    $r = Invoke-NativeCommand `
+        -FilePath $powercfg `
+        -Arguments @('/list') `
+        -TimeoutSeconds 30
+
+    $texto = @(
+        $r.StdOut
+        $r.StdErr
+    ) -join "`n"
+
+    if ([string]::IsNullOrWhiteSpace($texto)) {
+        return $null
+    }
+
+    $guidRegex = '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+
+    foreach ($linha in ($texto -split "`r?`n")) {
+        if ($linha -match $guidRegex) {
+            $guid = $Matches[0].ToLowerInvariant()
+
+            if ($linha -match '\(([^()]*)\)\s*$') {
+                $nomeEncontrado = $Matches[1].Trim()
+
+                if ($nomeEncontrado -ieq $Name) {
+                    return $guid
+                }
+            }
+        }
+    }
+
+    return $null
+}
+
+function Get-PowerSchemes {
+    [CmdletBinding()]
+    param()
+
+    $r = Invoke-NativeCommand `
+        -FilePath $powercfg `
+        -Arguments @('/list') `
+        -TimeoutSeconds 30
+
+    if ($r.ExitCode -ne 0) {
+        $detail = if ($r.StdErr) { " stderr=$($r.StdErr.Trim())" } else { '' }
+        throw "Falha ao listar esquemas de energia (codigo $($r.ExitCode)).$detail"
+    }
+
+    $texto = @($r.StdOut) -join "`n"
+    $guidRegex = '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+    $resultado = @()
+
+    foreach ($linha in ($texto -split "`r?`n")) {
+        if ($linha -match $guidRegex) {
+            $guid = $Matches[0].ToLowerInvariant()
+            $nome = $null
+            $ativo = $linha -match '(?i)\*\s*$'
+
+            if ($linha -match '\(([^()]*)\)\s*(?:\*\s*)?$') {
+                $nome = $Matches[1].Trim()
+            }
+
+            $resultado += [pscustomobject]@{
+                Guid   = $guid
+                Name   = $nome
+                Active = [bool]$ativo
+            }
+        }
+    }
+
+    return @($resultado | Sort-Object Guid -Unique)
+}
+
+function Remove-OtherPowerSchemes {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$KeepGuid
+    )
+
+    $keep = $KeepGuid.ToLowerInvariant()
+    $schemes = @(Get-PowerSchemes)
+    $failed = 0
+
+    foreach ($scheme in $schemes) {
+        if ($scheme.Guid -eq $keep) {
+            continue
+        }
+
+        $delete = Invoke-NativeCommand `
+            -FilePath $powercfg `
+            -Arguments @('/delete', $scheme.Guid) `
+            -TimeoutSeconds 30
+
+        if ($delete.ExitCode -ne 0) {
+            $failed++
+            $detail = if ($delete.StdErr) { "; stderr=$($delete.StdErr.Trim())" } else { '' }
+            Write-Log WARN "Nao foi possivel excluir o esquema '$($scheme.Name)' [$($scheme.Guid)] (codigo $($delete.ExitCode))$detail."
+        }
+        else {
+            Write-Log INFO "Esquema removido: $($scheme.Name) [$($scheme.Guid)]."
+        }
+    }
+
+    $remaining = @(Get-PowerSchemes)
+    $unexpected = @($remaining | Where-Object { $_.Guid -ne $keep })
+
+    if ($unexpected.Count -gt 0) {
+        $failed = [Math]::Max($failed, $unexpected.Count)
+        Write-Log WARN "Permanecem $($unexpected.Count) esquema(s) alem do perfil definitivo."
+    }
+
+    if ($failed -gt 0) {
+        return $false
+    }
+
+    if ($remaining.Count -ne 1 -or $remaining[0].Guid -ne $keep) {
+        Write-Log WARN 'O Windows nao confirmou que o perfil definitivo e o unico esquema restante.'
+        return $false
+    }
+
+    Write-Log OK 'Perfil definitivo confirmado como unico esquema de energia.'
+    return $true
+}
+
+function Restore-DefaultPowerSchemesIfMissing {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$RequiredGuid
+    )
+
+    if (Test-PowerSchemeExists -Guid $RequiredGuid) {
+        return $true
+    }
+
+    Write-Log INFO 'O esquema de energia solicitado nao existe. Restaurando os esquemas padrao do Windows.'
+
+    $restore = Invoke-NativeCommand `
+        -FilePath $powercfg `
+        -Arguments @('/restoredefaultschemes') `
+        -TimeoutSeconds 60
+
+    if ($restore.ExitCode -ne 0) {
+        $detail = if ($restore.StdErr) { "; stderr=$($restore.StdErr.Trim())" } else { '' }
+        Write-Log ERR "Falha ao restaurar os esquemas padrao do Windows (codigo $($restore.ExitCode))$detail."
+        return $false
+    }
+
+    if (-not (Test-PowerSchemeExists -Guid $RequiredGuid)) {
+        Write-Log ERR "O Windows nao confirmou a recriacao do esquema solicitado: $RequiredGuid."
+        return $false
+    }
+
+    Write-Log OK 'Esquemas padrao do Windows restaurados.'
+    return $true
+}
+
 function Set-PowerSetting {
     [CmdletBinding()]
     param(
@@ -514,7 +600,7 @@ function Set-PowerSetting {
             }
 
             Write-Log WARN "Configuracao '$Description' nao foi aplicada neste dispositivo (codigo $($r.ExitCode))."
-            return $false
+            return $true
         }
 
         Write-Log OK "Configuracao aplicada: $Description = $Value"
@@ -527,161 +613,8 @@ function Set-PowerSetting {
         }
 
         Write-Log WARN "Configuracao '$Description' indisponivel neste dispositivo: $($_.Exception.Message)"
-        return $false
+        return $true
     }
-}
-
-function Get-PowerSettingCurrentAcValue {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$SchemeGuid,
-
-        [Parameter(Mandatory)]
-        [string]$SubGroup,
-
-        [Parameter(Mandatory)]
-        [string]$Setting
-    )
-
-    # Preferimos a fonte estruturada do Windows (registro de PowerSchemes),
-    # pois ela nao depende do idioma nem do formato textual do powercfg /query.
-    # O fallback para /query preserva compatibilidade caso a chave nao esteja
-    # disponivel no ambiente.
-    $settingGuids = @{
-        PROCTHROTTLEMIN = '893dee8e-2bef-41e0-89c6-b55d0929964c'
-        PROCTHROTTLEMAX = 'bc5038f7-23e0-4960-96da-33abaf5935ec'
-        SYSCOOLPOL      = '94d3a615-a899-4ac5-ae2b-e4d8f634367f'
-        ASPM            = 'ee12f906-d277-404b-b6da-e5fa1a576df5'
-        DISKIDLE        = '6738e2c4-e8a5-4a42-b16a-e040e769756e'
-        STANDBYIDLE     = '29f6c1db-86da-48c5-9fdb-f2b67b1f44da'
-        HIBERNATEIDLE   = '9d7815a6-7ee4-497e-8888-515a05f02364'
-    }
-
-    $subGroupGuids = @{
-        SUB_PROCESSOR  = '54533251-82be-4824-96c1-47b60b740d00'
-        SUB_PCIEXPRESS = '501a4d13-42af-4429-9fd1-a8218c268e20'
-        SUB_DISK       = '0012ee47-9041-4b5d-9b77-535fba8b1442'
-        SUB_SLEEP      = '238c9fa8-0aad-41ed-83f4-97be242c8f20'
-    }
-
-    $normalizedScheme = $SchemeGuid.ToLowerInvariant()
-    $settingGuid = $null
-    $subGroupGuid = $null
-
-    if ($settingGuids.ContainsKey($Setting)) {
-        $settingGuid = $settingGuids[$Setting]
-    }
-
-    if ($subGroupGuids.ContainsKey($SubGroup)) {
-        $subGroupGuid = $subGroupGuids[$SubGroup]
-    }
-
-    if ($settingGuid -and $subGroupGuid) {
-        $registryPath = Join-Path `
-            'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes' `
-            "$normalizedScheme\$($subGroupGuid.ToLowerInvariant())\$($settingGuid.ToLowerInvariant())"
-
-        try {
-            $property = Get-ItemProperty -LiteralPath $registryPath -Name 'ACSettingIndex' -ErrorAction Stop
-
-            if ($null -ne $property.ACSettingIndex) {
-                $raw = $property.ACSettingIndex
-
-                if ($raw -is [byte[]]) {
-                    if ($raw.Length -lt 4) {
-                        throw "ACSettingIndex de '$Setting' possui tamanho invalido."
-                    }
-
-                    $bytes = $raw[0..3]
-                    $value = [BitConverter]::ToInt32($bytes, 0)
-                }
-                else {
-                    $value = [Convert]::ToInt64([string]$raw, 10)
-                }
-
-                Write-Verbose "Valor AC de '$Setting' obtido do registro: $value."
-                return $value
-            }
-        }
-        catch [System.Management.Automation.ItemNotFoundException] {
-            # Chave ausente: usar fallback /query.
-        }
-        catch [System.Management.Automation.PSArgumentException] {
-            # Valor ausente/incompativel: usar fallback /query.
-        }
-        catch {
-            Write-Verbose "Registro indisponivel para '$Setting': $($_.Exception.Message)"
-        }
-    }
-
-    $r = Invoke-NativeCommand `
-        -FilePath $powercfg `
-        -Arguments @('/query', $SchemeGuid, $SubGroup) `
-        -TimeoutSeconds 30
-
-    $texto = @(
-        $r.StdOut
-        $r.StdErr
-    ) -join "`n"
-
-    if ($r.ExitCode -ne 0) {
-        $detalhe = if ($r.StdErr) { $r.StdErr.Trim() } else { 'sem mensagem de erro' }
-        throw "powercfg /query falhou com codigo $($r.ExitCode): $detalhe"
-    }
-
-    if ([string]::IsNullOrWhiteSpace($texto)) {
-        throw "powercfg /query retornou uma resposta vazia para '$Setting'."
-    }
-
-    # /query pode retornar todo o subgrupo. Primeiro isolamos o bloco da
-    # configuracao pelo GUID conhecido; isso evita confundir os indices de
-    # outra configuracao com o valor solicitado.
-    $settingGuidPattern = [regex]::Escape($settingGuid)
-    $blockPattern = '(?is)Power Setting GUID:\s*\{?' + $settingGuidPattern + '\}?\b.*?(?=\r?\n\s*Power Setting GUID:|\r?\n\s*Subgroup GUID:|\z)'
-    $blockMatch = [regex]::Match($texto, $blockPattern)
-
-    $bloco = if ($blockMatch.Success) { $blockMatch.Value } else { $texto }
-
-    # O formato textual oficial mostra Current AC/DC como valores hexadecimais.
-    # O regex aceita espacos/formatacao intermediaria e permanece independente
-    # dos nomes localizados das configuracoes.
-    $acPatterns = @(
-        '(?im)Current\s+AC\s+Power\s+Setting\s+Index\s*:\s*0x([0-9a-f]+)',
-        '(?im)AC\s+Power\s+Setting\s+Index\s*:\s*0x([0-9a-f]+)'
-    )
-
-    foreach ($pattern in $acPatterns) {
-        $match = [regex]::Match($bloco, $pattern)
-
-        if ($match.Success) {
-            try {
-                return [Convert]::ToInt64($match.Groups[1].Value, 16)
-            }
-            catch {
-                throw "Indice AC de '$Setting' possui formato invalido: $($match.Groups[1].Value)."
-            }
-        }
-    }
-
-    # Ultimo fallback: em um bloco especifico de configuracao, os dois indices
-    # atuais sao os dois ultimos valores 0x..., conforme a estrutura documentada
-    # do powercfg. Nunca aplicamos essa heuristica sobre a saida inteira.
-    $hexMatches = [regex]::Matches($bloco, '(?i)0x[0-9a-f]+')
-
-    if ($hexMatches.Count -ge 2) {
-        try {
-            return [Convert]::ToInt64(
-                $hexMatches[$hexMatches.Count - 2].Value.Substring(2),
-                16
-            )
-        }
-        catch {
-            throw "Indice AC de '$Setting' possui formato invalido na resposta do powercfg."
-        }
-    }
-
-    throw "Indice AC de '$Setting' nao foi localizado de forma deterministica no registro nem na consulta do powercfg."
 }
 
 function Test-PowerSetting {
@@ -706,20 +639,51 @@ function Test-PowerSetting {
     )
 
     try {
-        $actual = Get-PowerSettingCurrentAcValue `
-            -SchemeGuid $SchemeGuid `
-            -SubGroup $SubGroup `
-            -Setting $Setting
+        $r = Invoke-NativeCommand `
+            -FilePath $powercfg `
+            -Arguments @('/query', $SchemeGuid, $SubGroup, $Setting) `
+            -TimeoutSeconds 30
+
+        $texto = @(
+            $r.StdOut
+            $r.StdErr
+        ) -join "`n"
+
+        if ($r.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($texto)) {
+            if ($Required) {
+                Write-Log ERR "Nao foi possivel validar '$Description'."
+                return $false
+            }
+
+            Write-Log WARN "Nao foi possivel validar '$Description' neste dispositivo."
+            return $true
+        }
+
+        $m = [regex]::Match(
+            $texto,
+            '(?im)^\s*Current AC Power Setting Index:\s*0x([0-9a-f]+)'
+        )
+
+        if (-not $m.Success) {
+            if ($Required) {
+                Write-Log ERR "Valor AC de '$Description' nao foi localizado na consulta."
+                return $false
+            }
+
+            Write-Log WARN "Valor AC de '$Description' nao foi localizado na consulta."
+            return $true
+        }
+
+        $actual = [Convert]::ToInt32($m.Groups[1].Value, 16)
 
         if ($actual -ne $ExpectedValue) {
             if ($Required) {
                 Write-Log ERR "Validacao falhou: $Description esperado=$ExpectedValue atual=$actual."
-            }
-            else {
-                Write-Log WARN "Validacao parcial: $Description esperado=$ExpectedValue atual=$actual."
+                return $false
             }
 
-            return $false
+            Write-Log WARN "Validacao parcial: $Description esperado=$ExpectedValue atual=$actual."
+            return $true
         }
 
         Write-Log OK "Validado: $Description = $actual"
@@ -728,143 +692,11 @@ function Test-PowerSetting {
     catch {
         if ($Required) {
             Write-Log ERR "Falha na validacao de '$Description': $($_.Exception.Message)"
-        }
-        else {
-            Write-Log WARN "Falha ao validar '$Description': $($_.Exception.Message)"
+            return $false
         }
 
-        return $false
-    }
-}
-
-function Invoke-PowerCfgChangeName {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$SchemeGuid,
-
-        [Parameter(Mandatory)]
-        [string]$Name,
-
-        [string]$Description
-    )
-
-    # O Core pode encapsular argumentos nativos de forma diferente entre
-    # versoes do modulo. O /changename aceita nomes com espacos, portanto esta
-    # operacao usa ProcessStartInfo diretamente para garantir que o nome seja
-    # transmitido como um unico argumento.
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $powercfg
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-
-    $quote = {
-        param([string]$Value)
-
-        if ($null -eq $Value) {
-            return '""'
-        }
-
-        # Escapamento compatível com a regra de argumentos da API do Windows.
-        $escaped = $Value -replace '(\\*)"', '$1$1\\"'
-        $escaped = $escaped -replace '(\\+)$', '$1$1'
-        return '"' + $escaped + '"'
-    }
-
-    $arguments = @(
-        (& $quote '/changename')
-        (& $quote $SchemeGuid)
-        (& $quote $Name)
-    )
-
-    if (-not [string]::IsNullOrEmpty($Description)) {
-        $arguments += (& $quote $Description)
-    }
-
-    $psi.Arguments = $arguments -join ' '
-
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $psi
-
-    try {
-        if (-not $process.Start()) {
-            throw 'Nao foi possivel iniciar o powercfg para alterar o nome do perfil.'
-        }
-
-        if (-not $process.WaitForExit(30000)) {
-            try { $process.Kill() } catch { }
-            throw 'Tempo limite excedido ao atualizar o nome do perfil de energia.'
-        }
-
-        $stdout = $process.StandardOutput.ReadToEnd()
-        $stderr = $process.StandardError.ReadToEnd()
-
-        return [pscustomobject]@{
-            ExitCode = $process.ExitCode
-            StdOut   = $stdout
-            StdErr   = $stderr
-        }
-    }
-    finally {
-        $process.Dispose()
-    }
-}
-
-function Remove-RedundantPerformanceSchemes {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$KeepGuid
-    )
-
-    $keepGuid = $KeepGuid.ToLowerInvariant()
-    $protectedGuids = @(
-        $GUID_ULTIMATE.ToLowerInvariant()
-        $GUID_HIGH.ToLowerInvariant()
-        $GUID_BALANCED.ToLowerInvariant()
-        $keepGuid
-    ) | Select-Object -Unique
-
-    $removableNames = @(
-        'CompartDisk - Desempenho Maximo'
-        'compartdisk desempenho maximo'
-        'CompartDisk Desempenho Maximo'
-        'Desempenho Maximo'
-        'Desempenho Máximo'
-    )
-
-    $schemes = @(Get-PowerSchemes -Refresh)
-    $candidates = @(
-        $schemes | Where-Object {
-            $_.Guid -ne $keepGuid -and
-            $_.Name -and
-            ($removableNames -contains $_.Name -or
-             $_.Name -ieq 'Desempenho Maximo' -or
-             $_.Name -ieq 'Desempenho Máximo')
-        }
-    )
-
-    foreach ($scheme in $candidates) {
-        if ($protectedGuids -contains $scheme.Guid) {
-            continue
-        }
-
-        $delete = Invoke-NativeCommand `
-            -FilePath $powercfg `
-            -Arguments @('/delete', $scheme.Guid) `
-            -TimeoutSeconds 30
-
-        if ($delete.ExitCode -eq 0) {
-            Write-Log OK "Perfil redundante removido: $($scheme.Name) [$($scheme.Guid)]."
-            Clear-PowerSchemeCache
-        }
-        else {
-            $detalhe = if ($delete.StdErr) { $delete.StdErr.Trim() } else { "codigo=$($delete.ExitCode)" }
-            Write-Log WARN "Nao foi possivel remover o perfil redundante '$($scheme.Name)' [$($scheme.Guid)]: $detalhe"
-            $script:result = 'WARN'
-        }
+        Write-Log WARN "Falha ao validar '$Description': $($_.Exception.Message)"
+        return $true
     }
 }
 
@@ -880,185 +712,169 @@ function Set-PowerPlan {
 
     $requestedGuid = $Guid.ToLowerInvariant()
     $performanceMode = $false
-    $targetName = 'Desempenho Máximo'
+
+    # O modo Ultimate pode remover todos os demais esquemas. Quando outra acao
+    # for solicitada posteriormente, restaura os esquemas padrao somente se o
+    # esquema necessario nao existir, preservando a funcionalidade original.
+    if (($requestedGuid -eq $GUID_BALANCED -or $requestedGuid -eq $GUID_HIGH) -and
+        -not (Test-PowerSchemeExists -Guid $requestedGuid)) {
+
+        if (-not (Restore-DefaultPowerSchemesIfMissing -RequiredGuid $requestedGuid)) {
+            $script:result = 'WARN'
+            Add-CompartDiskFinding `
+                -Severity WARN `
+                -Area 'Desempenho' `
+                -Message "O esquema solicitado '$Nome' nao esta disponivel e nao pode ser restaurado." `
+                -Recommendation 'Restaurar os esquemas padrao do Windows e tentar novamente.'
+            return
+        }
+    }
 
     # -----------------------------------------------------------------------
-    # Desempenho Máximo
+    # Desempenho Maximo real
     #
-    # Regra de idempotencia:
-    # - se o Ultimate Performance oficial existir, ele e o alvo;
-    # - caso contrario, reutiliza um perfil existente de Desempenho Máximo
-    #   ou um perfil criado por versoes anteriores do modulo;
-    # - somente cria um novo esquema quando nenhum alvo reutilizavel existir;
-    # - perfis redundantes criados pelo modulo sao removidos depois que o alvo
-    #   estiver configurado e ativo.
+    # O modulo cria/reutiliza um esquema proprio do CompartDisk.
+    # As alteracoes sao feitas somente no perfil AC (tomada).
+    # O plano Equilibrado e os demais esquemas existentes nao sao modificados.
     #
-    # Perfis oficiais do Windows/OEM nao sao excluidos indiscriminadamente.
+    # Criterio:
+    # - CPU minimo AC = 100%
+    # - CPU maximo AC = 100%
+    # - Resfriamento ativo
+    # - PCIe ASPM desligado quando o recurso estiver disponivel
+    # - Disco sem desligamento por ociosidade em AC
+    # - Suspensao/hibernacao por ociosidade desabilitadas em AC
+    #
+    # Nao desabilita USB Selective Suspend: a Microsoft recomenda manter
+    # esse recurso habilitado. Nao altera drivers, servicos ou hardware.
     # -----------------------------------------------------------------------
 
     if ($requestedGuid -eq $GUID_ULTIMATE) {
-        $schemes = @(Get-PowerSchemes -Refresh)
-        $officialUltimate = $schemes |
-            Where-Object { $_.Guid -eq $GUID_ULTIMATE.ToLowerInvariant() } |
-            Select-Object -First 1
 
-        if ($officialUltimate) {
-            $Guid = $officialUltimate.Guid
-            $Nome = $targetName
+        # Nome canonico sem depender da codificacao do arquivo-fonte.
+        $customName = 'Desempenho M' + [char]0x00E1 + 'ximo'
+        $schemes = @(Get-PowerSchemes)
+
+        # Prioridade: esquema Ultimate oficial. Se ele nao existir, reutiliza
+        # somente um esquema ja canonico. Variacoes antigas do CompartDisk sao
+        # tratadas como duplicatas e serao removidas ao final.
+        $target = $schemes | Where-Object { $_.Guid -eq $GUID_ULTIMATE } | Select-Object -First 1
+
+        if (-not $target) {
+            $target = $schemes |
+                Where-Object { $_.Name -and $_.Name -ieq $customName } |
+                Select-Object -First 1
+        }
+
+        if ($target) {
+            $Guid = $target.Guid
+            $Nome = $customName
             $performanceMode = $true
-            Write-Log INFO "Perfil oficial de Desempenho Maximo localizado: $Guid."
+            Write-Log INFO "Perfil definitivo reutilizado: $Guid."
         }
         else {
-            $targetCandidates = @(
-                $schemes | Where-Object {
-                    $_.Name -and (
-                        $_.Name -ieq 'Desempenho Máximo' -or
-                        $_.Name -ieq 'Desempenho Maximo' -or
-                        $_.Name -ieq 'CompartDisk - Desempenho Maximo' -or
-                        $_.Name -ieq 'compartdisk desempenho maximo' -or
-                        $_.Name -ieq 'CompartDisk Desempenho Maximo'
-                    )
-                }
-            )
+            # Ultimate Performance e o modelo preferencial. Se nao estiver
+            # exposto, usa High Performance como base e, por ultimo, Equilibrado.
+            $baseGuid = $null
+            $baseName = $null
 
-            $reusable = $null
-            foreach ($preferredName in @('Desempenho Máximo', 'Desempenho Maximo', 'CompartDisk - Desempenho Maximo', 'compartdisk desempenho maximo', 'CompartDisk Desempenho Maximo')) {
-                $reusable = $targetCandidates |
-                    Where-Object { $_.Name -ieq $preferredName } |
-                    Select-Object -First 1
+            if ($schemes.Guid -contains $GUID_ULTIMATE) {
+                $baseGuid = $GUID_ULTIMATE
+                $baseName = 'Desempenho Maximo'
+            }
+            elseif ($schemes.Guid -contains $GUID_HIGH) {
+                $baseGuid = $GUID_HIGH
+                $baseName = 'Alto Desempenho'
+                Write-Log WARN 'Ultimate Performance nao esta exposto. Usando Alto Desempenho como base.'
+            }
+            elseif ($schemes.Guid -contains $GUID_BALANCED) {
+                $baseGuid = $GUID_BALANCED
+                $baseName = 'Equilibrado'
+                Write-Log WARN 'Ultimate/Alto Desempenho nao estao disponiveis. Usando Equilibrado como base.'
+            }
 
-                if ($reusable) {
-                    break
+            if (-not $baseGuid) {
+                $script:result = 'WARN'
+                Write-Log WARN 'Nenhum esquema de energia utilizavel foi localizado.'
+                Add-CompartDiskFinding `
+                    -Severity WARN `
+                    -Area 'Desempenho' `
+                    -Message 'Nao foi possivel localizar um esquema de energia para criar o perfil de Desempenho Maximo.' `
+                    -Recommendation 'Verificar politicas de energia e suporte do Windows.'
+                return
+            }
+
+            Write-Log INFO "Criando perfil '$customName' a partir de '$baseName'."
+
+            $antes = @($schemes.Guid)
+            $d = Invoke-NativeCommand `
+                -FilePath $powercfg `
+                -Arguments @('/duplicatescheme', $baseGuid) `
+                -TimeoutSeconds 60
+
+            $novoGuid = $null
+            $textoDuplicacao = @($d.StdOut, $d.StdErr) -join "`n"
+
+            if ($textoDuplicacao -match '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b') {
+                $novoGuid = $Matches[0].ToLowerInvariant()
+            }
+
+            if ($d.ExitCode -eq 0 -and [string]::IsNullOrWhiteSpace($novoGuid)) {
+                $depois = @(Get-PowerSchemes)
+                $novos = @($depois | Where-Object { $antes -notcontains $_.Guid })
+                if ($novos.Count -eq 1) {
+                    $novoGuid = $novos[0].Guid
                 }
             }
 
-            if ($reusable) {
-                $Guid = $reusable.Guid
-                $Nome = $targetName
-                $performanceMode = $true
-                Write-Log INFO "Perfil de desempenho existente reutilizado: $Guid."
+            if (
+                ($d.ExitCode -ne 0) -or
+                [string]::IsNullOrWhiteSpace($novoGuid) -or
+                (-not (Test-PowerSchemeExists -Guid $novoGuid))
+            ) {
+                $script:result = 'WARN'
+                $detail = if ($d.StdErr) { "; stderr=$($d.StdErr.Trim())" } else { '' }
+                Write-Log WARN "Nao foi possivel criar o perfil definitivo de Desempenho Maximo (codigo $($d.ExitCode))$detail."
+                Add-CompartDiskFinding `
+                    -Severity WARN `
+                    -Area 'Desempenho' `
+                    -Message 'Falha ao criar o perfil definitivo de Desempenho Maximo.' `
+                    -Recommendation 'Verificar permissoes administrativas e politicas de energia do Windows.'
+                return
             }
-            else {
-                $baseGuid = $null
-                $baseName = $null
 
-                if ($schemes.Guid -contains $GUID_HIGH.ToLowerInvariant()) {
-                    $baseGuid = $GUID_HIGH
-                    $baseName = 'Alto Desempenho'
-                    Write-Log WARN 'Ultimate Performance nao esta disponivel. Usando Alto Desempenho como base.'
-                }
-                elseif ($schemes.Guid -contains $GUID_BALANCED.ToLowerInvariant()) {
-                    $baseGuid = $GUID_BALANCED
-                    $baseName = 'Equilibrado'
-                    Write-Log WARN 'Ultimate/Alto Desempenho nao estao disponiveis. Usando Equilibrado como base.'
-                }
-
-                if (-not $baseGuid) {
-                    $script:result = 'WARN'
-                    Write-Log WARN 'Nenhum esquema de energia utilizavel foi localizado.'
-                    Add-CompartDiskFinding `
-                        -Severity WARN `
-                        -Area 'Desempenho' `
-                        -Message 'Nao foi possivel localizar um esquema de energia para criar o perfil de Desempenho Maximo.' `
-                        -Recommendation 'Verificar politicas de energia e suporte do Windows.'
-                    return
-                }
-
-                Write-Log INFO "Criando perfil '$targetName' a partir de '$baseName'."
-
-                $beforeGuids = @(Get-PowerSchemeGuids)
-
-                $d = Invoke-NativeCommand `
-                    -FilePath $powercfg `
-                    -Arguments @('/duplicatescheme', $baseGuid) `
-                    -TimeoutSeconds 60
-
-                $novoGuid = $null
-                $textoDuplicacao = @($d.StdOut, $d.StdErr) -join "`n"
-
-                if ($textoDuplicacao -match '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b') {
-                    $novoGuid = $Matches[0].ToLowerInvariant()
-                }
-
-                Clear-PowerSchemeCache
-
-                # Fallback deterministico: se a saida do powercfg nao retornar o
-                # GUID, identifica exatamente o novo esquema pela diferenca entre
-                # a lista anterior e a lista posterior a /duplicatescheme.
-                if (($d.ExitCode -eq 0) -and [string]::IsNullOrWhiteSpace($novoGuid)) {
-                    $afterGuids = @(Get-PowerSchemeGuids)
-                    $novos = @($afterGuids | Where-Object { $beforeGuids -notcontains $_ })
-
-                    if ($novos.Count -eq 1) {
-                        $novoGuid = $novos[0]
-                    }
-                }
-
-                if (
-                    ($d.ExitCode -ne 0) -or
-                    [string]::IsNullOrWhiteSpace($novoGuid) -or
-                    (-not (Test-PowerSchemeExists -Guid $novoGuid))
-                ) {
-                    $script:result = 'WARN'
-                    $detalhe = if ($d.StdErr) { $d.StdErr.Trim() } else { "codigo=$($d.ExitCode)" }
-                    Write-Log WARN "Nao foi possivel criar o perfil de Desempenho Maximo: $detalhe"
-                    Add-CompartDiskFinding `
-                        -Severity WARN `
-                        -Area 'Desempenho' `
-                        -Message 'Falha ao criar o perfil de Desempenho Maximo.' `
-                        -Recommendation 'Verificar permissoes administrativas e politicas de energia do Windows.'
-                    return
-                }
-
-                $Guid = $novoGuid
-                $Nome = $targetName
-                $performanceMode = $true
-                Write-Log OK "Perfil criado com GUID $Guid."
-            }
+            $Guid = $novoGuid
+            $Nome = $customName
+            $performanceMode = $true
+            Write-Log OK "Perfil criado com GUID $Guid."
         }
 
-        # O nome final e sempre o mesmo. O GUID e a identidade tecnica do perfil.
-        $descricaoPerfil = 'Perfil de energia otimizado pelo CompartDisk para desempenho maximo em AC.'
-        $rename = Invoke-PowerCfgChangeName `
-            -SchemeGuid $Guid `
-            -Name $targetName `
-            -Description $descricaoPerfil
+        # Altera somente o nome. A descricao anterior do esquema e preservada;
+        # nenhuma descricao personalizada do CompartDisk e gravada.
+        $rename = Invoke-NativeCommand `
+            -FilePath $powercfg `
+            -Arguments @('/changename', $Guid, $customName) `
+            -TimeoutSeconds 30
 
-        if ($rename.ExitCode -eq 0) {
-            $Nome = $targetName
-            Clear-PowerSchemeCache
-            Write-Log OK "Nome e descricao do perfil atualizados."
+        if ($rename.ExitCode -ne 0) {
+            $detail = if ($rename.StdErr) { "; stderr=$($rename.StdErr.Trim())" } else { '' }
+            Write-Log WARN "Nao foi possivel atualizar o nome do perfil (codigo $($rename.ExitCode))$detail."
         }
-        else {
-            $renameSimple = Invoke-PowerCfgChangeName `
-                -SchemeGuid $Guid `
-                -Name $targetName
 
-            if ($renameSimple.ExitCode -eq 0) {
-                $Nome = $targetName
-                Clear-PowerSchemeCache
-                Write-Log OK "Nome do perfil atualizado: $targetName."
-            }
-            else {
-                Clear-PowerSchemeCache
-                $confirmado = Get-PowerSchemes -Refresh |
-                    Where-Object { $_.Guid -eq $Guid.ToLowerInvariant() -and $_.Name -ieq $targetName } |
-                    Select-Object -First 1
-
-                if ($confirmado) {
-                    $Nome = $targetName
-                    Write-Log OK "Nome do perfil confirmado como '$targetName'."
-                }
-                else {
-                    $detalhes = @(
-                        if ($rename.StdErr) { "primeiro=$($rename.ExitCode): $($rename.StdErr.Trim())" } else { "primeiro=$($rename.ExitCode)" }
-                        if ($renameSimple.StdErr) { "segundo=$($renameSimple.ExitCode): $($renameSimple.StdErr.Trim())" } else { "segundo=$($renameSimple.ExitCode)" }
-                    ) -join '; '
-                    Write-Log WARN "Nao foi possivel atualizar o nome do perfil: $detalhes"
-                    $script:result = 'WARN'
-                }
-            }
+        $renamedScheme = @(Get-PowerSchemes | Where-Object { $_.Guid -eq $Guid }) | Select-Object -First 1
+        if (-not $renamedScheme -or $renamedScheme.Name -ine $customName) {
+            $script:result = 'WARN'
+            Write-Log WARN "O Windows nao confirmou o nome definitivo '$customName' no perfil $Guid."
+            Add-CompartDiskFinding `
+                -Severity WARN `
+                -Area 'Desempenho' `
+                -Message 'O perfil de Desempenho Maximo foi localizado, mas o nome final nao foi confirmado.' `
+                -Recommendation 'Verificar permissoes administrativas e executar novamente como administrador.'
+            return
         }
+
+        $Nome = $customName
+        Write-Log OK 'Nome do perfil atualizado e confirmado.'
     }
 
     # -----------------------------------------------------------------------
@@ -1066,16 +882,22 @@ function Set-PowerPlan {
     # -----------------------------------------------------------------------
 
     if ($Guid -eq $GUID_HIGH) {
+
         if (-not (Test-PowerSchemeExists -Guid $GUID_HIGH)) {
+
             $script:result = 'WARN'
+
             Write-Log WARN 'O plano Alto Desempenho nao esta disponivel neste dispositivo.'
+
             Add-CompartDiskFinding `
                 -Severity WARN `
                 -Area 'Desempenho' `
                 -Message 'O plano solicitado nao esta disponivel.' `
                 -Recommendation 'Verificar politicas de energia, configuracao do fabricante e politicas de grupo.'
+
             return
         }
+
         $performanceMode = $true
     }
 
@@ -1084,16 +906,22 @@ function Set-PowerPlan {
     # -----------------------------------------------------------------------
 
     if ($Guid -eq $GUID_BALANCED) {
+
         if (-not (Test-PowerSchemeExists -Guid $GUID_BALANCED)) {
+
             $script:result = 'WARN'
+
             Write-Log WARN 'O plano Equilibrado nao foi localizado neste dispositivo.'
+
             Add-CompartDiskFinding `
                 -Severity WARN `
                 -Area 'Desempenho' `
                 -Message 'O plano Equilibrado nao esta disponivel.' `
                 -Recommendation 'Verificar politicas de energia e esquemas disponiveis no Windows.'
+
             return
         }
+
         $performanceMode = $false
     }
 
@@ -1102,19 +930,63 @@ function Set-PowerPlan {
     # -----------------------------------------------------------------------
 
     if ($performanceMode) {
+
         $settings = @(
-            [pscustomobject]@{ SubGroup='SUB_PROCESSOR'; Setting='PROCTHROTTLEMIN'; Value=100; Description='Estado minimo do processador AC'; Required=$true }
-            [pscustomobject]@{ SubGroup='SUB_PROCESSOR'; Setting='PROCTHROTTLEMAX'; Value=100; Description='Estado maximo do processador AC'; Required=$true }
-            [pscustomobject]@{ SubGroup='SUB_PROCESSOR'; Setting='SYSCOOLPOL'; Value=1; Description='Politica de resfriamento ativo AC'; Required=$true }
-            [pscustomobject]@{ SubGroup='SUB_PCIEXPRESS'; Setting='ASPM'; Value=0; Description='PCI Express Link State Power Management AC'; Required=$false }
-            [pscustomobject]@{ SubGroup='SUB_DISK'; Setting='DISKIDLE'; Value=0; Description='Desligamento do disco por ociosidade AC'; Required=$false }
-            [pscustomobject]@{ SubGroup='SUB_SLEEP'; Setting='STANDBYIDLE'; Value=0; Description='Suspensao por ociosidade AC'; Required=$false }
-            [pscustomobject]@{ SubGroup='SUB_SLEEP'; Setting='HIBERNATEIDLE'; Value=0; Description='Hibernacao por ociosidade AC'; Required=$false }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_PROCESSOR'
+                Setting     = 'PROCTHROTTLEMIN'
+                Value       = 100
+                Description = 'Estado minimo do processador AC'
+                Required    = $true
+            }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_PROCESSOR'
+                Setting     = 'PROCTHROTTLEMAX'
+                Value       = 100
+                Description = 'Estado maximo do processador AC'
+                Required    = $true
+            }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_PROCESSOR'
+                Setting     = 'SYSCOOLPOL'
+                Value       = 1
+                Description = 'Politica de resfriamento ativo AC'
+                Required    = $true
+            }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_PCIEXPRESS'
+                Setting     = 'ASPM'
+                Value       = 0
+                Description = 'PCI Express Link State Power Management AC'
+                Required    = $false
+            }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_DISK'
+                Setting     = 'DISKIDLE'
+                Value       = 0
+                Description = 'Desligamento do disco por ociosidade AC'
+                Required    = $false
+            }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_SLEEP'
+                Setting     = 'STANDBYIDLE'
+                Value       = 0
+                Description = 'Suspensao por ociosidade AC'
+                Required    = $false
+            }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_SLEEP'
+                Setting     = 'HIBERNATEIDLE'
+                Value       = 0
+                Description = 'Hibernacao por ociosidade AC'
+                Required    = $false
+            }
         )
 
-        $requiredConfigOk = $true
+        $configOk = $true
 
         foreach ($setting in $settings) {
+
             $args = @{
                 SchemeGuid  = $Guid
                 SubGroup    = $setting.SubGroup
@@ -1123,52 +995,75 @@ function Set-PowerPlan {
                 Description = $setting.Description
             }
 
-            if ($setting.Required) { $args.Required = $true }
+            if ($setting.Required) {
+                $args.Required = $true
+            }
 
-            $settingOk = Set-PowerSetting @args
-            if (-not $settingOk) {
-                if ($setting.Required) { $requiredConfigOk = $false }
-                else { $script:result = 'WARN' }
+            if (-not (Set-PowerSetting @args)) {
+                $configOk = $false
             }
         }
 
-        if (-not $requiredConfigOk) {
+        if (-not $configOk) {
             $script:result = 'WARN'
+
             Write-Log WARN 'Uma ou mais configuracoes essenciais de desempenho nao puderam ser aplicadas.'
+
             Add-CompartDiskFinding `
                 -Severity WARN `
                 -Area 'Desempenho' `
                 -Message 'O perfil foi criado, mas uma ou mais configuracoes essenciais nao puderam ser aplicadas.' `
                 -Recommendation 'Verificar suporte do hardware, politicas de energia e permissoes administrativas.'
+
+            return
+        }
+
+        # Aplica as alteracoes acumuladas no esquema.
+        $apply = Invoke-NativeCommand `
+            -FilePath $powercfg `
+            -Arguments @('/setactive', $Guid) `
+            -TimeoutSeconds 30
+
+        if ($apply.ExitCode -ne 0) {
+
+            $script:result = 'WARN'
+
+            Write-Log WARN "Nao foi possivel ativar o perfil configurado (codigo $($apply.ExitCode))."
+
+            Add-CompartDiskFinding `
+                -Severity WARN `
+                -Area 'Desempenho' `
+                -Message 'As configuracoes foram preparadas, mas o Windows nao confirmou a ativacao do perfil.' `
+                -Recommendation 'Verificar politicas de energia e permissoes administrativas.'
+
             return
         }
     }
+    else {
 
-    # -----------------------------------------------------------------------
-    # Ativacao
-    # -----------------------------------------------------------------------
+        # -------------------------------------------------------------------
+        # Ativacao normal de Equilibrado/Alto Desempenho
+        # -------------------------------------------------------------------
 
-    $apply = Invoke-NativeCommand `
-        -FilePath $powercfg `
-        -Arguments @('/setactive', $Guid) `
-        -TimeoutSeconds 30
+        $apply = Invoke-NativeCommand `
+            -FilePath $powercfg `
+            -Arguments @('/setactive', $Guid) `
+            -TimeoutSeconds 30
 
-    if ($apply.ExitCode -ne 0) {
-        $script:result = 'WARN'
-        $detalhe = if ($apply.StdErr) { $apply.StdErr.Trim() } else { "codigo=$($apply.ExitCode)" }
-        Write-Log WARN "Nao foi possivel ativar o plano '$Nome': $detalhe"
-        Add-CompartDiskFinding `
-            -Severity WARN `
-            -Area 'Desempenho' `
-            -Message "Falha ao aplicar o plano de energia '$Nome'." `
-            -Recommendation 'Verificar politicas de grupo corporativas e permissoes administrativas.'
-        return
-    }
+        if ($apply.ExitCode -ne 0) {
 
-    # Depois que o alvo esta ativo, duplicatas do proprio modulo podem ser
-    # removidas com seguranca sem correr o risco de excluir o esquema ativo.
-    if ($performanceMode -and $Guid -ne $GUID_HIGH -and $Guid -ne $GUID_BALANCED) {
-        Remove-RedundantPerformanceSchemes -KeepGuid $Guid
+            $script:result = 'WARN'
+
+            Write-Log WARN "Nao foi possivel ativar o plano '$Nome' (codigo $($apply.ExitCode))."
+
+            Add-CompartDiskFinding `
+                -Severity WARN `
+                -Area 'Desempenho' `
+                -Message "Falha ao aplicar o plano de energia '$Nome'." `
+                -Recommendation 'Politicas de grupo corporativas podem bloquear a alteracao do plano.'
+
+            return
+        }
     }
 
     # -----------------------------------------------------------------------
@@ -1180,29 +1075,36 @@ function Set-PowerPlan {
         -Arguments @('/getactivescheme') `
         -TimeoutSeconds 20
 
-    if ($atual.ExitCode -ne 0) {
-        $script:result = 'WARN'
-        $detalhe = if ($atual.StdErr) { $atual.StdErr.Trim() } else { "codigo=$($atual.ExitCode)" }
-        Write-Log WARN "Nao foi possivel confirmar o esquema ativo '$Nome': $detalhe"
-        return
-    }
-
-    $activeText = @($atual.StdOut, $atual.StdErr) -join "`n"
     $activeGuid = $null
+    $activeText = @(
+        $atual.StdOut
+        $atual.StdErr
+    ) -join "`n"
 
-    if ($activeText -match '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b') {
+    if (
+        $activeText -match '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+    ) {
         $activeGuid = $Matches[0].ToLowerInvariant()
     }
 
-    if ([string]::IsNullOrWhiteSpace($activeGuid) -or $activeGuid -ne $Guid.ToLowerInvariant()) {
+    if (
+        [string]::IsNullOrWhiteSpace($activeGuid) -or
+        $activeGuid -ne $Guid.ToLowerInvariant()
+    ) {
         $script:result = 'WARN'
+
         Write-Log WARN "O Windows nao confirmou o plano '$Nome' como esquema ativo."
+
         Add-CompartDiskFinding `
             -Severity WARN `
             -Area 'Desempenho' `
             -Message 'O comando de ativacao foi executado, mas o esquema ativo nao corresponde ao plano solicitado.' `
             -Recommendation 'Verificar os esquemas de energia ativos e possiveis politicas de grupo.'
-        if ($atual.StdOut) { Write-Output $atual.StdOut.Trim() }
+
+        if ($atual.StdOut) {
+            Write-Output $atual.StdOut.Trim()
+        }
+
         return
     }
 
@@ -1211,19 +1113,63 @@ function Set-PowerPlan {
     # -----------------------------------------------------------------------
 
     if ($performanceMode) {
+
         $validation = @(
-            [pscustomobject]@{ SubGroup='SUB_PROCESSOR'; Setting='PROCTHROTTLEMIN'; Value=100; Description='Estado minimo do processador AC'; Required=$true }
-            [pscustomobject]@{ SubGroup='SUB_PROCESSOR'; Setting='PROCTHROTTLEMAX'; Value=100; Description='Estado maximo do processador AC'; Required=$true }
-            [pscustomobject]@{ SubGroup='SUB_PROCESSOR'; Setting='SYSCOOLPOL'; Value=1; Description='Politica de resfriamento ativo AC'; Required=$true }
-            [pscustomobject]@{ SubGroup='SUB_PCIEXPRESS'; Setting='ASPM'; Value=0; Description='PCI Express Link State Power Management AC'; Required=$false }
-            [pscustomobject]@{ SubGroup='SUB_DISK'; Setting='DISKIDLE'; Value=0; Description='Desligamento do disco por ociosidade AC'; Required=$false }
-            [pscustomobject]@{ SubGroup='SUB_SLEEP'; Setting='STANDBYIDLE'; Value=0; Description='Suspensao por ociosidade AC'; Required=$false }
-            [pscustomobject]@{ SubGroup='SUB_SLEEP'; Setting='HIBERNATEIDLE'; Value=0; Description='Hibernacao por ociosidade AC'; Required=$false }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_PROCESSOR'
+                Setting     = 'PROCTHROTTLEMIN'
+                Value       = 100
+                Description = 'Estado minimo do processador AC'
+                Required    = $true
+            }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_PROCESSOR'
+                Setting     = 'PROCTHROTTLEMAX'
+                Value       = 100
+                Description = 'Estado maximo do processador AC'
+                Required    = $true
+            }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_PROCESSOR'
+                Setting     = 'SYSCOOLPOL'
+                Value       = 1
+                Description = 'Politica de resfriamento ativo AC'
+                Required    = $true
+            }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_PCIEXPRESS'
+                Setting     = 'ASPM'
+                Value       = 0
+                Description = 'PCI Express Link State Power Management AC'
+                Required    = $false
+            }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_DISK'
+                Setting     = 'DISKIDLE'
+                Value       = 0
+                Description = 'Desligamento do disco por ociosidade AC'
+                Required    = $false
+            }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_SLEEP'
+                Setting     = 'STANDBYIDLE'
+                Value       = 0
+                Description = 'Suspensao por ociosidade AC'
+                Required    = $false
+            }
+            [pscustomobject]@{
+                SubGroup    = 'SUB_SLEEP'
+                Setting     = 'HIBERNATEIDLE'
+                Value       = 0
+                Description = 'Hibernacao por ociosidade AC'
+                Required    = $false
+            }
         )
 
         $validationOk = $true
 
         foreach ($setting in $validation) {
+
             $args = @{
                 SchemeGuid    = $Guid
                 SubGroup      = $setting.SubGroup
@@ -1232,19 +1178,47 @@ function Set-PowerPlan {
                 Description   = $setting.Description
             }
 
-            if ($setting.Required) { $args.Required = $true }
-            if (-not (Test-PowerSetting @args)) { $validationOk = $false }
+            if ($setting.Required) {
+                $args.Required = $true
+            }
+
+            if (-not (Test-PowerSetting @args)) {
+                $validationOk = $false
+            }
         }
 
         if (-not $validationOk) {
+
             $script:result = 'WARN'
+
             Write-Log WARN 'O perfil foi ativado, mas a validacao das configuracoes de desempenho falhou.'
+
             Add-CompartDiskFinding `
                 -Severity WARN `
                 -Area 'Desempenho' `
                 -Message 'O Windows ativou o perfil, mas nem todas as configuracoes essenciais foram confirmadas.' `
                 -Recommendation 'Consultar as opcoes avancadas do plano e verificar politicas de energia.'
+
             return
+        }
+    }
+
+    # -----------------------------------------------------------------------
+    # Limpeza final dos esquemas de energia
+    # -----------------------------------------------------------------------
+    # Executada somente no modo Desempenho Maximo. O perfil ja foi ativado e
+    # validado, portanto todos os demais esquemas podem ser removidos sem
+    # tentar excluir o esquema ativo.
+    if ($requestedGuid -eq $GUID_ULTIMATE) {
+        $cleanupOk = Remove-OtherPowerSchemes -KeepGuid $Guid
+
+        if (-not $cleanupOk) {
+            $script:result = 'WARN'
+            Add-CompartDiskFinding `
+                -Severity WARN `
+                -Area 'Desempenho' `
+                -Message 'O perfil de Desempenho Maximo foi aplicado, mas nem todos os outros esquemas puderam ser removidos.' `
+                -Recommendation 'Executar novamente a opcao de Desempenho Maximo como administrador e verificar politicas de energia.'
         }
     }
 
@@ -1269,13 +1243,56 @@ function Set-PowerPlan {
             -Recommendation 'Em notebooks, planos de alto desempenho podem reduzir a autonomia da bateria.'
     }
 
+    # -----------------------------------------------------------------------
+    # Efeitos visuais
+    # -----------------------------------------------------------------------
+
     $visualOk = Set-PerformanceVisualEffects -PerformanceMode $performanceMode
+
     if (-not $visualOk) {
         $script:result = 'WARN'
+
         Write-Log WARN 'O plano de energia foi aplicado, mas os efeitos visuais nao puderam ser ajustados.'
     }
 
-    if ($atual.StdOut) { Write-Output $atual.StdOut.Trim() }
+    # -----------------------------------------------------------------------
+    # Exibe o esquema efetivamente ativo
+    # -----------------------------------------------------------------------
+
+    if ($atual.StdOut) {
+        Write-Output $atual.StdOut.Trim()
+    }
+}
+ado para desempenho maximo em AC." `
+            -Recommendation 'Use Equilibrado quando a prioridade for menor consumo ou maior autonomia.'
+    }
+    else {
+        Add-CompartDiskFinding `
+            -Severity OK `
+            -Area 'Desempenho' `
+            -Message "Plano de energia definido como '$Nome'." `
+            -Recommendation 'Em notebooks, planos de alto desempenho podem reduzir a autonomia da bateria.'
+    }
+
+    # -----------------------------------------------------------------------
+    # Efeitos visuais
+    # -----------------------------------------------------------------------
+
+    $visualOk = Set-PerformanceVisualEffects -PerformanceMode $performanceMode
+
+    if (-not $visualOk) {
+        $script:result = 'WARN'
+
+        Write-Log WARN 'O plano de energia foi aplicado, mas os efeitos visuais nao puderam ser ajustados.'
+    }
+
+    # -----------------------------------------------------------------------
+    # Exibe o esquema efetivamente ativo
+    # -----------------------------------------------------------------------
+
+    if ($atual.StdOut) {
+        Write-Output $atual.StdOut.Trim()
+    }
 }
 
 # ---------------------------------------------------------------------------
