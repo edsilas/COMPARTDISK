@@ -735,7 +735,7 @@ function Set-PowerPlan {
     # -----------------------------------------------------------------------
     # Desempenho Maximo real
     #
-    # O modulo cria/reutiliza um esquema proprio do CompartDisk.
+    # O modulo cria/reutiliza um esquema dedicado para desempenho maximo.
     # As alteracoes sao feitas somente no perfil AC (tomada).
     # O plano Equilibrado e os demais esquemas existentes nao sao modificados.
     #
@@ -753,7 +753,7 @@ function Set-PowerPlan {
 
     if ($requestedGuid -eq $GUID_ULTIMATE) {
 
-        $customName = 'CompartDisk - Desempenho Maximo'
+        $customName = 'Desempenho M' + [char]0x00E1 + 'ximo'
         $existingCustomGuid = Get-PowerSchemeByName -Name $customName
 
         if ($existingCustomGuid) {
@@ -886,6 +886,7 @@ function Set-PowerPlan {
         }
         else {
             $Nome = $customName
+            Clear-PowerSchemeCache
             Write-Log OK 'Nome do perfil atualizado.'
         }
     }
@@ -1142,27 +1143,19 @@ function Set-PowerPlan {
     # Validacao do nome efetivamente registrado no esquema ativo
     # -----------------------------------------------------------------------
     if ($performanceMode) {
-        $listResult = Invoke-NativeCommand -FilePath $powercfg -Arguments @('/list') -TimeoutSeconds 30
-        $schemesText = @($listResult.StdOut, $listResult.StdErr) -join "`n"
-        $nomeAtivo = $null
+        # O cache e invalidado apos /changename. Consulte novamente o esquema
+        # pelo nome canonico para confirmar o estado real sem depender do
+        # formato localizado da saida textual do powercfg /list.
+        Clear-PowerSchemeCache
+        $registeredGuid = Get-PowerSchemeByName -Name $Nome
 
-        foreach ($linha in ($schemesText -split "`r?`n")) {
-            if ($linha -match '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b') {
-                $linhaGuid = $Matches[0].ToLowerInvariant()
-                if ($linhaGuid -eq $Guid.ToLowerInvariant() -and $linha -match '\(([^()]*)\)\s*$') {
-                    $nomeAtivo = $Matches[1].Trim()
-                    break
-                }
-            }
-        }
-
-        if ([string]::IsNullOrWhiteSpace($nomeAtivo) -or $nomeAtivo -ine $Nome) {
+        if ([string]::IsNullOrWhiteSpace($registeredGuid) -or $registeredGuid -ne $Guid.ToLowerInvariant()) {
             Set-PerformanceResult -Status WARN
-            Write-Log WARN "O esquema $Guid esta ativo, mas o nome registrado e '$nomeAtivo' em vez de '$Nome'."
+            Write-Log WARN "O esquema $Guid esta ativo, mas o nome '$Nome' nao foi confirmado para esse GUID."
             Add-CompartDiskFinding `
                 -Severity WARN `
                 -Area 'Desempenho' `
-                -Message 'O perfil foi ativado, mas o nome registrado pelo Windows nao corresponde ao nome esperado.' `
+                -Message 'O perfil foi ativado, mas o nome canonico nao foi confirmado pelo Windows.' `
                 -Recommendation 'Verificar a execucao do powercfg /changename e as permissoes administrativas.'
             return
         }
