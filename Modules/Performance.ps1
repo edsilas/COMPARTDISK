@@ -119,7 +119,7 @@ function Get-PowerSchemes {
     }
 
     $guidRegex = '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
-    $schemes = [System.Collections.Generic.List[object]]::new()
+    $schemes = [System.Collections.Generic.List[psobject]]::new()
 
     foreach ($linha in ($texto -split "`r?`n")) {
         $guidMatch = [regex]::Match($linha, $guidRegex)
@@ -128,7 +128,8 @@ function Get-PowerSchemes {
         }
 
         $guid = $guidMatch.Value.ToLowerInvariant()
-        $nameMatch = [regex]::Match($linha, '\(([^()]*)\)\s*\*?\s*$')
+        # Ajustado para permitir parênteses aninhados nos nomes dos planos de energia
+        $nameMatch = [regex]::Match($linha, '\((.*)\)\s*\*?\s*$')
         $name = if ($nameMatch.Success) { $nameMatch.Groups[1].Value.Trim() } else { $null }
         $isActive = $linha -match '\*\s*$'
 
@@ -168,7 +169,7 @@ function Get-InteractiveUserName {
     param()
 
     try {
-        $computer = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+        $computer = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop | Select-Object -First 1
 
         if ($computer.UserName) {
             return [string]$computer.UserName
@@ -300,7 +301,7 @@ function Show-Analysis {
     try {
         $c = Get-CompartDiskCim `
             -Class Win32_PerfFormattedData_PerfOS_Processor `
-            -Filter "Name='_Total'"
+            -Filter "Name='_Total'" | Select-Object -First 1
 
         if ($c) {
             $cpu = "$($c.PercentProcessorTime)%"
@@ -326,7 +327,8 @@ function Show-Analysis {
     }
 
     try {
-        $pares['Processos ativos'] = @(Get-Process -ErrorAction Stop).Count
+        # Evita exception abortiva caso existam processos sem permissão de acesso
+        $pares['Processos ativos'] = @(Get-Process -ErrorAction SilentlyContinue).Count
     }
     catch {
         Set-PerformanceResult -Status WARN
@@ -517,11 +519,11 @@ function Set-PowerSetting {
     try {
         $r = Invoke-NativeCommand `
             -FilePath $powercfg `
-            -Arguments @('/setacvalueindex', $SchemeGuid, $SubGroup, $Setting, $Value) `
+            -Arguments @('/setacvalueindex', $SchemeGuid, $SubGroup, $Setting, [string]$Value) `
             -TimeoutSeconds 30
 
         if ($r.ExitCode -ne 0) {
-            if ($Required) {
+            if ($Required.IsPresent) {
                 Write-Log ERR "Falha ao configurar '$Description' (codigo $($r.ExitCode))."
                 return $false
             }
@@ -535,7 +537,7 @@ function Set-PowerSetting {
         return $true
     }
     catch {
-        if ($Required) {
+        if ($Required.IsPresent) {
             Write-Log ERR "Falha ao configurar '$Description': $($_.Exception.Message)"
             return $false
         }
@@ -571,10 +573,10 @@ function Test-PowerSetting {
         # O valor AC armazenado pelo Windows e independente do idioma da saida
         # do powercfg. O caminho por GUID e estavel por esquema/subgrupo/configuracao.
         $subGroupGuids = @{
-            'SUB_PROCESSOR'   = '54533251-82be-4824-96c1-47b60b740d00'
-            'SUB_PCIEXPRESS'  = '501a4d13-42af-4429-9fd1-a8218c268e20'
-            'SUB_DISK'        = '0012ee47-9041-4b5d-9b77-535fba8b1442'
-            'SUB_SLEEP'       = '238c9fa8-0aad-41ed-83f4-97be242c8f20'
+            'SUB_PROCESSOR'  = '54533251-82be-4824-96c1-47b60b740d00'
+            'SUB_PCIEXPRESS' = '501a4d13-42af-4429-9fd1-a8218c268e20'
+            'SUB_DISK'       = '0012ee47-9041-4b5d-9b77-535fba8b1442'
+            'SUB_SLEEP'      = '238c9fa8-0aad-41ed-83f4-97be242c8f20'
         }
 
         $settingGuids = @{
@@ -616,7 +618,7 @@ function Test-PowerSetting {
             ) -join "`n"
 
             if ($r.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($texto)) {
-                if ($Required) {
+                if ($Required.IsPresent) {
                     Write-Log ERR "Nao foi possivel validar '$Description' (codigo $($r.ExitCode))."
                     return $false
                 }
@@ -642,7 +644,7 @@ function Test-PowerSetting {
             )
 
             if ($indices.Count -lt 2) {
-                if ($Required) {
+                if ($Required.IsPresent) {
                     Write-Log ERR "Valor AC de '$Description' nao foi localizado na consulta."
                     return $false
                 }
@@ -655,7 +657,7 @@ function Test-PowerSetting {
         }
 
         if ($actual -ne $ExpectedValue) {
-            if ($Required) {
+            if ($Required.IsPresent) {
                 Write-Log ERR "Validacao falhou: $Description esperado=$ExpectedValue atual=$actual."
                 return $false
             }
@@ -668,7 +670,7 @@ function Test-PowerSetting {
         return $true
     }
     catch {
-        if ($Required) {
+        if ($Required.IsPresent) {
             Write-Log ERR "Falha na validacao de '$Description': $($_.Exception.Message)"
             return $false
         }
