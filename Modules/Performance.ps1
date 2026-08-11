@@ -130,7 +130,7 @@ function Get-PowerSchemes {
         $guid = $guidMatch.Value.ToLowerInvariant()
         $nameMatch = [regex]::Match($linha, '\(([^()]*)\)\s*$')
         $name = if ($nameMatch.Success) { $nameMatch.Groups[1].Value.Trim() } else { $null }
-        $isActive = $linha -match '(?i)^\s*Power Scheme GUID' -and $linha -match '\*\s*$'
+        $isActive = $linha -match '\*\s*$'
 
         if (-not ($schemes.Guid -contains $guid)) {
             $schemes.Add([pscustomobject]@{
@@ -578,43 +578,58 @@ function Test-PowerSetting {
             $r.StdErr
         ) -join "`n"
 
-        if ($r.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($texto)) {
+        if ($r.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($r.StdOut)) {
             if ($Required) {
-                Write-Log ERR "Nao foi possivel validar '$Description'."
-                return $false
+                Write-Log ERR "Nao foi possivel validar '$Description' (codigo $($r.ExitCode))."
+            }
+            else {
+                Set-PerformanceResult -Status WARN
+                Write-Log WARN "Nao foi possivel validar '$Description' neste dispositivo (codigo $($r.ExitCode))."
             }
 
-            Set-PerformanceResult -Status WARN
-            Write-Log WARN "Nao foi possivel validar '$Description' neste dispositivo."
             return $false
         }
 
-        $m = [regex]::Match(
-            $texto,
-            '(?im)^\s*Current AC Power Setting Index:\s*0x([0-9a-f]+)'
+        # A saida do powercfg /query e localizada pelo idioma do Windows.
+        # Portanto, nao devemos procurar literalmente por:
+        # "Current AC Power Setting Index".
+        #
+        # Para uma consulta de uma unica configuracao, os valores hexadecimais
+        # finais correspondem ao indice AC e ao indice DC. O penultimo valor
+        # hexadecimal e, portanto, o indice AC. Essa estrategia preserva a
+        # validacao sem depender do idioma da instalacao do Windows.
+        $hexValues = @(
+            [regex]::Matches(
+                [string]$r.StdOut,
+                '(?i)0x([0-9a-f]+)'
+            ) |
+            ForEach-Object { $_.Groups[1].Value }
         )
 
-        if (-not $m.Success) {
+        if ($hexValues.Count -lt 2) {
             if ($Required) {
-                Write-Log ERR "Valor AC de '$Description' nao foi localizado na consulta."
-                return $false
+                Write-Log ERR "Indice AC de '$Description' nao foi localizado na consulta do powercfg."
+            }
+            else {
+                Set-PerformanceResult -Status WARN
+                Write-Log WARN "Indice AC de '$Description' nao foi localizado na consulta do powercfg."
             }
 
-            Set-PerformanceResult -Status WARN
-            Write-Log WARN "Valor AC de '$Description' nao foi localizado na consulta."
             return $false
         }
 
-        $actual = [Convert]::ToInt32($m.Groups[1].Value, 16)
+        $acHex = $hexValues[$hexValues.Count - 2]
+        $actual = [Convert]::ToInt32($acHex, 16)
 
         if ($actual -ne $ExpectedValue) {
             if ($Required) {
                 Write-Log ERR "Validacao falhou: $Description esperado=$ExpectedValue atual=$actual."
-                return $false
+            }
+            else {
+                Set-PerformanceResult -Status WARN
+                Write-Log WARN "Validacao parcial: $Description esperado=$ExpectedValue atual=$actual."
             }
 
-            Set-PerformanceResult -Status WARN
-            Write-Log WARN "Validacao parcial: $Description esperado=$ExpectedValue atual=$actual."
             return $false
         }
 
@@ -623,12 +638,13 @@ function Test-PowerSetting {
     }
     catch {
         if ($Required) {
-            Write-Log ERR "Falha na validacao de '$Description': $($_.Exception.Message)"
-            return $false
+            Write-Log ERR "Falha na validacao de '$Description': $($_.Exception.Message)" -ErrorRecord $_
+        }
+        else {
+            Set-PerformanceResult -Status WARN
+            Write-Log WARN "Falha ao validar '$Description': $($_.Exception.Message)" -ErrorRecord $_
         }
 
-        Set-PerformanceResult -Status WARN
-        Write-Log WARN "Falha ao validar '$Description': $($_.Exception.Message)"
         return $false
     }
 }
@@ -1151,7 +1167,7 @@ function Set-PowerPlan {
             return
         }
 
-        if ($optionalConfigIssue -or $optionalValidationIssue) {
+        if ($optionalValidationIssue -or $optionalConfigIssue) {
             Set-PerformanceResult -Status WARN
             Write-Log WARN 'Uma ou mais configuracoes opcionais de desempenho nao puderam ser aplicadas ou confirmadas.'
         }
