@@ -8,7 +8,7 @@ Analyze | Ultimate | Balanced | Startup | Processes | Services
 Objetivo:
 Diagnostico e gerenciamento de desempenho do Windows.
 Nao realiza overclock nem altera parametros de hardware.
-Implementa otimizacao avancada de CPU (PPM/Boost), Game Mode e Background Apps.
+Implementa otimizacao avancada de CPU, Energia, Game Mode e Background Apps.
 #>
 
 [CmdletBinding()]
@@ -516,6 +516,8 @@ function Test-PowerSetting {
             'SUB_PCIEXPRESS' = '501a4d13-42af-4429-9fd1-a8218c268e20'
             'SUB_DISK'       = '0012ee47-9041-4b5d-9b77-535fba8b1442'
             'SUB_SLEEP'      = '238c9fa8-0aad-41ed-83f4-97be242c8f20'
+            'SUB_USB'        = '2a737441-1930-4402-8d77-b2bebba308a3'
+            'SUB_WIFI'       = '19cbb8fa-5279-450e-9fac-8a3d5fedd0c1'
         }
 
         $settingGuids = @{
@@ -528,6 +530,8 @@ function Test-PowerSetting {
             'DISKIDLE'        = '6738e2c4-e8a5-4a42-b16a-e040e769756e'
             'STANDBYIDLE'     = '29f6c1db-86da-48c5-9fdb-f2b67b1f44da'
             'HIBERNATEIDLE'   = '9d7815a6-7ee4-497e-8888-515a05f02364'
+            'USBSUSP'         = '48e6b7a6-50f5-4782-a5d4-53bb8f07e226'
+            'WIFIPOWER'       = '12bbebe6-58d6-4636-95bb-3217ef867c1a'
         }
 
         $actual = $null
@@ -730,7 +734,7 @@ function Set-PowerPlan {
             [pscustomobject]@{ SubGroup = 'SUB_PROCESSOR'; Setting = 'PROCTHROTTLEMAX'; Value = 100; Description = 'Estado maximo do processador AC'; Required = $true }
             [pscustomobject]@{ SubGroup = 'SUB_PROCESSOR'; Setting = 'SYSCOOLPOL';      Value = 1;   Description = 'Politica de resfriamento ativo AC'; Required = $true }
             
-            # Parametros Avancados de Processor Power Management (Ignorados de forma segura se a BIOS/Firmware nao suportar)
+            # Parametros Avancados de PPM (Ignorados de forma segura se a BIOS/Firmware nao suportar)
             [pscustomobject]@{ SubGroup = 'SUB_PROCESSOR'; Setting = 'PERFBOOSTMODE';   Value = 2;   Description = 'Modo de Impulso Agressivo (Boost) AC'; Required = $false }
             [pscustomobject]@{ SubGroup = 'SUB_PROCESSOR'; Setting = 'CPMINCORES';      Value = 100; Description = 'Core Parking - 100% Nucleos Ativos AC'; Required = $false }
             
@@ -738,6 +742,10 @@ function Set-PowerPlan {
             [pscustomobject]@{ SubGroup = 'SUB_DISK';       Setting = 'DISKIDLE';      Value = 0;   Description = 'Desligamento do disco por ociosidade AC'; Required = $false }
             [pscustomobject]@{ SubGroup = 'SUB_SLEEP';      Setting = 'STANDBYIDLE';   Value = 0;   Description = 'Suspensao por ociosidade AC'; Required = $false }
             [pscustomobject]@{ SubGroup = 'SUB_SLEEP';      Setting = 'HIBERNATEIDLE'; Value = 0;   Description = 'Hibernacao por ociosidade AC'; Required = $false }
+            
+            # Parametros USB e Conectividade
+            [pscustomobject]@{ SubGroup = 'SUB_USB';        Setting = 'USBSUSP';       Value = 0;   Description = 'Suspensao Seletiva USB AC (Disabled)'; Required = $false }
+            [pscustomobject]@{ SubGroup = 'SUB_WIFI';       Setting = 'WIFIPOWER';     Value = 0;   Description = 'Desempenho Maximo do Adaptador Sem Fio AC'; Required = $false }
         )
 
         $configOk = $true
@@ -834,7 +842,7 @@ function Set-PowerPlan {
 
         if ($optionalValidationIssue -or $optionalConfigIssue) {
             Set-PerformanceResult -Status WARN
-            Write-Log WARN 'Configuracoes de hardware opcionais (PPM) ignoradas pelo Firmware do dispositivo. (Esperado em alguns firmwares).'
+            Write-Log WARN 'Configuracoes de hardware opcionais ignoradas pelo Firmware do dispositivo. (Esperado em alguns firmwares).'
         }
     }
 
@@ -844,7 +852,7 @@ function Set-PowerPlan {
 
     if ($script:result -eq 'OK') {
         if ($performanceMode) {
-            Add-CompartDiskFinding -Severity OK -Area 'Desempenho' -Message "Perfil '$Nome' (Maximum PPM Config) ativado." -Recommendation 'Use Equilibrado para rollback e reducao de consumo.'
+            Add-CompartDiskFinding -Severity OK -Area 'Desempenho' -Message "Perfil '$Nome' (Maximum Performance Config) ativado." -Recommendation 'Use Equilibrado para rollback e reducao de consumo.'
         } else {
             Add-CompartDiskFinding -Severity OK -Area 'Desempenho' -Message "Plano restaurado para '$Nome'." -Recommendation 'Rollback executado com sucesso.'
         }
