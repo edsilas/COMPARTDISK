@@ -128,7 +128,7 @@ function Get-PowerSchemes {
         }
 
         $guid = $guidMatch.Value.ToLowerInvariant()
-        $nameMatch = [regex]::Match($linha, '\(([^()]*)\)\s*$')
+        $nameMatch = [regex]::Match($linha, '\(([^()]*)\)\s*\*?\s*$')
         $name = if ($nameMatch.Success) { $nameMatch.Groups[1].Value.Trim() } else { $null }
         $isActive = $linha -match '\*\s*$'
 
