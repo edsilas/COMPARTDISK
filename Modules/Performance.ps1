@@ -555,96 +555,38 @@ function Get-PowerSettingCurrentAcValue {
     ) -join "`n"
 
     if ($r.ExitCode -ne 0) {
-        throw "powercfg /query falhou com codigo $($r.ExitCode). $($r.StdErr)"
+        $detalhe = if ($r.StdErr) { $r.StdErr.Trim() } else { 'sem mensagem de erro' }
+        throw "powercfg /query falhou com codigo $($r.ExitCode): $detalhe"
     }
 
     if ([string]::IsNullOrWhiteSpace($texto)) {
-        throw 'powercfg /query retornou uma resposta vazia.'
+        throw "powercfg /query retornou uma resposta vazia para '$Setting'."
     }
 
-    # Resolve os GUIDs reais sem depender do idioma da saida.
-    $guidRegex = '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
-    $guids = @(
-        [regex]::Matches($texto, $guidRegex) |
-            ForEach-Object { $_.Value.ToLowerInvariant() } |
-            Select-Object -Unique
+    # A saida do powercfg e localizada. Portanto, nao dependemos de textos
+    # como 'Current AC Power Setting Index'. A estrutura do /query, porem,
+    # termina com os dois indices atuais: AC e DC.
+    #
+    # Importante: usamos somente valores no formato hexadecimal 0x..., sem
+    # depender de GUIDs, nomes traduzidos ou da ordem de GUIDs no texto.
+    $hexMatches = [regex]::Matches(
+        $texto,
+        '(?i)0x[0-9a-f]+'
     )
 
-    $schemeNormalized = $SchemeGuid.ToLowerInvariant()
-    $subGroupNormalized = $SubGroup.ToLowerInvariant()
-
-    $settingGuid = $null
-    $subGroupGuid = $null
-
-    if ($subGroupNormalized -match '^[0-9a-f-]{36}$') {
-        $subGroupGuid = $subGroupNormalized
-    }
-    else {
-        $subGroupGuid = $guids |
-            Where-Object { $_ -ne $schemeNormalized } |
-            Select-Object -First 1
+    if ($hexMatches.Count -lt 2) {
+        throw "Indices AC/DC de '$Setting' nao foram localizados na consulta do powercfg."
     }
 
-    if ($guids.Count -gt 0) {
-        $settingGuid = $guids |
-            Where-Object {
-                $_ -ne $schemeNormalized -and
-                $_ -ne $subGroupGuid
-            } |
-            Select-Object -First 1
+    $acToken = $hexMatches[$hexMatches.Count - 2].Value
+
+    try {
+        $hexValue = $acToken.Substring(2)
+        return [Convert]::ToInt64($hexValue, 16)
     }
-
-    # Fonte primaria de validacao: os indices armazenados pelo Windows.
-    # Isso elimina dependencia de idioma e de formato textual do powercfg.
-    if ($subGroupGuid -and $settingGuid) {
-        $registryPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes\$schemeNormalized\$subGroupGuid\$settingGuid"
-
-        try {
-            $property = Get-ItemProperty `
-                -LiteralPath $registryPath `
-                -Name 'ACSettingIndex' `
-                -ErrorAction Stop
-
-            if ($null -ne $property.ACSettingIndex) {
-                return [int64]$property.ACSettingIndex
-            }
-        }
-        catch {
-            # O fallback abaixo usa a saida do powercfg. A falha de leitura
-            # do registro nao deve ocultar uma validacao que o powercfg consiga fornecer.
-            Write-Log INFO "Registro nao permitiu validar AC para '$Setting'; usando fallback do powercfg."
-        }
+    catch {
+        throw "Indice AC de '$Setting' possui formato invalido: $acToken."
     }
-
-    # Fallback independente de idioma: procura primeiro por uma linha
-    # explicitamente associada a AC/CA e a um valor hexadecimal.
-    $acPatterns = @(
-        '(?im)^\s*.*\bAC\b.*?\b0x([0-9a-f]+)\s*$',
-        '(?im)^\s*.*\bCA\b.*?\b0x([0-9a-f]+)\s*$',
-        '(?im)^\s*.*(?:Current|Atual|Actuel|Aktuell).*?(?:AC|CA).*?0x([0-9a-f]+)\s*$'
-    )
-
-    foreach ($pattern in $acPatterns) {
-        $match = [regex]::Match($texto, $pattern)
-
-        if ($match.Success) {
-            return [Convert]::ToInt64($match.Groups[1].Value, 16)
-        }
-    }
-
-    # Ultimo fallback: quando a saida do powercfg mantem os dois indices
-    # atuais no final do bloco, usa o par final somente se houver pelo menos
-    # dois valores hexadecimais. Nunca assume um valor unico.
-    $hexValues = @(
-        [regex]::Matches($texto, '(?i)\b0x([0-9a-f]+)\b') |
-            ForEach-Object { [Convert]::ToInt64($_.Groups[1].Value, 16) }
-    )
-
-    if ($hexValues.Count -ge 2) {
-        return $hexValues[$hexValues.Count - 2]
-    }
-
-    throw "Indice AC de '$Setting' nao foi localizado na consulta do powercfg nem no registro."
 }
 
 function Test-PowerSetting {
@@ -697,6 +639,81 @@ function Test-PowerSetting {
         }
 
         return $false
+    }
+}
+
+function Invoke-PowerCfgChangeName {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$SchemeGuid,
+
+        [Parameter(Mandatory)]
+        [string]$Name,
+
+        [string]$Description
+    )
+
+    # O Core pode encapsular argumentos nativos de forma diferente entre
+    # versoes do modulo. O /changename aceita nomes com espacos, portanto esta
+    # operacao usa ProcessStartInfo diretamente para garantir que o nome seja
+    # transmitido como um unico argumento.
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $powercfg
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+
+    $quote = {
+        param([string]$Value)
+
+        if ($null -eq $Value) {
+            return '""'
+        }
+
+        # Escapamento compatível com a regra de argumentos da API do Windows.
+        $escaped = $Value -replace '(\\*)"', '$1$1\\"'
+        $escaped = $escaped -replace '(\\+)$', '$1$1'
+        return '"' + $escaped + '"'
+    }
+
+    $arguments = @(
+        (& $quote '/changename')
+        (& $quote $SchemeGuid)
+        (& $quote $Name)
+    )
+
+    if (-not [string]::IsNullOrEmpty($Description)) {
+        $arguments += (& $quote $Description)
+    }
+
+    $psi.Arguments = $arguments -join ' '
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $psi
+
+    try {
+        if (-not $process.Start()) {
+            throw 'Nao foi possivel iniciar o powercfg para alterar o nome do perfil.'
+        }
+
+        if (-not $process.WaitForExit(30000)) {
+            try { $process.Kill() } catch { }
+            throw 'Tempo limite excedido ao atualizar o nome do perfil de energia.'
+        }
+
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut   = $stdout
+            StdErr   = $stderr
+        }
+    }
+    finally {
+        $process.Dispose()
     }
 }
 
@@ -854,20 +871,27 @@ function Set-PowerPlan {
         }
 
         # Garante nome consistente e deixa claro que o perfil e do CompartDisk.
-        $rename = Invoke-NativeCommand `
-            -FilePath $powercfg `
-            -Arguments @('/changename', $Guid, $customName, 'Perfil de energia otimizado pelo CompartDisk para desempenho maximo em AC.') `
-            -TimeoutSeconds 30
+        $descricaoPerfil = 'Perfil de energia otimizado pelo CompartDisk para desempenho maximo em AC.'
+        $rename = Invoke-PowerCfgChangeName `
+            -SchemeGuid $Guid `
+            -Name $customName `
+            -Description $descricaoPerfil
 
-        if ($rename.ExitCode -ne 0) {
-            # Alguns ambientes recusam a descricao, mas aceitam a alteracao do nome.
-            $renameSimple = Invoke-NativeCommand `
-                -FilePath $powercfg `
-                -Arguments @('/changename', $Guid, $customName) `
-                -TimeoutSeconds 30
+        if ($rename.ExitCode -eq 0) {
+            $Nome = $customName
+            Clear-PowerSchemeCache
+            Write-Log OK "Nome e descricao do perfil atualizados."
+        }
+        else {
+            # Alguns ambientes/versoes do powercfg recusam a descricao.
+            # Nesse caso, tenta somente o nome, sem recriar o perfil.
+            $renameSimple = Invoke-PowerCfgChangeName `
+                -SchemeGuid $Guid `
+                -Name $customName
 
             if ($renameSimple.ExitCode -eq 0) {
                 $Nome = $customName
+                Clear-PowerSchemeCache
                 Write-Log OK "Nome do perfil atualizado: $customName."
             }
             else {
@@ -882,19 +906,15 @@ function Set-PowerPlan {
                     Write-Log OK "Nome do perfil confirmado como '$customName'."
                 }
                 else {
-                    $detalhe = @(
-                        "primeiro=$($rename.ExitCode)"
-                        "segundo=$($renameSimple.ExitCode)"
-                        if ($renameSimple.StdErr) { "stderr=$($renameSimple.StdErr.Trim())" }
-                    ) -join '; '
+                    $erros = @()
+                    if ($rename.StdErr) { $erros += "primeiro=$($rename.ExitCode): $($rename.StdErr.Trim())" }
+                    else { $erros += "primeiro=$($rename.ExitCode)" }
+                    if ($renameSimple.StdErr) { $erros += "segundo=$($renameSimple.ExitCode): $($renameSimple.StdErr.Trim())" }
+                    else { $erros += "segundo=$($renameSimple.ExitCode)" }
 
-                    Write-Log WARN "Nao foi possivel atualizar o nome/descricao do perfil ($detalhe)."
+                    Write-Log WARN "Nao foi possivel atualizar o nome/descricao do perfil ($($erros -join '; '))."
                 }
             }
-        }
-        else {
-            $Nome = $customName
-            Clear-PowerSchemeCache
         }
     }
 
