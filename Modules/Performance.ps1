@@ -1263,37 +1263,6 @@ function Set-PowerPlan {
         Write-Output $atual.StdOut.Trim()
     }
 }
-ado para desempenho maximo em AC." `
-            -Recommendation 'Use Equilibrado quando a prioridade for menor consumo ou maior autonomia.'
-    }
-    else {
-        Add-CompartDiskFinding `
-            -Severity OK `
-            -Area 'Desempenho' `
-            -Message "Plano de energia definido como '$Nome'." `
-            -Recommendation 'Em notebooks, planos de alto desempenho podem reduzir a autonomia da bateria.'
-    }
-
-    # -----------------------------------------------------------------------
-    # Efeitos visuais
-    # -----------------------------------------------------------------------
-
-    $visualOk = Set-PerformanceVisualEffects -PerformanceMode $performanceMode
-
-    if (-not $visualOk) {
-        $script:result = 'WARN'
-
-        Write-Log WARN 'O plano de energia foi aplicado, mas os efeitos visuais nao puderam ser ajustados.'
-    }
-
-    # -----------------------------------------------------------------------
-    # Exibe o esquema efetivamente ativo
-    # -----------------------------------------------------------------------
-
-    if ($atual.StdOut) {
-        Write-Output $atual.StdOut.Trim()
-    }
-}
 
 # ---------------------------------------------------------------------------
 # Execucao
