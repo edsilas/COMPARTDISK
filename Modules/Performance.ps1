@@ -1,4 +1,4 @@
-<#
+﻿<#
  COMPARTDISK 1.3.1 - Performance.ps1
  Desenvolvido por Edsilas
 
@@ -283,7 +283,18 @@ function Invoke-PerfPowercfg {
         return $r
     }
     try {
-        $raw = Invoke-NativeCommand -FilePath $script:PowercfgPath -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds
+        # EVIDENCIA: no log de 13/08/2026 o '/changename' falhou com
+        # "Parametros invalidos" porque Invoke-NativeCommand une os argumentos
+        # com espaco: o nome do plano ("COMPARTDISK Desempenho Maximo") chegava
+        # ao powercfg como tres parametros separados. Argumentos que contem
+        # espaco passam a ser aspeados aqui, no envelope, e nao em cada chamada.
+        $argsSeguros = @()
+        foreach ($a in @($Arguments)) {
+            $t = "$a"
+            if ($t -match '\s' -and -not $t.StartsWith('"')) { $argsSeguros += ('"' + $t + '"') }
+            else { $argsSeguros += $t }
+        }
+        $raw = Invoke-NativeCommand -FilePath $script:PowercfgPath -Arguments $argsSeguros -TimeoutSeconds $TimeoutSeconds
         if ($null -eq $raw) {
             $r.Error = 'Invoke-NativeCommand retornou nulo (possivel timeout de ' + $TimeoutSeconds + 's)'
             return $r
@@ -439,7 +450,16 @@ function Set-PerfActiveScheme {
         Write-Log WARN "Comando aceito, mas o plano ativo continua '$($depois.Nome)' ($($depois.Guid)) em vez de '$Nome'."
         return $false
     }
-    if (-not $Silent) { Write-Log OK "Plano de energia ativo confirmado: $Nome ($alvo)." }
+    # O nome exibido vem da releitura, nunca do parametro: confirmar GUID nao
+    # autoriza afirmar um nome que o sistema pode nao ter aceitado.
+    $nomeConfirmado = "$($depois.Nome)"
+    if ([string]::IsNullOrWhiteSpace($nomeConfirmado)) { $nomeConfirmado = $Nome }
+    if (-not $Silent) {
+        Write-Log OK "Plano de energia ativo confirmado: $nomeConfirmado ($alvo)."
+        if ($nomeConfirmado -ne $Nome) {
+            Write-Log INFO "O plano ativo e o esperado pelo GUID, mas responde pelo nome '$nomeConfirmado' e nao '$Nome'."
+        }
+    }
     return $true
 }
 
@@ -521,7 +541,22 @@ function Resolve-PerfPerformanceScheme {
         Write-Log WARN "Nao foi possivel renomear o plano criado. Detalhe: $(Get-PerfCommandDetail $c)"
         Set-PerfResult 'WARN'
     }
-    return [pscustomobject]@{ Guid = $novo.Guid; Nome = $MARKER_NAME; Origem = 'criado' }
+
+    # EVIDENCIA: no log de 13/08/2026 o rename falhou e o modulo ainda assim
+    # devolveu Nome = MARKER_NAME, o que produziu a linha "Plano de energia
+    # ativo confirmado: COMPARTDISK Desempenho Maximo" para um plano que na
+    # verdade continuava com o nome herdado da duplicacao. O nome devolvido
+    # passa a ser SEMPRE o lido do sistema.
+    $nomeReal = $MARKER_NAME
+    $lista = Get-PerfPowerSchemes
+    if ($lista) {
+        $achado = @($lista | Where-Object { $_.Guid -eq $novo.Guid }) | Select-Object -First 1
+        if ($achado -and -not [string]::IsNullOrWhiteSpace("$($achado.Nome)")) { $nomeReal = "$($achado.Nome)" }
+    }
+    if ($nomeReal -ne $MARKER_NAME) {
+        Write-Log INFO "O plano criado responde pelo nome real '$nomeReal' (GUID $($novo.Guid))."
+    }
+    return [pscustomobject]@{ Guid = $novo.Guid; Nome = $nomeReal; Origem = 'criado' }
 }
 
 # ============================================================================
