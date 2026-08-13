@@ -1784,6 +1784,18 @@ function Add-AuditClosingSections {
 
     # ---- resumo final ----
     $motivos = @($script:ResultReasons | Select-Object -First 8)
+
+    # Os motivos so chegavam ao console e a secao do relatorio: o arquivo de log
+    # registrava apenas "Resultado=WARN", sem nada que o justificasse. Write-AuditLog
+    # e o unico emissor que alcanca o log e ignora -Quiet.
+    if ($script:Result -ne 'OK') {
+        $total = @($script:ResultReasons).Count
+        Write-AuditLog 'WARN' ("Resultado {0} baseado em {1} ocorrencia(s) registrada(s) durante a auditoria:" -f $script:Result, $total)
+        foreach ($m in $motivos) { Write-AuditLog 'WARN' ("  - {0}" -f $m) }
+        if ($total -gt $motivos.Count) {
+            Write-AuditLog 'INFO' ("  ... e mais {0} ocorrencia(s); a lista completa esta na secao 'Resumo da auditoria' do relatorio." -f ($total - $motivos.Count))
+        }
+    }
     $resumo = [ordered]@{
         'Resultado global'  = $script:Result
         'Achados criticos'  = $script:Findings['CRIT']
