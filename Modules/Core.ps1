@@ -913,7 +913,31 @@ function Set-CompartDiskRegistryValue {
             return $true
         }
         New-ItemProperty -LiteralPath $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
-        Write-Log OK "Registro: $Path\$Name  ($old -> $Value)" -NoConsole
+
+        # EVIDENCIA: no log de 13/08/2026 o modulo Telemetry registrou varias
+        # gravacoes como OK sem nenhuma releitura. "New-ItemProperty nao lancou"
+        # nao prova que o valor ficou gravado: diretiva, ACL ou redirecionamento
+        # de colmeia podem aceitar a chamada e manter o valor anterior.
+        $confirmado = $false
+        $lido = '<nao lido>'
+        try {
+            $lido = Get-ItemPropertyValue -LiteralPath $Path -Name $Name -ErrorAction Stop
+            if ($Type -in @('Binary', 'MultiString')) {
+                # Tipos compostos nao comparam de forma confiavel como texto:
+                # confirma-se a presenca do valor, nao a igualdade literal.
+                $confirmado = $true
+            } else {
+                $confirmado = ("$lido" -eq "$Value")
+            }
+        } catch {
+            Write-Log DEBUG "Releitura de $Path\$Name falhou: $($_.Exception.Message)" -NoConsole
+        }
+
+        if (-not $confirmado) {
+            Write-Log WARN "Registro gravado sem confirmacao: $Path\$Name esperava '$Value' e a releitura devolveu '$lido'."
+            return $false
+        }
+        Write-Log OK "Registro: $Path\$Name  ($old -> $Value) (confirmado por releitura)" -NoConsole
         return $true
     } catch {
         Write-Log WARN "Falha ao gravar $Path\$Name" -ErrorRecord $_
