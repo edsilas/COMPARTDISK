@@ -1397,13 +1397,29 @@ function Invoke-DebloatAppx {
         return $saida
     }
 
-    $confirmados = 0; $falhas = 0; $indeterminados = 0; $erros = New-Object System.Collections.ArrayList
+    $confirmados = 0; $falhas = 0; $indeterminados = 0; $naoRemoviveis = 0
+    $erros = New-Object System.Collections.ArrayList
 
     foreach ($p in $removiveis) {
         $pfn = "$($p.PackageFullName)"
+        # Pacote cujo payload ja nao esta no disco continua registrado, mas o
+        # Remove-AppxPackage nao consegue removê-lo: falha com 0x80070002. O
+        # dado ja e coletado acima (ManifestoPresente) e passa a ser usado como
+        # pre-condicao, em vez de servir apenas para descrever a restauracao.
+        $semPayload = $false
+        $det = @($detalhePacotes | Where-Object { "$($_.PackageFullName)" -eq $pfn }) | Select-Object -First 1
+        if ($det -and -not $det.ManifestoPresente) { $semPayload = $true }
+
         Write-Log DEBUG "Removendo Appx $pfn" -NoConsole
         $r = Invoke-SafeCommand { Remove-AppxPackage -Package $pfn -AllUsers -ErrorAction Stop } -Activity "Remover $($p.Name)" -Silent
-        if (-not $r.Success) {
+
+        # 0x80070002 nao e condicao de escopo nem de permissao: repetir no
+        # escopo do usuario falharia de forma identica.
+        $determinista = $false
+        if (-not $r.Success -and $r.Error) {
+            if ($semPayload -or "$($r.Error.Exception.Message)" -match '0x80070002') { $determinista = $true }
+        }
+        if (-not $r.Success -and -not $determinista) {
             # -AllUsers nao existe/nao e permitido em toda edicao: tenta no
             # escopo do usuario atual antes de declarar falha.
             $r = Invoke-SafeCommand { Remove-AppxPackage -Package $pfn -ErrorAction Stop } -Activity "Remover $($p.Name) (usuario atual)" -Silent
@@ -1414,6 +1430,10 @@ function Invoke-DebloatAppx {
         } elseif ($null -eq $ausente) {
             $indeterminados++
             [void]$erros.Add("$($p.Name): remocao nao pode ser verificada")
+        } elseif ($determinista) {
+            $falhas++
+            $naoRemoviveis++
+            [void]$erros.Add("$($p.Name): nao removivel por Remove-AppxPackage - os arquivos do pacote nao estao no disco e apenas o registro permanece")
         } else {
             $falhas++
             $msg = 'ainda presente apos a remocao'
@@ -1458,7 +1478,9 @@ function Invoke-DebloatAppx {
         ProvisionamentosRemovidos = $provRemovidos
         Falhas                   = $falhas + $provFalhas
         Indeterminados           = $indeterminados
+        NaoRemoviveis            = $naoRemoviveis
     }
+    $sufixoNR = $(if ($naoRemoviveis -gt 0) { ", $naoRemoviveis sem arquivos no disco" } else { '' })
     $totalPedido = $removiveis.Count + $prov.Count
     $totalOk     = $confirmados + $provRemovidos
 
@@ -1467,11 +1489,11 @@ function Invoke-DebloatAppx {
         $saida.Detalhe   = "$confirmados pacote(s) e $provRemovidos provisionamento(s) removidos e confirmados"
     } elseif ($totalOk -gt 0) {
         $saida.Resultado = 'Parcial'
-        $saida.Detalhe   = "$totalOk de $totalPedido confirmados; $($falhas + $provFalhas) falha(s), $indeterminados nao verificado(s)"
+        $saida.Detalhe   = "$totalOk de $totalPedido confirmados; $($falhas + $provFalhas) falha(s)$sufixoNR, $indeterminados nao verificado(s)"
         $saida.Erro      = ($erros -join ' | ')
     } else {
         $saida.Resultado = 'Falhou'
-        $saida.Detalhe   = "Nenhuma instancia confirmada como removida de $totalPedido"
+        $saida.Detalhe   = "Nenhuma instancia confirmada como removida de $totalPedido$sufixoNR"
         $saida.Erro      = ($erros -join ' | ')
     }
     return $saida
