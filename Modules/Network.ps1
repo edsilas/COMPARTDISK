@@ -2,279 +2,1778 @@
  COMPARTDISK 1.3.1 - Network.ps1
  Desenvolvido por Edsilas
  Acoes: Info | Reset | Hosts | Firewall | Test | Proxy | Wifi
+
+ ESCOPO E SEGURANCA
+ Info, Test, Proxy e Wifi sao ESTRITAMENTE somente leitura.
+ Reset, Hosts e Firewall modificam o sistema e seguem sempre:
+ pre-condicao -> backup validado (quando aplicavel) -> execucao -> releitura
+ -> resultado real. "O comando terminou" nunca e tratado como "deu certo".
+
+ O modulo NAO altera DNS, NAO altera MTU, NAO remove rotas, NAO desabilita
+ nem reinicia adaptadores e NAO recupera credenciais de Wi-Fi ou de proxy.
+
+ Compativel com Windows 10 / Windows 11, Windows PowerShell 5.1 e
+ PowerShell 7.x. Somente componentes nativos do Windows.
 #>
 [CmdletBinding()]
 param(
     [ValidateSet('Info', 'Reset', 'Hosts', 'Firewall', 'Test', 'Proxy', 'Wifi')]
     [string]$Action = 'Info',
-    [switch]$Quiet
+    [switch]$Quiet,
+    # O reset do proxy WinHTTP destroi configuracao corporativa valida e nao
+    # pertence ao reset de pilha. Passou a ser decisao explicita do operador.
+    [switch]$ResetProxy,
+    # Permite as etapas que redefinem a configuracao IP mesmo quando ha
+    # interface com endereco estatico (que seria perdido).
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Core.ps1')
 
-$result = 'OK'
-$netsh  = Join-Path $env:SystemRoot 'System32\netsh.exe'
-$ipcfg  = Join-Path $env:SystemRoot 'System32\ipconfig.exe'
-$arp    = Join-Path $env:SystemRoot 'System32\arp.exe'
+$netsh = Join-Path $env:SystemRoot 'System32\netsh.exe'
+$ipcfg = Join-Path $env:SystemRoot 'System32\ipconfig.exe'
+$arp   = Join-Path $env:SystemRoot 'System32\arp.exe'
 
-function Show-NetworkInfo {
-    $adapters = Get-CompartDiskNetworkInfo
-    if ($adapters.Count -eq 0) {
-        Write-Log WARN 'Nenhum adaptador de rede ativo localizado.'
-        Add-CompartDiskFinding -Severity WARN -Area 'Rede' -Message 'Nenhum adaptador ativo.' -Recommendation 'Verificar drivers de rede e cabos.'
-    } else {
-        foreach ($a in $adapters) {
-            Write-Color ''
-            Write-Color ("  [{0}]  {1}" -f $a.Estado, $a.Interface) -Color White
-            Write-CompartDiskKeyValue 'Descricao'  $a.Descricao
-            Write-CompartDiskKeyValue 'MAC'        $a.MAC
-            Write-CompartDiskKeyValue 'Velocidade' $a.Velocidade
-            Write-CompartDiskKeyValue 'IPv4'       $a.IPv4
-            Write-CompartDiskKeyValue 'IPv6'       $a.IPv6
-            Write-CompartDiskKeyValue 'Gateway'    $a.Gateway
-            Write-CompartDiskKeyValue 'DNS'        $a.DNS
-            Write-CompartDiskKeyValue 'Perfil'     $a.Perfil
-        }
-        Add-CompartDiskSection -Title 'Adaptadores de rede' -Status OK -Rows $adapters -Summary "$($adapters.Count) interface(s)"
-    }
+# ==============================================================================
+# ESTADO GLOBAL
+# Fonte unica e monotonica: OK -> WARN -> ERROR. Uma etapa WARN nunca
+# desaparece no finally.
+# ==============================================================================
+$script:result     = 'OK'
+$script:ResultRank = @{ 'OK' = 0; 'WARN' = 1; 'ERROR' = 2 }
 
-    # DHCP / MTU / rotas
-    if (Test-CompartDiskCommand 'Get-NetIPInterface') {
-        $iface = Invoke-SafeCommand { Get-NetIPInterface -ErrorAction Stop |
-            Where-Object { $_.ConnectionState -eq 'Connected' } |
-            Select-Object InterfaceAlias, AddressFamily, NlMtu, Dhcp, ConnectionState } -Activity 'Get-NetIPInterface'
-        if ($iface.Success -and $iface.Value) {
-            $rows = @($iface.Value | ForEach-Object {
-                [pscustomobject]@{ Interface = $_.InterfaceAlias; Familia = "$($_.AddressFamily)"; MTU = $_.NlMtu; DHCP = "$($_.Dhcp)" }
-            })
-            Add-CompartDiskSection -Title 'MTU e DHCP' -Status INFO -Rows $rows
-            Write-Color ''
-            $rows | Format-Table -AutoSize | Out-String -Width 160 | Write-Output
-        }
-    }
-
-    if (Test-CompartDiskCommand 'Get-NetRoute') {
-        $rt = Invoke-SafeCommand { Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop |
-            Select-Object InterfaceAlias, NextHop, RouteMetric } -Activity 'Get-NetRoute'
-        if ($rt.Success -and $rt.Value) {
-            Add-CompartDiskSection -Title 'Rotas padrao' -Status INFO -Rows @($rt.Value)
-        }
-    }
-
-    # Compartilhamentos
-    $shares = Get-CompartDiskCim -Class Win32_Share
-    if ($shares) {
-        $rows = @($shares | ForEach-Object { [pscustomobject]@{ Nome = $_.Name; Caminho = $_.Path; Descricao = $_.Description } })
-        Add-CompartDiskSection -Title 'Compartilhamentos' -Status INFO -Rows $rows
-    }
-
-    # Firewall
-    $fw = Get-CompartDiskFirewallInfo
-    if ($fw.Count -gt 0) {
-        Add-CompartDiskSection -Title 'Firewall do Windows' -Status OK -Rows $fw
-        Write-Color ''
-        $fw | Format-Table -AutoSize | Out-String -Width 160 | Write-Output
-        foreach ($p in $fw) {
-            if ("$($p.Habilitado)" -eq 'False') {
-                Add-CompartDiskFinding -Severity CRIT -Area 'Firewall' -Message "Perfil '$($p.Perfil)' esta desabilitado." -Recommendation 'Reativar o firewall no perfil correspondente.'
-            }
-        }
-    }
-    Write-Log OK 'Diagnostico de rede coletado.'
-}
-
-function Test-NetworkConnectivity {
-    Write-Log INFO 'Testando conectividade (ICMP, DNS e HTTP)...'
-    $net = Test-Internet
-    Write-CompartDiskKeyValue 'Online'      $(if ($net.Online) { 'Sim' } else { 'NAO' }) -Color $(if ($net.Online) { 'Green' } else { 'Red' })
-    Write-CompartDiskKeyValue 'Metodo'      $net.Method
-    Write-CompartDiskKeyValue 'Alvo'        $net.Target
-    Write-CompartDiskKeyValue 'Latencia'    $(if ($net.Latency) { "$($net.Latency) ms" } else { 'n/d' })
-    Write-CompartDiskKeyValue 'Resolucao DNS' $(if ($net.DnsOk) { 'OK' } else { 'FALHA' })
-
-    Add-CompartDiskSection -Title 'Conectividade' -Status $(if ($net.Online) { 'OK' } else { 'CRIT' }) -Pairs ([ordered]@{
-        'Online'   = $net.Online; 'Metodo' = $net.Method; 'Alvo' = $net.Target
-        'Latencia' = $net.Latency; 'DNS'   = $net.DnsOk
-    })
-
-    if (-not $net.Online) {
-        Add-CompartDiskFinding -Severity CRIT -Area 'Rede' -Message 'Sem conectividade com a internet.' -Recommendation 'Executar o reset completo de rede e validar gateway/DNS.'
-        $script:result = 'WARN'
-    } elseif (-not $net.DnsOk) {
-        Add-CompartDiskFinding -Severity WARN -Area 'DNS' -Message 'Resolucao de nomes falhou apesar da conectividade IP.' -Recommendation 'Limpar cache DNS e conferir servidores DNS configurados.'
-        $script:result = 'WARN'
-    } else {
-        Add-CompartDiskFinding -Severity OK -Area 'Rede' -Message 'Conectividade e resolucao de nomes operacionais.'
-    }
-
-    # Teste de portas essenciais
-    if (Test-CompartDiskCommand 'Test-NetConnection') {
-        foreach ($alvo in @(@{H = 'windowsupdate.microsoft.com'; P = 443 }, @{H = 'login.live.com'; P = 443 })) {
-            $r = Invoke-SafeCommand { Test-NetConnection -ComputerName $alvo.H -Port $alvo.P -WarningAction SilentlyContinue -ErrorAction Stop } -Activity "TCP $($alvo.H):$($alvo.P)" -Silent
-            if ($r.Success) {
-                $ok = $r.Value.TcpTestSucceeded
-                Write-CompartDiskKeyValue "TCP $($alvo.H):$($alvo.P)" $(if ($ok) { 'Acessivel' } else { 'Bloqueado' }) -Color $(if ($ok) { 'Green' } else { 'Yellow' })
-                if (-not $ok) {
-                    Add-CompartDiskFinding -Severity WARN -Area 'Rede' -Message "Porta $($alvo.P) para $($alvo.H) inacessivel." -Recommendation 'Verificar proxy corporativo ou regras de firewall de saida.'
-                }
-            }
-        }
-    }
-}
-
-function Reset-NetworkStack {
-    Write-Log INFO 'Resetando pilha TCP/IP, Winsock, DNS e ARP...'
-    $passos = @(
-        @{ N = 'Liberar concessao DHCP'; F = $ipcfg; A = @('/release') }
-        @{ N = 'Limpar cache DNS';       F = $ipcfg; A = @('/flushdns') }
-        @{ N = 'Renovar concessao DHCP'; F = $ipcfg; A = @('/renew') }
-        @{ N = 'Reset Winsock';          F = $netsh; A = @('winsock', 'reset') }
-        @{ N = 'Reset TCP/IP';           F = $netsh; A = @('int', 'ip', 'reset');   Nota = 'Codigo 1 e esperado: a pilha foi redefinida e o reinicio aplica a mudanca.' }
-        @{ N = 'Reset IPv6';             F = $netsh; A = @('int', 'ipv6', 'reset'); Nota = 'Codigo 1 e esperado: a pilha foi redefinida e o reinicio aplica a mudanca.' }
-        @{ N = 'Limpar tabela ARP';      F = $arp;   A = @('-d', '*') }
-        @{ N = 'Reset Proxy WinHTTP';    F = $netsh; A = @('winhttp', 'reset', 'proxy') }
-        @{ N = 'Registrar DNS';          F = $ipcfg; A = @('/registerdns') }
+function Set-NetResult {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position = 0)][ValidateSet('OK', 'WARN', 'ERROR')][string]$Level,
+        [Parameter(Position = 1)][string]$Reason = ''
     )
-
-    $falhas = 0
-    foreach ($p in $passos) {
-        if (-not (Test-Path -LiteralPath $p.F)) {
-            Write-Log WARN "Executavel ausente para '$($p.N)'."
-            $falhas++
-            continue
-        }
-        $r = Invoke-SafeCommand { Invoke-NativeCommand -FilePath $p.F -Arguments $p.A -TimeoutSeconds 120 } -Activity $p.N
-        if ($r.Success -and $r.Value.ExitCode -eq 0) {
-            Write-Log OK $p.N
-        } else {
-            # ipconfig /release retorna != 0 em maquinas com IP fixo: nao e falha real
-            $codigo = if ($r.Value) { $r.Value.ExitCode } else { 'n/d' }
-            $texto  = "{0} retornou codigo {1}." -f $p.N, $codigo
-            if ($p.Nota) { $texto = "$texto $($p.Nota)" }
-            Write-Log WARN $texto
-            $falhas++
-        }
-    }
-
-    if ($falhas -gt 0) {
-        $script:result = 'WARN'
-        Add-CompartDiskFinding -Severity WARN -Area 'Rede' -Message "$falhas etapa(s) do reset retornaram codigo diferente de zero." -Recommendation 'Normal em maquinas com IP fixo. Reiniciar e revalidar.'
-    } else {
-        Add-CompartDiskFinding -Severity OK -Area 'Rede' -Message 'Pilha de rede redefinida com sucesso.' -Recommendation 'Reiniciar o computador para aplicar integralmente.'
-    }
-    Write-Log OK 'Reset de rede concluido. Reinicio recomendado.'
-}
-
-function Restore-HostsFile {
-    $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
-    if (Test-Path -LiteralPath $hosts) {
-        # Backup em OutDir, como todos os demais do projeto, e nao dentro de System32 -
-        # onde acumulava um arquivo por sessao sem limpeza. E o exito e medido pelo
-        # arquivo produzido: a sobrescrita seguinte e irreversivel e nao pode ser
-        # precedida por um "backup criado" que nunca existiu.
-        $bkp = Join-Path $Global:CompartDisk.OutDir "hosts_anterior_$($Global:CompartDisk.Session).txt"
-        $b = Invoke-SafeCommand { Copy-Item -LiteralPath $hosts -Destination $bkp -Force -ErrorAction Stop } -Activity 'Backup do arquivo hosts'
-        if ($b.Success -and (Test-Path -LiteralPath $bkp)) {
-            Write-Log OK "Backup criado: $bkp"
-        } else {
-            Write-Log WARN 'O backup do arquivo hosts falhou; o conteudo anterior nao ficara preservado.'
-            Add-CompartDiskFinding -Severity WARN -Area 'Rede' -Message 'Backup do arquivo hosts nao pode ser gravado.' -Recommendation 'Definir COMPARTDISK_LOGDIR para um diretorio gravavel antes de repetir.'
-            $script:result = 'WARN'
-        }
-    }
-
-    $conteudo = @(
-        '# Copyright (c) 1993-2009 Microsoft Corp.'
-        '#'
-        '# Arquivo HOSTS padrao restaurado pela ferramenta COMPARTDISK.'
-        '# Cada entrada deve permanecer em uma linha individual.'
-        '#'
-        '#	127.0.0.1       localhost'
-        '#	::1             localhost'
-    )
-    Invoke-SafeCommand {
-        [System.IO.File]::WriteAllLines($hosts, $conteudo, (New-Object System.Text.UTF8Encoding($false)))
-    } -Activity 'Gravar hosts padrao' -Critical | Out-Null
-
-    Invoke-SafeCommand { Invoke-NativeCommand -FilePath $ipcfg -Arguments @('/flushdns') -TimeoutSeconds 30 } -Activity 'Flush DNS' | Out-Null
-    Write-Log OK 'Arquivo hosts restaurado ao padrao Microsoft e cache DNS limpo.'
-    Add-CompartDiskFinding -Severity OK -Area 'Rede' -Message 'Arquivo hosts restaurado ao padrao.'
-}
-
-function Reset-FirewallPolicy {
-    Write-Log INFO 'Exportando politica atual antes do reset...'
-    $bkp = Join-Path $Global:CompartDisk.OutDir "Firewall_Backup_$($Global:CompartDisk.Session).wfw"
-    Invoke-SafeCommand { Invoke-NativeCommand -FilePath $netsh -Arguments @('advfirewall', 'export', "`"$bkp`"") -TimeoutSeconds 60 } -Activity 'Exportar firewall' | Out-Null
-    if (Test-Path -LiteralPath $bkp) { Write-Log OK "Backup da politica: $bkp" }
-
-    $r = Invoke-SafeCommand { Invoke-NativeCommand -FilePath $netsh -Arguments @('advfirewall', 'reset') -TimeoutSeconds 60 } -Activity 'Reset firewall' -Critical
-    if ($r.Success -and $r.Value.ExitCode -eq 0) {
-        Write-Log OK 'Regras do firewall restauradas ao padrao.'
-        Add-CompartDiskFinding -Severity OK -Area 'Firewall' -Message 'Politica de firewall restaurada ao padrao.' -Recommendation "Backup disponivel em $bkp"
-    } else {
-        $script:result = 'WARN'
-        Write-Log WARN 'O reset do firewall retornou codigo diferente de zero.'
-    }
-
-    if (Test-CompartDiskCommand 'Set-NetFirewallProfile') {
-        Invoke-SafeCommand { Set-NetFirewallProfile -Profile Domain, Public, Private -Enabled True -ErrorAction Stop } -Activity 'Reativar perfis do firewall' | Out-Null
-        Write-Log OK 'Perfis Domain/Public/Private habilitados.'
+    if ($script:ResultRank[$Level] -gt $script:ResultRank[$script:result]) {
+        $script:result = $Level
+        Write-Log DEBUG ("Resultado do modulo elevado para {0}{1}" -f $Level, $(if ($Reason) { ": $Reason" } else { '' })) -NoConsole
     }
 }
 
-function Show-ProxyConfig {
-    $reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
-    $pairs = [ordered]@{
-        'Proxy habilitado' = $(if ((Get-CompartDiskRegistryValue $reg 'ProxyEnable' 0) -eq 1) { 'Sim' } else { 'Nao' })
-        'Servidor proxy'   = (Get-CompartDiskRegistryValue $reg 'ProxyServer' 'nenhum')
-        'Excecoes'         = (Get-CompartDiskRegistryValue $reg 'ProxyOverride' 'nenhuma')
-        'Script automatico'= (Get-CompartDiskRegistryValue $reg 'AutoConfigURL' 'nenhum')
-    }
-    $r = Invoke-SafeCommand { Invoke-NativeCommand -FilePath $netsh -Arguments @('winhttp', 'show', 'proxy') -TimeoutSeconds 20 } -Activity 'WinHTTP proxy'
-    if ($r.Success) { $pairs['WinHTTP'] = ($r.Value.StdOut -replace '\s+', ' ').Trim() }
-
-    foreach ($k in $pairs.Keys) { Write-CompartDiskKeyValue $k $pairs[$k] }
-    Add-CompartDiskSection -Title 'Configuracao de proxy' -Status INFO -Pairs $pairs
-    Write-Log OK 'Configuracao de proxy coletada.'
+function Get-NetSectionStatus {
+    param([Parameter(Mandatory)][ValidateSet('OK', 'WARN', 'ERROR')][string]$Level)
+    switch ($Level) { 'OK' { return 'OK' } 'WARN' { return 'WARN' } default { return 'CRIT' } }
 }
 
-function Show-WifiInfo {
-    $r = Invoke-SafeCommand { Invoke-NativeCommand -FilePath $netsh -Arguments @('wlan', 'show', 'interfaces') -TimeoutSeconds 30 } -Activity 'netsh wlan'
-    if (-not $r.Success -or -not $r.Value.StdOut -or $r.Value.ExitCode -ne 0) {
-        Write-Log WARN 'Nenhuma interface Wi-Fi disponivel ou servico WLAN inativo.'
-        return
-    }
-    Write-Output $r.Value.StdOut
-    Add-CompartDiskSection -Title 'Wi-Fi' -Status INFO -Summary 'Saida de netsh wlan show interfaces' `
-        -Pairs ([ordered]@{ 'Detalhes' = (($r.Value.StdOut -split '\r?\n' | Where-Object { $_ -match ':' } | Select-Object -First 20) -join ' | ') })
+function Get-NetFindingSeverity {
+    param([Parameter(Mandatory)][ValidateSet('OK', 'WARN', 'ERROR')][string]$Level)
+    switch ($Level) { 'OK' { return 'OK' } 'WARN' { return 'WARN' } default { return 'CRIT' } }
+}
 
-    $p = Invoke-SafeCommand { Invoke-NativeCommand -FilePath $netsh -Arguments @('wlan', 'show', 'profiles') -TimeoutSeconds 30 } -Activity 'Perfis Wi-Fi'
-    if ($p.Success) { Write-Output $p.Value.StdOut }
-    Write-Log OK 'Diagnostico Wi-Fi coletado.'
+function Get-NetWorstSeverity {
+    param([string[]]$Severities)
+    $rank = @{ 'OK' = 0; 'INFO' = 1; 'WARN' = 2; 'CRIT' = 3 }
+    $pior = 'OK'
+    foreach ($s in $Severities) {
+        if (-not $rank.ContainsKey("$s")) { continue }
+        if ($rank["$s"] -gt $rank[$pior]) { $pior = "$s" }
+    }
+    return $pior
+}
+
+function ConvertTo-NetArray {
+    <# Funcao que devolve @() entrega $null ao chamador, e @($null) tem Count 1.
+       Ponto unico de conversao de retorno para colecao. #>
+    param([AllowNull()][object]$Value)
+    if ($null -eq $Value) { return @() }
+    return @(@($Value) | Where-Object { $null -ne $_ })
+}
+
+function Get-NetSafeText {
+    param([AllowNull()][object]$Value, [string]$Default = 'n/d')
+    if ($null -eq $Value) { return $Default }
+    $t = "$Value".Trim()
+    if ([string]::IsNullOrWhiteSpace($t)) { return $Default }
+    return $t
 }
 
 # ------------------------------------------------------------------------------
+# Registro de etapas: cada operacao tem resultado proprio e verificavel.
+# ------------------------------------------------------------------------------
+$script:Steps = New-Object System.Collections.ArrayList
+
+function Add-NetStep {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Etapa,
+        [Parameter(Mandatory)][string]$Operacao,
+        [string]$Alvo = '',
+        [Parameter(Mandatory)][ValidateSet('OK', 'WARN', 'ERROR', 'SKIPPED', 'NOT_SUPPORTED', 'INFO')][string]$Resultado,
+        [string]$Detalhe = ''
+    )
+    [void]$script:Steps.Add([pscustomobject]@{
+        Etapa = $Etapa; Operacao = $Operacao; Alvo = $Alvo; Resultado = $Resultado; Detalhe = $Detalhe
+    })
+}
+
+# ------------------------------------------------------------------------------
+# -Quiet reduz SOMENTE a saida interativa. Logs, findings, sections, relatorio
+# e resultado permanecem inalterados.
+# ------------------------------------------------------------------------------
+function Write-NetTable {
+    [CmdletBinding()]
+    param([object[]]$Rows, [string[]]$Property)
+    if ($script:Quiet) { return }
+    $dados = ConvertTo-NetArray $Rows
+    if ($dados.Count -eq 0) { return }
+    try {
+        if ($Property) { $texto = $dados | Select-Object -Property $Property | Format-Table -AutoSize | Out-String -Width 200 }
+        else           { $texto = $dados | Format-Table -AutoSize | Out-String -Width 200 }
+        foreach ($linha in ($texto -split "`r?`n")) {
+            if ($linha.Trim()) { Write-Color ("  " + $linha) }
+        }
+    } catch {
+        Write-Log DEBUG "Falha ao formatar tabela: $($_.Exception.Message)" -NoConsole
+    }
+}
+
+function Write-NetLine {
+    param([string]$Text, $Color = 'Gray')
+    if ($script:Quiet) { return }
+    Write-Color $Text -Color $Color
+}
+
+function Write-NetPair {
+    param([string]$Key, [AllowNull()][object]$Value, $Color = 'Gray')
+    if ($script:Quiet) { return }
+    Write-CompartDiskKeyValue $Key $Value -Color $Color
+}
+
+# ==============================================================================
+# EXECUCAO DE COMANDOS EXTERNOS
+# Cada comando declara os codigos de retorno aceitaveis: nao existe regra
+# global "ExitCode != 0 = falha" nem "!= 0 = esperado".
+# ==============================================================================
+function Invoke-NetCommand {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [int]$TimeoutSeconds = 120,
+        [int[]]$AcceptableExitCodes = @(0),
+        [Parameter(Mandatory)][string]$Activity
+    )
+    $out = [pscustomobject]@{
+        Executado = $false; Ok = $false; ExitCode = $null
+        StdOut = ''; StdErr = ''; Timeout = $false; Detalhe = ''
+    }
+    if (-not (Test-Path -LiteralPath $FilePath)) {
+        $out.Detalhe = ('Executavel ausente: {0}' -f $FilePath)
+        return $out
+    }
+    $r = Invoke-SafeCommand {
+        Invoke-NativeCommand -FilePath $FilePath -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds
+    } -Activity $Activity -Silent
+
+    if (-not $r.Success -or $null -eq $r.Value) {
+        $msg = $(if ($r.Error) { $r.Error.Exception.Message } else { 'falha nao identificada' })
+        $out.Timeout = ($msg -match 'Tempo limite excedido')
+        $out.Detalhe = $msg
+        $out.Executado = $out.Timeout
+        return $out
+    }
+    $out.Executado = $true
+    $out.ExitCode  = [int]$r.Value.ExitCode
+    $out.StdOut    = "$($r.Value.StdOut)"
+    $out.StdErr    = "$($r.Value.StdErr)".Trim()
+    $out.Ok        = (@($AcceptableExitCodes) -contains $out.ExitCode)
+    if (-not $out.Ok) {
+        $out.Detalhe = ('codigo {0} fora dos aceitaveis ({1})' -f $out.ExitCode, (@($AcceptableExitCodes) -join ', '))
+        if ($out.StdErr) { $out.Detalhe += ('; stderr: {0}' -f (($out.StdErr -split "`r?`n" | Select-Object -First 1))) }
+    }
+    return $out
+}
+
+# ==============================================================================
+# CONTEXTO DE EXECUCAO
+# ==============================================================================
+function Test-NetRemoteSession {
+    <# Um reset de rede pode derrubar a propria sessao que executa o script. #>
+    [CmdletBinding()] param()
+    $out = [pscustomobject]@{ Remota = $false; Tipo = 'local' }
+    try {
+        if ("$env:SESSIONNAME" -match '^RDP-') { $out.Remota = $true; $out.Tipo = 'sessao RDP' ; return $out }
+        if ($null -ne $PSSenderInfo)           { $out.Remota = $true; $out.Tipo = 'sessao WinRM'; return $out }
+        if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('SSH_CLIENT'))) {
+            $out.Remota = $true; $out.Tipo = 'sessao SSH'; return $out
+        }
+    } catch {
+        Write-Log DEBUG "Deteccao de sessao remota indisponivel: $($_.Exception.Message)" -NoConsole
+    }
+    return $out
+}
+
+function Test-NetDomainJoined {
+    [CmdletBinding()] param()
+    $out = [pscustomobject]@{ Ok = $false; Dominio = $false; Nome = 'n/d' }
+    try {
+        $cs = Get-CompartDiskCim -Class Win32_ComputerSystem
+        if ($null -ne $cs) {
+            $c = @($cs) | Select-Object -First 1
+            $out.Ok = $true
+            $out.Dominio = [bool]$c.PartOfDomain
+            $out.Nome = Get-NetSafeText $c.Domain
+        }
+    } catch {
+        Write-Log DEBUG "Win32_ComputerSystem indisponivel: $($_.Exception.Message)" -NoConsole
+    }
+    return $out
+}
+
+function Test-NetRebootPending {
+    [CmdletBinding()] param()
+    try {
+        if (Test-CompartDiskCommand 'Test-CompartDiskPendingReboot') { return [bool](Test-CompartDiskPendingReboot) }
+    } catch {
+        Write-Log DEBUG "Test-CompartDiskPendingReboot: $($_.Exception.Message)" -NoConsole
+    }
+    return $false
+}
+
+# ==============================================================================
+# INVENTARIO DE REDE (cacheado por execucao; invalidado apos alteracao real)
+# ==============================================================================
+$script:AdapterCache  = $null
+$script:NetInfoCache  = $null
+$script:FirewallCache = $null
+
+function Reset-NetCaches {
+    <# Chamado apos operacoes que alteram o estado real da rede, para que a
+       revalidacao nunca leia um retrato anterior a mudanca. #>
+    $script:AdapterCache  = $null
+    $script:NetInfoCache  = $null
+    $script:FirewallCache = $null
+}
+
+function Get-NetworkInventory {
+    <# Envolve Get-CompartDiskNetworkInfo (Core) distinguindo colecao vazia de
+       falha de coleta. Retorna { Ok, Status, Detalhe, Rows, Total }. #>
+    [CmdletBinding()] param()
+    if ($script:NetInfoCache) { return $script:NetInfoCache }
+
+    $out = [pscustomobject]@{ Ok = $false; Status = 'Falhou'; Detalhe = ''; Rows = @(); Total = 0 }
+    $r = Invoke-SafeCommand { Get-CompartDiskNetworkInfo } -Activity 'Inventario de adaptadores' -Silent
+    if (-not $r.Success) {
+        $out.Detalhe = $(if ($r.Error) { $r.Error.Exception.Message } else { 'falha nao identificada' })
+        $script:NetInfoCache = $out
+        return $out
+    }
+    $rows = ConvertTo-NetArray $r.Value
+    $out.Ok = $true
+    $out.Rows = $rows
+    $out.Total = $rows.Count
+    $out.Status = $(if ($rows.Count -gt 0) { 'Completo' } else { 'Vazio' })
+    if ($rows.Count -eq 0) { $out.Detalhe = 'A consulta concluiu sem devolver interfaces com configuracao IP.' }
+    $script:NetInfoCache = $out
+    return $out
+}
+
+function Get-NetAdapterFacts {
+    <# Classifica adaptadores e determina DHCP x estatico por interface. E a base
+       das pre-condicoes do Reset: sem isto, release/renew e reset de pilha
+       seriam aplicados as cegas sobre configuracao estatica. #>
+    [CmdletBinding()] param()
+    if ($script:AdapterCache) { return $script:AdapterCache }
+
+    $out = [pscustomobject]@{
+        Ok = $false; Fonte = 'n/d'; Detalhe = ''; Rows = @()
+        Instalados = 0; Conectados = 0; Desconectados = 0; Desabilitados = 0
+        DhcpIPv4 = @(); EstaticoIPv4 = @(); Indeterminados = @()
+    }
+    $linhas = New-Object System.Collections.ArrayList
+    # Consulta bem-sucedida com zero adaptadores NAO e o mesmo que consulta
+    # falha: a primeira e uma maquina sem placa, a segunda e cegueira.
+    $consultaOk = $false
+
+    if (Test-CompartDiskCommand 'Get-NetAdapter') {
+        $ad = Invoke-SafeCommand { Get-NetAdapter -ErrorAction Stop } -Activity 'Get-NetAdapter' -Silent
+        if ($ad.Success) {
+            $adapters = ConvertTo-NetArray $ad.Value
+            $ipif = @()
+            $q = Invoke-SafeCommand { Get-NetIPInterface -AddressFamily IPv4 -ErrorAction Stop } -Activity 'Get-NetIPInterface' -Silent
+            if ($q.Success) { $ipif = ConvertTo-NetArray $q.Value }
+
+            foreach ($a in $adapters) {
+                $alias = Get-NetSafeText $a.Name
+                $ifc = @($ipif | Where-Object { "$($_.InterfaceAlias)" -eq $alias }) | Select-Object -First 1
+                $dhcp = 'Indeterminado'
+                if ($ifc) { $dhcp = $(if ("$($ifc.Dhcp)" -eq 'Enabled') { 'DHCP' } else { 'Estatico' }) }
+                [void]$linhas.Add([pscustomobject]@{
+                    Interface  = $alias
+                    Descricao  = (Get-NetSafeText $a.InterfaceDescription)
+                    Estado     = (Get-NetSafeText $a.Status)
+                    Virtual    = $(if ($a.Virtual) { 'Sim' } else { 'Nao' })
+                    Velocidade = (Get-NetSafeText $a.LinkSpeed)
+                    ConfigIPv4 = $dhcp
+                    MTU        = $(if ($ifc) { Get-NetSafeText $ifc.NlMtu } else { 'n/d' })
+                })
+            }
+            $consultaOk = $true
+            $out.Fonte = 'Get-NetAdapter'
+        } else {
+            $out.Detalhe = $(if ($ad.Error) { $ad.Error.Exception.Message } else { 'Get-NetAdapter nao respondeu' })
+        }
+    }
+
+    if ($linhas.Count -eq 0) {
+        # Fallback CIM: Windows sem os cmdlets NetTCPIP disponiveis.
+        $cim = Get-CompartDiskCim -Class Win32_NetworkAdapter -Filter 'PhysicalAdapter=True'
+        $cfg = Get-CompartDiskCim -Class Win32_NetworkAdapterConfiguration
+        foreach ($a in (ConvertTo-NetArray $cim)) {
+            $c = @((ConvertTo-NetArray $cfg) | Where-Object { $_.Index -eq $a.Index }) | Select-Object -First 1
+            $estado = switch ([int]$a.NetConnectionStatus) {
+                2 { 'Up' } 7 { 'Disconnected' } 0 { 'Disconnected' } default { 'Down' }
+            }
+            $dhcp = 'Indeterminado'
+            if ($c) { $dhcp = $(if ([bool]$c.DHCPEnabled) { 'DHCP' } else { 'Estatico' }) }
+            [void]$linhas.Add([pscustomobject]@{
+                Interface  = (Get-NetSafeText $a.NetConnectionID)
+                Descricao  = (Get-NetSafeText $a.Name)
+                Estado     = $estado
+                Virtual    = 'n/d'
+                Velocidade = 'n/d'
+                ConfigIPv4 = $dhcp
+                MTU        = 'n/d'
+            })
+        }
+        if ($linhas.Count -gt 0) { $consultaOk = $true; $out.Fonte = 'Win32_NetworkAdapter' }
+    }
+    $out.Ok = $consultaOk
+    if (-not $consultaOk -and -not $out.Detalhe) { $out.Detalhe = 'Nenhuma fonte de inventario de adaptadores respondeu.' }
+
+    $out.Rows = @($linhas)
+    $out.Instalados    = @($linhas).Count
+    $out.Conectados    = @($linhas | Where-Object { $_.Estado -eq 'Up' }).Count
+    $out.Desabilitados = @($linhas | Where-Object { $_.Estado -match 'Disabled' }).Count
+    $out.Desconectados = @($linhas | Where-Object { $_.Estado -notmatch 'Up|Disabled' }).Count
+    $out.DhcpIPv4      = @($linhas | Where-Object { $_.ConfigIPv4 -eq 'DHCP' -and $_.Estado -eq 'Up' } | ForEach-Object { $_.Interface })
+    $out.EstaticoIPv4  = @($linhas | Where-Object { $_.ConfigIPv4 -eq 'Estatico' -and $_.Estado -eq 'Up' } | ForEach-Object { $_.Interface })
+    $out.Indeterminados= @($linhas | Where-Object { $_.ConfigIPv4 -eq 'Indeterminado' -and $_.Estado -eq 'Up' } | ForEach-Object { $_.Interface })
+
+    $script:AdapterCache = $out
+    return $out
+}
+
+function Get-NetFirewallState {
+    <# Perfis + perfil ativo + gestao por GPO + produto de terceiros.
+       Sem isso, um perfil desabilitado vira CRIT indiscriminadamente. #>
+    [CmdletBinding()] param()
+    if ($script:FirewallCache) { return $script:FirewallCache }
+
+    $out = [pscustomobject]@{
+        Ok = $false; Detalhe = ''; Perfis = @(); PerfilAtivo = 'n/d'
+        GerenciadoPorGpo = $false; ProdutoTerceiro = ''; Desabilitados = @()
+    }
+    $r = Invoke-SafeCommand { Get-CompartDiskFirewallInfo } -Activity 'Perfis do firewall' -Silent
+    if ($r.Success) {
+        $perfis = ConvertTo-NetArray $r.Value
+        # A linha sintetica 'netsh' do fallback do Core nao carrega estado real.
+        $reais = @($perfis | Where-Object { "$($_.Perfil)" -ne 'netsh' })
+        if ($reais.Count -gt 0) {
+            $out.Ok = $true
+            $out.Perfis = $reais
+            $out.Desabilitados = @($reais | Where-Object { "$($_.Habilitado)" -match '^(False|0)$' } | ForEach-Object { "$($_.Perfil)" })
+        } elseif ($perfis.Count -gt 0) {
+            $out.Detalhe = 'Somente a saida textual do netsh esta disponivel: o estado por perfil nao pode ser confirmado.'
+        } else {
+            $out.Detalhe = 'Nenhum perfil de firewall foi devolvido pela consulta.'
+        }
+    } else {
+        $out.Detalhe = $(if ($r.Error) { $r.Error.Exception.Message } else { 'consulta de perfis falhou' })
+    }
+
+    if (Test-CompartDiskCommand 'Get-NetConnectionProfile') {
+        $p = Invoke-SafeCommand { Get-NetConnectionProfile -ErrorAction Stop } -Activity 'Get-NetConnectionProfile' -Silent
+        if ($p.Success) {
+            $cats = @((ConvertTo-NetArray $p.Value) | ForEach-Object { "$($_.NetworkCategory)" } | Sort-Object -Unique)
+            if ($cats.Count -gt 0) { $out.PerfilAtivo = ($cats -join ', ') }
+        }
+    }
+
+    try {
+        if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall') { $out.GerenciadoPorGpo = $true }
+    } catch {
+        Write-Log DEBUG "Leitura de politica de firewall indisponivel: $($_.Exception.Message)" -NoConsole
+    }
+
+    try {
+        $fp = Get-CompartDiskCim -Class FirewallProduct -Namespace 'root\SecurityCenter2'
+        $nomes = @((ConvertTo-NetArray $fp) | ForEach-Object { Get-NetSafeText $_.displayName '' } | Where-Object { $_ })
+        if ($nomes.Count -gt 0) { $out.ProdutoTerceiro = ($nomes -join ', ') }
+    } catch {
+        Write-Log DEBUG "SecurityCenter2 indisponivel: $($_.Exception.Message)" -NoConsole
+    }
+
+    $script:FirewallCache = $out
+    return $out
+}
+
+function Test-NetProfileIsActive {
+    param([string]$Perfil, [object]$Estado)
+    $ativo = "$($Estado.PerfilAtivo)"
+    $mapa  = @{ 'Domain' = 'DomainAuthenticated'; 'Private' = 'Private'; 'Public' = 'Public' }
+    if (-not $mapa.ContainsKey($Perfil)) { return $false }
+    return ($ativo -match [regex]::Escape($mapa[$Perfil]))
+}
+
+function Get-NetFirewallSeverity {
+    <# Perfil desabilitado que NAO e o ativo nao equivale a maquina desprotegida.
+       Com firewall de terceiros registrado, a protecao pode vir dele. #>
+    param([string]$Perfil, [object]$Estado)
+    if (Test-NetProfileIsActive -Perfil $Perfil -Estado $Estado) {
+        if ($Estado.ProdutoTerceiro) { return 'WARN' }
+        return 'CRIT'
+    }
+    return 'WARN'
+}
+
+# ==============================================================================
+# ACAO: INFO  (estritamente somente leitura)
+# ==============================================================================
+function Show-NetworkInfo {
+    Write-Log INFO 'Coletando diagnostico de rede (somente leitura)...'
+    $inv    = Get-NetworkInventory
+    $facts  = Get-NetAdapterFacts
+    $niveis = New-Object System.Collections.ArrayList
+
+    # ------------------------------------------------------------- adaptadores
+    if (-not $facts.Ok -and -not $inv.Ok) {
+        Write-Log ERR ('Inventario de adaptadores indisponivel: {0}' -f (Get-NetSafeText $facts.Detalhe $inv.Detalhe))
+        Add-CompartDiskSection -Title 'Adaptadores de rede' -Status CRIT -Summary 'Consulta nao concluida'
+        Add-CompartDiskFinding -Severity CRIT -Area 'Rede' `
+            -Message ('Nao foi possivel enumerar os adaptadores de rede: {0}' -f (Get-NetSafeText $facts.Detalhe $inv.Detalhe)) `
+            -Recommendation 'Validar o servico WMI (winmgmt) e os cmdlets NetTCPIP antes de qualquer intervencao.'
+        Set-NetResult 'ERROR' 'inventario de adaptadores indisponivel'
+        return
+    }
+
+    if ($facts.Ok) {
+        Write-NetLine ''
+        Write-NetTable -Rows $facts.Rows -Property @('Interface', 'Estado', 'ConfigIPv4', 'Velocidade', 'MTU', 'Virtual')
+        $st = 'OK'
+        $resumo = ("{0} instalado(s): {1} conectado(s), {2} desconectado(s), {3} desabilitado(s)" -f `
+            $facts.Instalados, $facts.Conectados, $facts.Desconectados, $facts.Desabilitados)
+        if ($facts.Instalados -eq 0) { $st = 'WARN' }
+        elseif ($facts.Conectados -eq 0) { $st = 'WARN' }
+        Add-CompartDiskSection -Title 'Adaptadores de rede' -Status $st -Rows $facts.Rows -Summary $resumo `
+            -Pairs ([ordered]@{
+                'Fonte'          = $facts.Fonte
+                'Instalados'     = $facts.Instalados
+                'Conectados'     = $facts.Conectados
+                'Desconectados'  = $facts.Desconectados
+                'Desabilitados'  = $facts.Desabilitados
+                'IPv4 por DHCP'  = $(if (@($facts.DhcpIPv4).Count -gt 0) { (@($facts.DhcpIPv4) -join ', ') } else { 'nenhum' })
+                'IPv4 estatico'  = $(if (@($facts.EstaticoIPv4).Count -gt 0) { (@($facts.EstaticoIPv4) -join ', ') } else { 'nenhum' })
+            })
+
+        # Ausencia de adaptador conectado nao e, por si so, defeito: pode ser
+        # servidor isolado, maquina desconectada ou interface desabilitada.
+        if ($facts.Instalados -eq 0) {
+            Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
+                -Message 'Nenhum adaptador de rede foi encontrado neste sistema.' `
+                -Recommendation 'Verificar presenca fisica do adaptador e o driver correspondente no Gerenciador de Dispositivos.'
+            [void]$niveis.Add('WARN')
+        } elseif ($facts.Conectados -eq 0) {
+            Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
+                -Message ("Nenhum adaptador conectado: {0} desconectado(s) e {1} desabilitado(s) de {2} instalado(s)." -f $facts.Desconectados, $facts.Desabilitados, $facts.Instalados) `
+                -Recommendation 'Confirmar cabo, rede sem fio ou se a interface foi desabilitada administrativamente.'
+            [void]$niveis.Add('WARN')
+        }
+    }
+
+    # ------------------------------------------------- configuracao IP detalhada
+    if ($inv.Ok -and $inv.Total -gt 0) {
+        foreach ($a in $inv.Rows) {
+            Write-NetLine ''
+            Write-NetLine ("  [{0}]  {1}" -f (Get-NetSafeText $a.Estado), (Get-NetSafeText $a.Interface)) 'White'
+            Write-NetPair 'Descricao'  (Get-NetSafeText $a.Descricao)
+            Write-NetPair 'MAC'        (Get-NetSafeText $a.MAC)
+            Write-NetPair 'Velocidade' (Get-NetSafeText $a.Velocidade)
+            Write-NetPair 'IPv4'       (Get-NetSafeText $a.IPv4)
+            Write-NetPair 'IPv6'       (Get-NetSafeText $a.IPv6)
+            Write-NetPair 'Gateway'    (Get-NetSafeText $a.Gateway)
+            Write-NetPair 'DNS'        (Get-NetSafeText $a.DNS)
+            Write-NetPair 'Perfil'     (Get-NetSafeText $a.Perfil)
+        }
+        Add-CompartDiskSection -Title 'Configuracao IP por interface' -Status OK -Rows $inv.Rows `
+            -Summary ("{0} interface(s) com configuracao IP" -f $inv.Total)
+    } elseif ($inv.Ok) {
+        Add-CompartDiskSection -Title 'Configuracao IP por interface' -Status WARN -Summary 'Nenhuma interface com configuracao IP'
+    } else {
+        Add-CompartDiskSection -Title 'Configuracao IP por interface' -Status WARN -Summary 'Consulta nao concluida'
+        Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
+            -Message ('A configuracao IP detalhada nao pode ser coletada: {0}' -f $inv.Detalhe) `
+            -Recommendation 'O restante do diagnostico permanece valido; revalidar os cmdlets NetTCPIP.'
+        [void]$niveis.Add('WARN')
+    }
+
+    # ------------------------------------------------------------- MTU por familia
+    if (Test-CompartDiskCommand 'Get-NetIPInterface') {
+        $iface = Invoke-SafeCommand { Get-NetIPInterface -ErrorAction Stop } -Activity 'Get-NetIPInterface (MTU)' -Silent
+        if ($iface.Success) {
+            $rows = @((ConvertTo-NetArray $iface.Value) |
+                Where-Object { "$($_.ConnectionState)" -eq 'Connected' } |
+                ForEach-Object {
+                    [pscustomobject]@{
+                        Interface = (Get-NetSafeText $_.InterfaceAlias)
+                        Familia   = (Get-NetSafeText $_.AddressFamily)
+                        MTU       = (Get-NetSafeText $_.NlMtu)
+                        DHCP      = (Get-NetSafeText $_.Dhcp)
+                        Estado    = (Get-NetSafeText $_.ConnectionState)
+                    }
+                })
+            if ($rows.Count -gt 0) {
+                Add-CompartDiskSection -Title 'MTU e DHCP por familia' -Status INFO -Rows $rows `
+                    -Summary ("{0} interface(s) conectada(s); MTU e apenas diagnostico e nao e alterada por este modulo" -f $rows.Count)
+                Write-NetLine ''
+                Write-NetTable -Rows $rows
+            }
+        } else {
+            Add-CompartDiskSection -Title 'MTU e DHCP por familia' -Status WARN -Summary 'Consulta nao concluida'
+            Write-Log WARN 'Nao foi possivel consultar MTU/DHCP por familia de endereco.'
+            [void]$niveis.Add('WARN')
+        }
+    } else {
+        Add-CompartDiskSection -Title 'MTU e DHCP por familia' -Status INFO -Summary 'Cmdlet Get-NetIPInterface indisponivel nesta instalacao'
+    }
+
+    # --------------------------------------------------------------------- rotas
+    if (Test-CompartDiskCommand 'Get-NetRoute') {
+        $rotas = New-Object System.Collections.ArrayList
+        $familias = @(
+            @{ Pref = '0.0.0.0/0'; Fam = 'IPv4' }
+            @{ Pref = '::/0';      Fam = 'IPv6' }
+        )
+        $falhouRota = $false
+        foreach ($f in $familias) {
+            $rt = Invoke-SafeCommand { Get-NetRoute -DestinationPrefix $f.Pref -ErrorAction Stop } -Activity ("Get-NetRoute {0}" -f $f.Fam) -Silent
+            if (-not $rt.Success) { $falhouRota = $true; continue }
+            foreach ($x in (ConvertTo-NetArray $rt.Value)) {
+                [void]$rotas.Add([pscustomobject]@{
+                    Familia    = $f.Fam
+                    Interface  = (Get-NetSafeText $x.InterfaceAlias)
+                    ProximoSalto = (Get-NetSafeText $x.NextHop)
+                    Metrica    = (Get-NetSafeText $x.RouteMetric)
+                })
+            }
+        }
+        $titulo = 'Rotas padrao (IPv4 e IPv6)'
+        if (@($rotas).Count -gt 0) {
+            # Multiplas rotas padrao sao normais com VPN ou interfaces virtuais.
+            Add-CompartDiskSection -Title $titulo -Status INFO -Rows @($rotas) `
+                -Summary ("{0} rota(s) padrao; multiplas rotas sao esperadas com VPN ou interfaces virtuais" -f @($rotas).Count)
+        } elseif ($falhouRota) {
+            Add-CompartDiskSection -Title $titulo -Status WARN -Summary 'Consulta de rotas nao concluida'
+            [void]$niveis.Add('WARN')
+        } else {
+            Add-CompartDiskSection -Title $titulo -Status WARN -Summary 'Nenhuma rota padrao configurada'
+            Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
+                -Message 'Nenhuma rota padrao (IPv4 ou IPv6) esta configurada.' `
+                -Recommendation 'Sem rota padrao nao ha saida para fora da rede local: verificar gateway e concessao DHCP.'
+            [void]$niveis.Add('WARN')
+        }
+    }
+
+    # ----------------------------------------------------------- compartilhamentos
+    $shares = Get-CompartDiskCim -Class Win32_Share
+    $sh = ConvertTo-NetArray $shares
+    if ($sh.Count -gt 0) {
+        $rows = @($sh | ForEach-Object {
+            $nome = Get-NetSafeText $_.Name
+            $tipo = 'Usuario'
+            if ($nome -eq 'IPC$')      { $tipo = 'IPC' }
+            elseif ($nome -match '\$$'){ $tipo = 'Administrativo' }
+            # Caminho local so e exposto para compartilhamentos de usuario: os
+            # administrativos sao previsiveis e o caminho nao agrega diagnostico.
+            [pscustomobject]@{
+                Nome      = $nome
+                Tipo      = $tipo
+                Caminho   = $(if ($tipo -eq 'Usuario') { Get-NetSafeText $_.Path } else { '(padrao do sistema)' })
+                Descricao = (Get-NetSafeText $_.Description '')
+            }
+        })
+        $usuario = @($rows | Where-Object { $_.Tipo -eq 'Usuario' }).Count
+        Add-CompartDiskSection -Title 'Compartilhamentos' -Status INFO -Rows $rows `
+            -Summary ("{0} compartilhamento(s): {1} de usuario, {2} administrativo(s)/IPC" -f $rows.Count, $usuario, ($rows.Count - $usuario))
+    }
+
+    # ------------------------------------------------------------------ firewall
+    $fw = Get-NetFirewallState
+    if ($fw.Ok) {
+        $pares = [ordered]@{
+            'Perfil de rede ativo'  = $fw.PerfilAtivo
+            'Gerenciado por GPO'    = $(if ($fw.GerenciadoPorGpo) { 'Sim' } else { 'Nao detectado' })
+            'Firewall de terceiros' = $(if ($fw.ProdutoTerceiro) { $fw.ProdutoTerceiro } else { 'nenhum registrado' })
+        }
+        $sevs = New-Object System.Collections.ArrayList
+        foreach ($p in $fw.Perfis) {
+            if ("$($p.Habilitado)" -match '^(False|0)$') {
+                $sev = Get-NetFirewallSeverity -Perfil "$($p.Perfil)" -Estado $fw
+                [void]$sevs.Add($sev)
+                $ehAtivo = Test-NetProfileIsActive -Perfil "$($p.Perfil)" -Estado $fw
+                $ctx = $(if ($ehAtivo) { 'e o perfil da rede atualmente ativa' } else { 'nao e o perfil da rede atualmente ativa' })
+                if ($ehAtivo -and $fw.ProdutoTerceiro) { $ctx += ('; protecao possivelmente provida por {0}' -f $fw.ProdutoTerceiro) }
+                $rec = 'Reativar o firewall neste perfil, salvo se a protecao for provida por solucao de terceiros ou exigida de outra forma pela politica da organizacao.'
+                if ($fw.GerenciadoPorGpo) { $rec = 'Perfil sob diretiva de grupo: tratar com a equipe responsavel, pois alteracoes locais podem ser revertidas.' }
+                Add-CompartDiskFinding -Severity $sev -Area 'Firewall' `
+                    -Message ("Perfil '{0}' do firewall esta desabilitado ({1})." -f (Get-NetSafeText $p.Perfil), $ctx) `
+                    -Recommendation $rec
+            }
+        }
+        $statusFw = Get-NetWorstSeverity @($sevs)
+        Add-CompartDiskSection -Title 'Firewall do Windows' -Status $statusFw -Rows $fw.Perfis -Pairs $pares `
+            -Summary ("{0} perfil(is); {1} desabilitado(s)" -f @($fw.Perfis).Count, @($fw.Desabilitados).Count)
+        Write-NetLine ''
+        Write-NetTable -Rows $fw.Perfis
+        if (@($sevs).Count -gt 0) { [void]$niveis.Add('WARN') }
+        if (@($fw.Desabilitados).Count -eq 0) {
+            Add-CompartDiskFinding -Severity OK -Area 'Firewall' -Message 'Todos os perfis do firewall do Windows estao habilitados.'
+        }
+    } else {
+        Add-CompartDiskSection -Title 'Firewall do Windows' -Status WARN -Summary 'Estado dos perfis nao pode ser confirmado'
+        Add-CompartDiskFinding -Severity WARN -Area 'Firewall' `
+            -Message ('O estado dos perfis do firewall nao pode ser confirmado: {0}' -f $fw.Detalhe) `
+            -Recommendation 'Sem essa leitura nao e possivel afirmar que o firewall esta ativo nem que esta inativo.'
+        [void]$niveis.Add('WARN')
+    }
+
+    if (@($niveis) -contains 'WARN') { Set-NetResult 'WARN' 'diagnostico de rede com pendencias' }
+    Write-Log OK 'Diagnostico de rede coletado (nenhuma alteracao aplicada).'
+}
+
+# ==============================================================================
+# ACAO: TEST  (estritamente somente leitura)
+# Diagnostico em camadas. Um booleano "online" nao diz onde a cadeia quebrou,
+# e ICMP bloqueado nao prova ausencia de internet.
+#
+# Test-Internet do Core nao e usado aqui: ele colapsa o resultado em um unico
+# booleano e sua resolucao de nomes ([Net.Dns]::GetHostEntry) e sincrona e sem
+# tempo limite, o que pode bloquear o modulo. As sondas abaixo tem limite real.
+# ==============================================================================
+function Test-NetTcpPortQuick {
+    <# Conexao TCP com tempo limite efetivo. Test-NetConnection nao aceita
+       timeout e pode levar dezenas de segundos por alvo. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Target, [Parameter(Mandatory)][int]$Port, [int]$TimeoutMs = 4000)
+    $out = [pscustomobject]@{ Alvo = ('{0}:{1}' -f $Target, $Port); Ok = $false; Ms = 0; Detalhe = '' }
+    $cli = $null
+    $cron = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        $cli = New-Object System.Net.Sockets.TcpClient
+        $iar = $cli.BeginConnect($Target, $Port, $null, $null)
+        if (-not $iar.AsyncWaitHandle.WaitOne($TimeoutMs)) {
+            $out.Detalhe = ('sem resposta em {0} ms' -f $TimeoutMs)
+        } else {
+            $cli.EndConnect($iar)
+            $out.Ok = $true
+        }
+    } catch {
+        $out.Detalhe = $_.Exception.Message
+        if ($_.Exception.InnerException) { $out.Detalhe = $_.Exception.InnerException.Message }
+    } finally {
+        $cron.Stop()
+        $out.Ms = [int]$cron.Elapsed.TotalMilliseconds
+        if ($cli) { try { $cli.Close() } catch { Write-Log DEBUG "Fechamento de socket: $($_.Exception.Message)" -NoConsole } }
+    }
+    return $out
+}
+
+function Test-NetDnsName {
+    <# Resolucao com tempo limite real, distinguindo timeout de falha de consulta. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Name, [int]$TimeoutMs = 4000)
+    $out = [pscustomobject]@{ Nome = $Name; Ok = $false; Enderecos = ''; Ms = 0; Detalhe = '' }
+    $cron = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        $task = [System.Net.Dns]::GetHostAddressesAsync($Name)
+        $concluiu = $true
+        try { $concluiu = $task.Wait($TimeoutMs) } catch { $concluiu = $true }
+        if (-not $concluiu) {
+            $out.Detalhe = ('sem resposta em {0} ms' -f $TimeoutMs)
+        } elseif ($task.IsFaulted) {
+            $ex = $task.Exception
+            $msg = 'consulta recusada ou nome inexistente'
+            try { if ($ex -and $ex.InnerException) { $msg = $ex.InnerException.Message } }
+            catch { $msg = 'consulta recusada ou nome inexistente' }
+            $out.Detalhe = $msg
+        } else {
+            $addrs = @($task.Result | ForEach-Object { $_.IPAddressToString })
+            if ($addrs.Count -gt 0) { $out.Ok = $true; $out.Enderecos = ($addrs -join ', ') }
+            else { $out.Detalhe = 'resposta sem enderecos' }
+        }
+    } catch {
+        $out.Detalhe = $_.Exception.Message
+    } finally {
+        $cron.Stop()
+        $out.Ms = [int]$cron.Elapsed.TotalMilliseconds
+    }
+    return $out
+}
+
+function Test-NetPingHost {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Target, [int]$TimeoutMs = 2000)
+    $out = [pscustomobject]@{ Alvo = $Target; Ok = $false; Ms = 0; Detalhe = '' }
+    try {
+        $ping = New-Object System.Net.NetworkInformation.Ping
+        try {
+            $rep = $ping.Send($Target, $TimeoutMs)
+            if ("$($rep.Status)" -eq 'Success') { $out.Ok = $true; $out.Ms = [int]$rep.RoundtripTime }
+            else { $out.Detalhe = "$($rep.Status)" }
+        } finally {
+            try { $ping.Dispose() } catch { Write-Log DEBUG "Dispose do ping: $($_.Exception.Message)" -NoConsole }
+        }
+    } catch {
+        $out.Detalhe = $_.Exception.Message
+    }
+    return $out
+}
+
+function Test-NetHttpProbe {
+    <# Sonda HTTP equivalente a usada pelo proprio Windows (NCSI). #>
+    [CmdletBinding()]
+    param([string]$Url = 'http://www.msftconnecttest.com/connecttest.txt', [int]$TimeoutMs = 6000)
+    $out = [pscustomobject]@{ Alvo = $Url; Ok = $false; Ms = 0; Detalhe = '' }
+    $cron = [System.Diagnostics.Stopwatch]::StartNew()
+    $resp = $null
+    try {
+        $req = [System.Net.WebRequest]::Create($Url)
+        $req.Timeout = $TimeoutMs
+        $req.Method = 'GET'
+        $resp = $req.GetResponse()
+        $out.Ok = $true
+    } catch {
+        $out.Detalhe = $_.Exception.Message
+    } finally {
+        $cron.Stop()
+        $out.Ms = [int]$cron.Elapsed.TotalMilliseconds
+        if ($resp) { try { $resp.Close() } catch { Write-Log DEBUG "Fechamento de resposta HTTP: $($_.Exception.Message)" -NoConsole } }
+    }
+    return $out
+}
+
+function Test-NetworkConnectivity {
+    Write-Log INFO 'Testando conectividade em camadas (interface, IP, gateway, DNS, TCP e HTTP)...'
+
+    $facts = Get-NetAdapterFacts
+    $inv   = Get-NetworkInventory
+    $camadas = New-Object System.Collections.ArrayList
+    $detalhes = New-Object System.Collections.ArrayList
+
+    function Add-Camada {
+        param([string]$Camada, [string]$Estado, [string]$Evidencia)
+        [void]$camadas.Add([pscustomobject]@{ Camada = $Camada; Estado = $Estado; Evidencia = $Evidencia })
+    }
+
+    # ------------------------------------------------------ 1. interface fisica
+    $temInterface = ($facts.Ok -and $facts.Conectados -gt 0)
+    Add-Camada '1. Interface' $(if ($temInterface) { 'OK' } else { 'FALHA' }) `
+        $(if ($facts.Ok) { ("{0} conectado(s) de {1} instalado(s)" -f $facts.Conectados, $facts.Instalados) } else { 'inventario indisponivel' })
+
+    # -------------------------------------------------------- 2. endereco IPv4
+    $ips = @()
+    $apipa = $false
+    foreach ($a in $inv.Rows) {
+        foreach ($ip in ("$($a.IPv4)" -split ',')) {
+            $t = $ip.Trim()
+            if (-not $t) { continue }
+            $ips += $t
+            if ($t -match '^169\.254\.') { $apipa = $true }
+        }
+    }
+    $temIp = ($ips.Count -gt 0 -and -not ($ips.Count -eq 1 -and $apipa))
+    $evidIp = $(if ($ips.Count -gt 0) { ($ips -join ', ') } else { 'nenhum endereco IPv4' })
+    if ($apipa) { $evidIp += ' (169.254.x indica falha na obtencao de concessao DHCP)' }
+    Add-Camada '2. Endereco IPv4' $(if ($temIp) { 'OK' } else { 'FALHA' }) $evidIp
+
+    # -------------------------------------------------------------- 3. gateway
+    $gateways = @()
+    foreach ($a in $inv.Rows) {
+        foreach ($g in ("$($a.Gateway)" -split ',')) {
+            $t = $g.Trim()
+            if ($t -and $t -ne 'n/d' -and (@($gateways) -notcontains $t)) { $gateways += $t }
+        }
+    }
+    $gwOk = $false
+    $gwEvid = 'nenhum gateway configurado'
+    if ($gateways.Count -gt 0) {
+        $gwEvid = ''
+        foreach ($g in $gateways) {
+            $p = Test-NetPingHost -Target $g -TimeoutMs 2000
+            [void]$detalhes.Add([pscustomobject]@{ Teste = 'Gateway (ICMP)'; Alvo = $g; Resultado = $(if ($p.Ok) { 'Responde' } else { 'Sem resposta' }); Tempo = ('{0} ms' -f $p.Ms); Observacao = (Get-NetSafeText $p.Detalhe '') })
+            if ($p.Ok) { $gwOk = $true }
+            $gwEvid += ('{0}={1}; ' -f $g, $(if ($p.Ok) { 'responde' } else { 'sem resposta ICMP' }))
+        }
+        $gwEvid = $gwEvid.TrimEnd('; ')
+    }
+    # Gateway sem resposta ICMP nao prova roteamento quebrado: muitos bloqueiam ICMP.
+    Add-Camada '3. Gateway' $(if ($gateways.Count -eq 0) { 'FALHA' } elseif ($gwOk) { 'OK' } else { 'INCONCLUSIVO' }) $gwEvid
+
+    # ------------------------------------------- 4. transporte TCP sem depender de DNS
+    $tcpIp = Test-NetTcpPortQuick -Target '1.1.1.1' -Port 443 -TimeoutMs 4000
+    [void]$detalhes.Add([pscustomobject]@{ Teste = 'TCP para IP literal'; Alvo = $tcpIp.Alvo; Resultado = $(if ($tcpIp.Ok) { 'Acessivel' } else { 'Bloqueado' }); Tempo = ('{0} ms' -f $tcpIp.Ms); Observacao = (Get-NetSafeText $tcpIp.Detalhe '') })
+    Add-Camada '4. Transporte TCP' $(if ($tcpIp.Ok) { 'OK' } else { 'FALHA' }) `
+        ("{0} ({1})" -f $tcpIp.Alvo, $(if ($tcpIp.Ok) { 'conexao estabelecida sem usar DNS' } else { $tcpIp.Detalhe }))
+
+    # ------------------------------------------------------------------ 5. DNS
+    $nomes = @('www.microsoft.com', 'www.msftconnecttest.com')
+    $dnsOk = 0
+    foreach ($n in $nomes) {
+        $d = Test-NetDnsName -Name $n -TimeoutMs 4000
+        [void]$detalhes.Add([pscustomobject]@{ Teste = 'Resolucao DNS'; Alvo = $n; Resultado = $(if ($d.Ok) { 'Resolvido' } else { 'Nao resolvido' }); Tempo = ('{0} ms' -f $d.Ms); Observacao = $(if ($d.Ok) { $d.Enderecos } else { $d.Detalhe }) })
+        if ($d.Ok) { $dnsOk++ }
+    }
+    $dnsEstado = $(if ($dnsOk -eq $nomes.Count) { 'OK' } elseif ($dnsOk -gt 0) { 'PARCIAL' } else { 'FALHA' })
+    Add-Camada '5. Resolucao DNS' $dnsEstado ("{0} de {1} nome(s) resolvido(s)" -f $dnsOk, $nomes.Count)
+
+    # -------------------------------------------------- 6. TCP com nome + 7. HTTP
+    $tcpNome = Test-NetTcpPortQuick -Target 'www.microsoft.com' -Port 443 -TimeoutMs 5000
+    [void]$detalhes.Add([pscustomobject]@{ Teste = 'TCP com nome'; Alvo = $tcpNome.Alvo; Resultado = $(if ($tcpNome.Ok) { 'Acessivel' } else { 'Bloqueado' }); Tempo = ('{0} ms' -f $tcpNome.Ms); Observacao = (Get-NetSafeText $tcpNome.Detalhe '') })
+    Add-Camada '6. TCP 443 por nome' $(if ($tcpNome.Ok) { 'OK' } else { 'FALHA' }) ("{0} ({1})" -f $tcpNome.Alvo, $(if ($tcpNome.Ok) { 'handshake TCP concluido' } else { $tcpNome.Detalhe }))
+
+    $http = Test-NetHttpProbe
+    [void]$detalhes.Add([pscustomobject]@{ Teste = 'HTTP (NCSI)'; Alvo = $http.Alvo; Resultado = $(if ($http.Ok) { 'Respondeu' } else { 'Sem resposta' }); Tempo = ('{0} ms' -f $http.Ms); Observacao = (Get-NetSafeText $http.Detalhe '') })
+    Add-Camada '7. HTTP externo' $(if ($http.Ok) { 'OK' } else { 'FALHA' }) ("{0} ({1})" -f $http.Alvo, $(if ($http.Ok) { 'resposta recebida' } else { $http.Detalhe }))
+
+    # --------------------------------------------------------------- conclusao
+    $nivel = 'OK'
+    $diagnostico = 'Conectividade externa operacional nas camadas testadas.'
+    $recomendacao = ''
+    if (-not $temInterface) {
+        $nivel = 'ERROR'
+        $diagnostico = 'Nenhum adaptador de rede conectado: a cadeia falha na camada de interface.'
+        $recomendacao = 'Verificar cabo, rede sem fio, driver do adaptador e se a interface esta desabilitada administrativamente.'
+    } elseif (-not $temIp) {
+        $nivel = 'ERROR'
+        $diagnostico = $(if ($apipa) { 'Interface conectada com endereco APIPA (169.254.x): a concessao DHCP nao foi obtida.' } else { 'Interface conectada sem endereco IPv4 valido.' })
+        $recomendacao = 'Validar o servidor DHCP e a concessao da interface. Em rede com endereco fixo, conferir a configuracao manual.'
+    } elseif ($gateways.Count -eq 0) {
+        $nivel = 'ERROR'
+        $diagnostico = 'Endereco IPv4 presente, porem sem gateway padrao configurado.'
+        $recomendacao = 'Sem gateway nao ha roteamento para fora da rede local: conferir a configuracao IP e a concessao DHCP.'
+    } elseif (-not $tcpIp.Ok -and -not $http.Ok) {
+        $nivel = 'WARN'
+        $diagnostico = 'Configuracao IP presente, mas nenhuma conexao externa (TCP ou HTTP) pode ser estabelecida.'
+        $recomendacao = 'Validar gateway, regras de saida do firewall, proxy corporativo e disponibilidade do enlace.'
+    } elseif ($dnsEstado -eq 'FALHA' -and $tcpIp.Ok) {
+        $nivel = 'WARN'
+        $diagnostico = 'Transporte TCP externo funciona, porem nenhum nome de teste foi resolvido: a falha esta na resolucao DNS.'
+        $recomendacao = 'Conferir os servidores DNS configurados na interface e limpar o cache DNS local. Nao alterar o DNS em rede corporativa sem validar com a equipe responsavel.'
+    } elseif ($dnsEstado -eq 'PARCIAL') {
+        $nivel = 'WARN'
+        $diagnostico = 'Resolucao DNS parcial: parte dos nomes de teste nao foi resolvida.'
+        $recomendacao = 'Pode indicar filtro de nomes, DNS corporativo com escopo restrito ou indisponibilidade pontual do dominio consultado.'
+    } elseif (-not $tcpNome.Ok -or -not $http.Ok) {
+        $nivel = 'WARN'
+        $diagnostico = 'DNS resolve e o transporte responde, mas o destino de teste externo nao pode ser alcancado por completo.'
+        $recomendacao = 'Verificar proxy corporativo, inspecao TLS e regras de saida do firewall. A indisponibilidade de um endpoint especifico nao caracteriza, por si so, ausencia de internet.'
+    } elseif (-not $gwOk) {
+        $diagnostico = 'Conectividade externa operacional. O gateway nao respondeu a ICMP, o que e comum quando o equipamento bloqueia ping.'
+    }
+
+    Write-NetLine ''
+    Write-NetTable -Rows @($camadas)
+    Write-NetLine ''
+    Write-NetTable -Rows @($detalhes)
+
+    Add-CompartDiskSection -Title 'Conectividade por camada' -Status (Get-NetSectionStatus $nivel) -Rows @($camadas) `
+        -Summary $diagnostico
+    Add-CompartDiskSection -Title 'Conectividade - evidencias' -Status INFO -Rows @($detalhes) `
+        -Summary ("{0} sonda(s) executada(s); todas somente leitura" -f @($detalhes).Count)
+
+    if ($nivel -eq 'OK') {
+        Add-CompartDiskFinding -Severity OK -Area 'Rede' -Message $diagnostico
+        Write-Log OK $diagnostico
+    } else {
+        Add-CompartDiskFinding -Severity (Get-NetFindingSeverity $nivel) -Area 'Rede' `
+            -Message $diagnostico -Recommendation $recomendacao
+        Set-NetResult $nivel 'falha identificada no teste de conectividade'
+        if ($nivel -eq 'ERROR') { Write-Log ERR $diagnostico } else { Write-Log WARN $diagnostico }
+    }
+    # Este modulo diagnostica: nenhuma correcao e aplicada a partir do Test.
+    Write-Log INFO 'Teste concluido sem aplicar alteracoes. Correcoes exigem a acao Reset, executada de forma explicita.'
+}
+
+# ==============================================================================
+# ACAO: RESET  (modificadora)
+# Etapas independentes, cada uma com pre-condicao, codigos aceitaveis proprios
+# e resultado individual. Nao existe "reset unico e homogeneo".
+#
+# Fora do fluxo padrao, por decisao deliberada:
+#  - netsh winhttp reset proxy : destroi configuracao de proxy corporativo e nao
+#    pertence a pilha TCP/IP. Disponivel em -ResetProxy, com a configuracao
+#    anterior registrada antes da alteracao.
+#  - release/renew e reset de pilha sobre interface com endereco ESTATICO:
+#    'netsh int ip reset' devolve a configuracao IP ao padrao e removeria o
+#    endereco fixo. Exige -Force.
+# ==============================================================================
+function Get-NetWinHttpProxy {
+    <# Leitura da configuracao WinHTTP atual (somente leitura). #>
+    [CmdletBinding()] param()
+    $out = [pscustomobject]@{ Ok = $false; Texto = ''; Detalhe = '' }
+    $r = Invoke-NetCommand -FilePath $netsh -Arguments @('winhttp', 'show', 'proxy') `
+            -TimeoutSeconds 30 -AcceptableExitCodes @(0) -Activity 'netsh winhttp show proxy'
+    if ($r.Ok) {
+        $out.Ok = $true
+        $linhas = @(($r.StdOut -split "`r?`n") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $out.Texto = ($linhas -join ' | ')
+    } else {
+        $out.Detalhe = (Get-NetSafeText $r.Detalhe 'consulta nao concluida')
+    }
+    return $out
+}
+
+function Reset-NetworkStack {
+    Write-Log INFO '=== RESET CONTROLADO DA PILHA DE REDE ==='
+
+    # ------------------------------------------------------------ Etapa A: pre-check
+    $facts   = Get-NetAdapterFacts
+    $sessao  = Test-NetRemoteSession
+    $reboot  = Test-NetRebootPending
+    $dominio = Test-NetDomainJoined
+    $proxyAntes = Get-NetWinHttpProxy
+
+    $temEstatico = (@($facts.EstaticoIPv4).Count -gt 0)
+    $temDhcp     = (@($facts.DhcpIPv4).Count -gt 0)
+    $indefinido  = (@($facts.Indeterminados).Count -gt 0)
+
+    Write-Log INFO ("Etapa A - Pre-check: {0} interface(s) conectada(s) | DHCP: {1} | estatico: {2} | sessao: {3} | reinicio pendente: {4}" -f `
+        $facts.Conectados,
+        $(if ($temDhcp) { (@($facts.DhcpIPv4) -join ', ') } else { 'nenhuma' }),
+        $(if ($temEstatico) { (@($facts.EstaticoIPv4) -join ', ') } else { 'nenhuma' }),
+        $sessao.Tipo,
+        $(if ($reboot) { 'SIM' } else { 'Nao' }))
+    Add-NetStep -Etapa 'A' -Operacao 'Pre-check' -Alvo 'configuracao de rede' -Resultado 'INFO' `
+        -Detalhe ("conectadas={0}; DHCP={1}; estatico={2}; sessao={3}; reinicio pendente={4}; dominio={5}" -f `
+            $facts.Conectados, @($facts.DhcpIPv4).Count, @($facts.EstaticoIPv4).Count, $sessao.Tipo, `
+            $(if ($reboot) { 'sim' } else { 'nao' }), $(if ($dominio.Dominio) { $dominio.Nome } else { 'nao' }))
+
+    if (-not $facts.Ok) {
+        Write-Log ERR 'Nao foi possivel inventariar os adaptadores: o reset foi abortado antes de qualquer alteracao.'
+        Add-CompartDiskFinding -Severity CRIT -Area 'Rede' `
+            -Message ('Reset abortado no pre-check: {0}' -f (Get-NetSafeText $facts.Detalhe 'inventario indisponivel')) `
+            -Recommendation 'Sem inventario nao e possivel distinguir interface DHCP de estatica, e um reset as cegas removeria configuracao fixa.'
+        Add-CompartDiskSection -Title 'Reset de rede' -Status CRIT -Summary 'Abortado no pre-check' -Rows @($script:Steps)
+        Set-NetResult 'ERROR' 'pre-check do reset falhou'
+        return
+    }
+    if ($sessao.Remota) {
+        Write-Log WARN ("Execucao a partir de {0}: um reset de rede pode interromper esta propria sessao." -f $sessao.Tipo)
+    }
+    if ($reboot) {
+        Write-Log WARN 'Ja existe reinicio pendente: parte das validacoes so sera conclusiva apos reiniciar.'
+    }
+    if ($dominio.Dominio) {
+        Write-Log INFO ("Maquina ingressada no dominio '{0}': diretivas podem reaplicar configuracoes apos o reset." -f $dominio.Nome)
+    }
+
+    $exigeReboot = $false
+
+    # -------------------------------------------------------------- Etapa B: DNS
+    $b = Invoke-NetCommand -FilePath $ipcfg -Arguments @('/flushdns') -TimeoutSeconds 60 -AcceptableExitCodes @(0) -Activity 'ipconfig /flushdns'
+    if ($b.Ok) {
+        Write-Log OK 'Cache DNS local limpo.'
+        Add-NetStep -Etapa 'B' -Operacao 'Limpar cache DNS' -Alvo 'resolvedor local' -Resultado 'OK' -Detalhe 'cache local esvaziado; nao altera os servidores DNS configurados'
+    } else {
+        Write-Log WARN ('Limpeza do cache DNS nao confirmada: {0}' -f $b.Detalhe)
+        Add-NetStep -Etapa 'B' -Operacao 'Limpar cache DNS' -Alvo 'resolvedor local' -Resultado 'ERROR' -Detalhe $b.Detalhe
+    }
+
+    # ------------------------------------------------------------- Etapa C: DHCP
+    # Release/renew so faz sentido onde existe concessao DHCP. Em interface
+    # estatica o resultado correto e SKIPPED, nunca WARN.
+    $dhcpPodeRodar = $temDhcp
+    $motivoDhcp = ''
+    if (-not $temDhcp) {
+        $motivoDhcp = $(if ($temEstatico) { 'todas as interfaces conectadas usam endereco estatico' } elseif ($indefinido) { 'nao foi possivel determinar o modo de enderecamento' } else { 'nenhuma interface conectada com DHCP' })
+    } elseif ($sessao.Remota -and -not $script:Force) {
+        $dhcpPodeRodar = $false
+        $motivoDhcp = ("execucao a partir de {0}: /release derrubaria esta sessao (use -Force para executar mesmo assim)" -f $sessao.Tipo)
+    }
+
+    if (-not $dhcpPodeRodar) {
+        Write-Log INFO ('Etapa C ignorada - {0}.' -f $motivoDhcp)
+        Add-NetStep -Etapa 'C' -Operacao 'Liberar e renovar concessao DHCP' -Alvo 'interfaces DHCP' -Resultado 'SKIPPED' -Detalhe $motivoDhcp
+    } else {
+        $rel = Invoke-NetCommand -FilePath $ipcfg -Arguments @('/release') -TimeoutSeconds 120 -AcceptableExitCodes @(0) -Activity 'ipconfig /release'
+        if ($rel.Ok) { Add-NetStep -Etapa 'C' -Operacao 'Liberar concessao DHCP' -Alvo (@($facts.DhcpIPv4) -join ', ') -Resultado 'OK' -Detalhe 'concessao liberada' }
+        else {
+            Write-Log WARN ('Liberacao de concessao DHCP nao confirmada: {0}' -f $rel.Detalhe)
+            Add-NetStep -Etapa 'C' -Operacao 'Liberar concessao DHCP' -Alvo (@($facts.DhcpIPv4) -join ', ') -Resultado 'WARN' -Detalhe $rel.Detalhe
+        }
+        $ren = Invoke-NetCommand -FilePath $ipcfg -Arguments @('/renew') -TimeoutSeconds 180 -AcceptableExitCodes @(0) -Activity 'ipconfig /renew'
+        if ($ren.Ok) {
+            Write-Log OK 'Concessao DHCP renovada.'
+            Add-NetStep -Etapa 'C' -Operacao 'Renovar concessao DHCP' -Alvo (@($facts.DhcpIPv4) -join ', ') -Resultado 'OK' -Detalhe 'nova concessao obtida'
+        } else {
+            Write-Log WARN ('Renovacao de concessao DHCP nao confirmada: {0}' -f $ren.Detalhe)
+            Add-NetStep -Etapa 'C' -Operacao 'Renovar concessao DHCP' -Alvo (@($facts.DhcpIPv4) -join ', ') -Resultado 'ERROR' -Detalhe $ren.Detalhe
+        }
+    }
+
+    # ---------------------------------------------------------- Etapa D: Winsock
+    # Alteracao sistemica: redefine o catalogo de provedores de sockets.
+    # Nao toca na configuracao IP, entao nao depende do modo de enderecamento.
+    $d = Invoke-NetCommand -FilePath $netsh -Arguments @('winsock', 'reset') -TimeoutSeconds 120 -AcceptableExitCodes @(0) -Activity 'netsh winsock reset'
+    if ($d.Ok) {
+        $exigeReboot = $true
+        Write-Log OK 'Catalogo Winsock redefinido. A alteracao so se aplica integralmente apos reiniciar.'
+        Add-NetStep -Etapa 'D' -Operacao 'Reset do Winsock' -Alvo 'catalogo de sockets' -Resultado 'OK' -Detalhe 'catalogo redefinido; exige reinicio para aplicar'
+    } else {
+        Write-Log WARN ('Reset do Winsock nao confirmado: {0}' -f $d.Detalhe)
+        Add-NetStep -Etapa 'D' -Operacao 'Reset do Winsock' -Alvo 'catalogo de sockets' -Resultado 'ERROR' -Detalhe $d.Detalhe
+    }
+
+    # ------------------------------------------------- Etapas E e F: pilha IP
+    # 'netsh int ip reset' devolve a configuracao IP ao padrao (DHCP). Em
+    # interface com endereco fixo isso REMOVE a configuracao manual.
+    $podePilha = $true
+    $motivoPilha = ''
+    if ($temEstatico -and -not $script:Force) {
+        $podePilha = $false
+        $motivoPilha = ("interface(s) com endereco estatico detectada(s) ({0}): o reset da pilha removeria a configuracao manual. Use -Force para executar mesmo assim" -f (@($facts.EstaticoIPv4) -join ', '))
+    } elseif ($indefinido -and -not $script:Force) {
+        $podePilha = $false
+        $motivoPilha = ("nao foi possivel determinar o modo de enderecamento de {0}: o reset nao e aplicado as cegas. Use -Force para executar mesmo assim" -f (@($facts.Indeterminados) -join ', '))
+    }
+
+    foreach ($fam in @(@{ E = 'E'; A = @('int', 'ip', 'reset');   N = 'Reset da pilha IPv4' }, @{ E = 'F'; A = @('int', 'ipv6', 'reset'); N = 'Reset da pilha IPv6' })) {
+        if (-not $podePilha) {
+            Write-Log INFO ('Etapa {0} ignorada - {1}.' -f $fam.E, $motivoPilha)
+            Add-NetStep -Etapa $fam.E -Operacao $fam.N -Alvo 'configuracao IP' -Resultado 'SKIPPED' -Detalhe $motivoPilha
+            continue
+        }
+        # Codigo 1 e retorno documentado de sucesso que exige reinicio.
+        $r = Invoke-NetCommand -FilePath $netsh -Arguments $fam.A -TimeoutSeconds 120 -AcceptableExitCodes @(0, 1) -Activity $fam.N
+        if ($r.Ok) {
+            $exigeReboot = $true
+            Write-Log OK ('{0} concluido (codigo {1}); exige reinicio para aplicar.' -f $fam.N, $r.ExitCode)
+            Add-NetStep -Etapa $fam.E -Operacao $fam.N -Alvo 'configuracao IP' -Resultado 'OK' -Detalhe ('codigo {0}: pilha redefinida, reinicio necessario' -f $r.ExitCode)
+        } else {
+            Write-Log WARN ('{0} nao confirmado: {1}' -f $fam.N, $r.Detalhe)
+            Add-NetStep -Etapa $fam.E -Operacao $fam.N -Alvo 'configuracao IP' -Resultado 'ERROR' -Detalhe $r.Detalhe
+        }
+    }
+
+    # --------------------------------------------------------------- Etapa G: ARP
+    # Codigo 1 ocorre quando nao ha entradas a remover: nao e falha.
+    $g = Invoke-NetCommand -FilePath $arp -Arguments @('-d', '*') -TimeoutSeconds 60 -AcceptableExitCodes @(0, 1) -Activity 'arp -d *'
+    if ($g.Ok) {
+        Write-Log OK 'Cache ARP limpo; as entradas serao recriadas conforme necessario.'
+        Add-NetStep -Etapa 'G' -Operacao 'Limpar cache ARP' -Alvo 'tabela ARP' -Resultado 'OK' -Detalhe ('codigo {0}: entradas removidas ou tabela ja vazia' -f $g.ExitCode)
+    } else {
+        Write-Log WARN ('Limpeza do cache ARP nao confirmada: {0}' -f $g.Detalhe)
+        Add-NetStep -Etapa 'G' -Operacao 'Limpar cache ARP' -Alvo 'tabela ARP' -Resultado 'WARN' -Detalhe $g.Detalhe
+    }
+
+    # ------------------------------------------------------- Etapa H: registro DNS
+    $h = Invoke-NetCommand -FilePath $ipcfg -Arguments @('/registerdns') -TimeoutSeconds 120 -AcceptableExitCodes @(0) -Activity 'ipconfig /registerdns'
+    if ($h.Ok) {
+        # O comando solicita o registro; a conclusao depende do servidor DNS.
+        Write-Log OK 'Solicitacao de registro DNS enviada. A conclusao depende do servidor DNS e nao e confirmada aqui.'
+        Add-NetStep -Etapa 'H' -Operacao 'Solicitar registro DNS' -Alvo 'servidor DNS' -Resultado 'OK' -Detalhe 'solicitacao enviada; conclusao nao verificavel localmente'
+    } else {
+        Write-Log WARN ('Solicitacao de registro DNS nao confirmada: {0}' -f $h.Detalhe)
+        Add-NetStep -Etapa 'H' -Operacao 'Solicitar registro DNS' -Alvo 'servidor DNS' -Resultado 'WARN' -Detalhe $h.Detalhe
+    }
+
+    # ------------------------------------------------------------ Etapa I: proxy
+    if (-not $script:ResetProxy) {
+        Add-NetStep -Etapa 'I' -Operacao 'Reset do proxy WinHTTP' -Alvo 'WinHTTP' -Resultado 'SKIPPED' `
+            -Detalhe 'fora do fluxo padrao: destruiria configuracao de proxy corporativo. Usar -ResetProxy quando houver evidencia de proxy invalido'
+        Write-Log INFO 'Etapa I ignorada - reset do proxy WinHTTP nao faz parte do reset padrao (use -ResetProxy).'
+    } else {
+        Write-Log WARN ('Reset do proxy WinHTTP solicitado. Configuracao anterior: {0}' -f (Get-NetSafeText $proxyAntes.Texto 'nao pode ser lida'))
+        $i = Invoke-NetCommand -FilePath $netsh -Arguments @('winhttp', 'reset', 'proxy') -TimeoutSeconds 60 -AcceptableExitCodes @(0) -Activity 'netsh winhttp reset proxy'
+        if ($i.Ok) {
+            $proxyDepois = Get-NetWinHttpProxy
+            Write-Log OK 'Proxy WinHTTP redefinido para acesso direto.'
+            Add-NetStep -Etapa 'I' -Operacao 'Reset do proxy WinHTTP' -Alvo 'WinHTTP' -Resultado 'OK' `
+                -Detalhe ("antes: {0} | depois: {1}" -f (Get-NetSafeText $proxyAntes.Texto 'nao lido'), (Get-NetSafeText $proxyDepois.Texto 'nao lido'))
+            Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
+                -Message ('Proxy WinHTTP redefinido para acesso direto. Configuracao anterior: {0}' -f (Get-NetSafeText $proxyAntes.Texto 'nao pode ser lida')) `
+                -Recommendation 'Em ambiente corporativo, reaplicar a configuracao de proxy exigida pela organizacao (netsh winhttp set proxy ou importacao das definicoes do navegador).'
+            Set-NetResult 'WARN' 'proxy WinHTTP redefinido'
+        } else {
+            Write-Log WARN ('Reset do proxy WinHTTP nao confirmado: {0}' -f $i.Detalhe)
+            Add-NetStep -Etapa 'I' -Operacao 'Reset do proxy WinHTTP' -Alvo 'WinHTTP' -Resultado 'ERROR' -Detalhe $i.Detalhe
+        }
+    }
+
+    # ---------------------------------------------------------- Revalidacao final
+    Reset-NetCaches
+    $factsDepois = Get-NetAdapterFacts
+    $invDepois   = Get-NetworkInventory
+    $ipsDepois = 0
+    foreach ($a in $invDepois.Rows) {
+        foreach ($ip in ("$($a.IPv4)" -split ',')) { if ($ip.Trim()) { $ipsDepois++ } }
+    }
+    Add-NetStep -Etapa 'Final' -Operacao 'Revalidacao' -Alvo 'estado da rede' -Resultado 'INFO' `
+        -Detalhe ("conectadas={0}; enderecos IPv4 presentes={1}" -f $factsDepois.Conectados, $ipsDepois)
+
+    $erros    = @($script:Steps | Where-Object { $_.Resultado -eq 'ERROR' })
+    $alertas  = @($script:Steps | Where-Object { $_.Resultado -eq 'WARN' })
+    $ignorados= @($script:Steps | Where-Object { $_.Resultado -eq 'SKIPPED' })
+    $ok       = @($script:Steps | Where-Object { $_.Resultado -eq 'OK' })
+
+    $nivel = 'OK'
+    if ($erros.Count -gt 0) { $nivel = 'WARN' }
+    if ($ok.Count -eq 0)    { $nivel = 'ERROR' }
+    if ($factsDepois.Conectados -gt 0 -and $ipsDepois -eq 0 -and -not $exigeReboot) { $nivel = 'ERROR' }
+    Set-NetResult $nivel 'resultado consolidado do reset de rede'
+
+    $pares = [ordered]@{
+        'Etapas concluidas'      = $ok.Count
+        'Etapas com falha'       = $erros.Count
+        'Etapas com ressalva'    = $alertas.Count
+        'Etapas ignoradas'       = $ignorados.Count
+        'Interfaces conectadas'  = ("antes {0} / depois {1}" -f $facts.Conectados, $factsDepois.Conectados)
+        'Enderecos IPv4 apos'    = $ipsDepois
+        'Proxy WinHTTP'          = $(if ($script:ResetProxy) { 'redefinido a pedido' } else { 'preservado' })
+        'Reinicio pendente antes'= $(if ($reboot) { 'SIM' } else { 'Nao' })
+        'Reinicio necessario'    = $(if ($exigeReboot) { 'SIM - Winsock e/ou pilha IP redefinidos' } else { 'Nao identificado' })
+        'Sessao de execucao'     = $sessao.Tipo
+        'Status final'           = $nivel
+    }
+
+    Write-NetLine ''
+    Write-NetTable -Rows @($script:Steps)
+    Add-CompartDiskSection -Title 'Reset de rede' -Status (Get-NetSectionStatus $nivel) -Pairs $pares `
+        -Summary ("{0} etapa(s) concluida(s), {1} com falha, {2} ignorada(s)" -f $ok.Count, $erros.Count, $ignorados.Count)
+    Add-CompartDiskSection -Title 'Reset de rede - etapas' -Status (Get-NetSectionStatus $nivel) -Rows @($script:Steps) `
+        -Summary ("{0} etapa(s) registrada(s)" -f @($script:Steps).Count)
+
+    $msg = ("Reset executado: {0} etapa(s) concluida(s), {1} com falha, {2} ignorada(s) por pre-condicao. " -f $ok.Count, $erros.Count, $ignorados.Count) +
+           'A restauracao da conectividade nao esta comprovada por esta execucao.'
+    $rec = 'Executar -Action Test para verificar em qual camada a rede responde apos a alteracao.'
+    if ($exigeReboot) { $rec = 'Reiniciar o computador para aplicar o Winsock e a pilha IP, e em seguida executar -Action Test para verificar a conectividade.' }
+
+    Add-CompartDiskFinding -Severity (Get-NetFindingSeverity $nivel) -Area 'Rede' -Message $msg -Recommendation $rec
+    if ($nivel -eq 'OK') { Write-Log OK $msg } elseif ($nivel -eq 'WARN') { Write-Log WARN $msg } else { Write-Log ERR $msg }
+    if ($exigeReboot) { Write-Log WARN 'Reinicio recomendado: Winsock e/ou pilha IP so se aplicam integralmente apos reiniciar.' }
+}
+
+# ==============================================================================
+# BACKUP: nome exclusivo e validacao objetiva
+# Test-Path sozinho nao prova backup: um arquivo antigo com o mesmo nome faria
+# uma exportacao falha parecer bem-sucedida.
+# ==============================================================================
+function ConvertTo-NetNormalizedText {
+    <# WriteAllLines usa o separador da plataforma; comparar texto sem
+       normalizar CRLF/LF faria a confirmacao de conteudo falhar sempre e
+       destruiria a idempotencia da acao. #>
+    param([AllowNull()][object]$Value)
+    return ((("$Value") -replace "`r`n", "`n").Trim())
+}
+
+function Get-NetBackupPath {
+    param([Parameter(Mandatory)][string]$Prefixo, [Parameter(Mandatory)][string]$Extensao)
+    $dir = $Global:CompartDisk.OutDir
+    if ([string]::IsNullOrWhiteSpace($dir)) { $dir = $env:TEMP }
+    $sessao = Get-NetSafeText $Global:CompartDisk.Session (Get-Date -Format 'yyyyMMdd_HHmmss')
+    $base = ('{0}_{1}_{2}' -f $Prefixo, $sessao, (Get-Date -Format 'HHmmss'))
+    $alvo = Join-Path $dir ('{0}.{1}' -f $base, $Extensao)
+    $i = 1
+    while (Test-Path -LiteralPath $alvo) {
+        $alvo = Join-Path $dir ('{0}_{1}.{2}' -f $base, $i, $Extensao)
+        $i++
+        if ($i -gt 50) { break }
+    }
+    return $alvo
+}
+
+function Test-NetBackupFile {
+    <# Backup so e valido se o arquivo existe, foi criado NESTA execucao,
+       tem conteudo e pode ser lido. #>
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][datetime]$Desde, [long]$TamanhoMinimo = 1)
+    $out = [pscustomobject]@{ Ok = $false; Bytes = 0; Detalhe = '' }
+    try {
+        if (-not (Test-Path -LiteralPath $Path)) { $out.Detalhe = 'arquivo de backup nao foi criado'; return $out }
+        $fi = Get-Item -LiteralPath $Path -ErrorAction Stop
+        $out.Bytes = [long]$fi.Length
+        if ($fi.LastWriteTime -lt $Desde.AddSeconds(-5)) { $out.Detalhe = 'arquivo preexistente: nao foi gravado por esta execucao'; return $out }
+        if ($fi.Length -lt $TamanhoMinimo) { $out.Detalhe = ('arquivo com {0} byte(s), abaixo do minimo esperado' -f $fi.Length); return $out }
+        $fs = [System.IO.File]::OpenRead($fi.FullName)
+        try {
+            $buf = New-Object byte[] 16
+            if ($fs.Read($buf, 0, 16) -le 0) { $out.Detalhe = 'arquivo de backup nao pode ser lido'; return $out }
+        } finally { $fs.Dispose() }
+        $out.Ok = $true
+    } catch {
+        $out.Detalhe = $_.Exception.Message
+    }
+    return $out
+}
+
+# ==============================================================================
+# ACAO: HOSTS  (modificadora)
+# Regra absoluta: sem backup validado, o arquivo hosts NAO e sobrescrito.
+# ==============================================================================
+function Restore-HostsFile {
+    $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+
+    # Conteudo minimo e valido: as entradas de localhost permanecem comentadas,
+    # como no padrao da Microsoft, porque o Windows as resolve internamente.
+    $conteudo = @(
+        '# Copyright (c) 1993-2009 Microsoft Corp.'
+        '#'
+        '# This is a sample HOSTS file used by Microsoft TCP/IP for Windows.'
+        '#'
+        '# Cada entrada deve permanecer em uma linha individual.'
+        '# O endereco IP deve vir na primeira coluna, seguido do nome correspondente.'
+        '# O endereco e o nome devem ser separados por ao menos um espaco.'
+        '#'
+        '# Linhas iniciadas por "#" sao comentarios.'
+        '#'
+        '# Exemplos:'
+        '#'
+        '#      102.54.94.97     rhino.acme.com          # servidor de origem'
+        '#       38.25.63.10     x.acme.com              # cliente x'
+        '#'
+        '# A resolucao de localhost e tratada pelo proprio DNS do Windows.'
+        '#	127.0.0.1       localhost'
+        '#	::1             localhost'
+    )
+
+    $existe = Test-Path -LiteralPath $hosts
+    $atual = $null
+    if ($existe) {
+        $lr = Invoke-SafeCommand { [System.IO.File]::ReadAllText($hosts) } -Activity 'Leitura do arquivo hosts' -Silent
+        if (-not $lr.Success) {
+            Write-Log ERR 'O arquivo hosts existe mas nao pode ser lido: nenhuma alteracao foi aplicada.'
+            Add-CompartDiskFinding -Severity CRIT -Area 'Rede' `
+                -Message ('O arquivo hosts nao pode ser lido: {0}' -f $(if ($lr.Error) { $lr.Error.Exception.Message } else { 'motivo desconhecido' })) `
+                -Recommendation 'Executar como administrador e verificar permissoes e bloqueio por antivirus antes de repetir.'
+            Add-CompartDiskSection -Title 'Arquivo hosts' -Status CRIT -Summary 'Leitura nao concluida; arquivo preservado'
+            Set-NetResult 'ERROR' 'arquivo hosts ilegivel'
+            return
+        }
+        $atual = "$($lr.Value)"
+    }
+
+    # Idempotencia: se ja esta no conteudo padrao, nao ha o que substituir.
+    $alvoTexto = ($conteudo -join "`r`n")
+    $alvoNorm  = ConvertTo-NetNormalizedText $alvoTexto
+    if ($existe -and ((ConvertTo-NetNormalizedText $atual) -eq $alvoNorm)) {
+        Write-Log OK 'O arquivo hosts ja esta no conteudo padrao: nenhuma alteracao aplicada.'
+        Add-CompartDiskSection -Title 'Arquivo hosts' -Status OK -Summary 'Ja no padrao; nenhuma alteracao necessaria' `
+            -Pairs ([ordered]@{ 'Caminho' = $hosts; 'Acao' = 'nenhuma (idempotente)' })
+        Add-CompartDiskFinding -Severity OK -Area 'Rede' -Message 'O arquivo hosts ja se encontra no conteudo padrao.'
+        return
+    }
+
+    # ------------------------------------------------------------------ backup
+    $bkpPath = ''
+    $bkpBytes = 0
+    if ($existe) {
+        $inicio = Get-Date
+        $bkpPath = Get-NetBackupPath -Prefixo 'hosts_anterior' -Extensao 'txt'
+        $dirBkp = Split-Path -Parent $bkpPath
+        $prep = Invoke-SafeCommand {
+            if (-not (Test-Path -LiteralPath $dirBkp)) { New-Item -ItemType Directory -Path $dirBkp -Force -ErrorAction Stop | Out-Null }
+            Copy-Item -LiteralPath $hosts -Destination $bkpPath -Force -ErrorAction Stop
+        } -Activity 'Backup do arquivo hosts' -Silent
+
+        $origemBytes = 0
+        try { $origemBytes = [long](Get-Item -LiteralPath $hosts -ErrorAction Stop).Length } catch { $origemBytes = 0 }
+        $val = Test-NetBackupFile -Path $bkpPath -Desde $inicio -TamanhoMinimo ([math]::Max(1, $origemBytes))
+
+        if (-not $prep.Success -or -not $val.Ok) {
+            $motivo = $(if (-not $prep.Success -and $prep.Error) { $prep.Error.Exception.Message } else { $val.Detalhe })
+            Write-Log ERR ('Backup do arquivo hosts nao pode ser validado: {0}. O arquivo NAO foi alterado.' -f $motivo)
+            Add-CompartDiskFinding -Severity CRIT -Area 'Rede' `
+                -Message ('Restauracao do hosts abortada: o backup nao pode ser validado ({0}).' -f $motivo) `
+                -Recommendation 'A sobrescrita e irreversivel sem backup. Definir COMPARTDISK_LOGDIR para um diretorio gravavel e repetir.'
+            Add-CompartDiskSection -Title 'Arquivo hosts' -Status CRIT `
+                -Pairs ([ordered]@{ 'Caminho' = $hosts; 'Backup' = $bkpPath; 'Situacao' = 'abortado: backup invalido'; 'Detalhe' = $motivo }) `
+                -Summary 'Abortado antes de qualquer escrita; arquivo original preservado'
+            Set-NetResult 'ERROR' 'backup do hosts invalido'
+            return
+        }
+        $bkpBytes = $val.Bytes
+        Write-Log OK ("Backup validado: {0} ({1} bytes)." -f $bkpPath, $bkpBytes)
+    } else {
+        Write-Log WARN 'O arquivo hosts nao existe: sera criado com o conteudo padrao (nao ha conteudo anterior para preservar).'
+    }
+
+    # ------------------------------------------------------------------ escrita
+    # UTF-8 sem BOM: o conteudo padrao e ASCII puro, portanto os bytes gravados
+    # sao identicos aos de ANSI e o parser do Windows os interpreta sem BOM.
+    $w = Invoke-SafeCommand {
+        [System.IO.File]::WriteAllLines($hosts, $conteudo, (New-Object System.Text.UTF8Encoding($false)))
+    } -Activity 'Gravar hosts padrao' -Silent
+    if (-not $w.Success) {
+        $motivo = $(if ($w.Error) { $w.Error.Exception.Message } else { 'motivo desconhecido' })
+        Write-Log ERR ('A gravacao do arquivo hosts falhou: {0}' -f $motivo)
+        Add-CompartDiskFinding -Severity CRIT -Area 'Rede' `
+            -Message ('Nao foi possivel gravar o arquivo hosts: {0}' -f $motivo) `
+            -Recommendation $(if ($bkpPath) { ('O conteudo anterior esta preservado em {0}.' -f $bkpPath) } else { 'Executar como administrador e verificar bloqueio por antivirus.' })
+        Add-CompartDiskSection -Title 'Arquivo hosts' -Status CRIT `
+            -Pairs ([ordered]@{ 'Caminho' = $hosts; 'Backup' = (Get-NetSafeText $bkpPath 'nao aplicavel'); 'Situacao' = 'falha na gravacao' }) `
+            -Summary 'Gravacao nao concluida'
+        Set-NetResult 'ERROR' 'gravacao do hosts falhou'
+        return
+    }
+
+    # --------------------------------------------------------------- validacao
+    $rv = Invoke-SafeCommand { [System.IO.File]::ReadAllText($hosts) } -Activity 'Releitura do arquivo hosts' -Silent
+    $confirmado = ($rv.Success -and (ConvertTo-NetNormalizedText $rv.Value) -eq $alvoNorm)
+    if (-not $confirmado) {
+        Write-Log WARN 'O arquivo hosts foi gravado, mas a releitura nao confirmou o conteudo esperado.'
+        Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
+            -Message 'O arquivo hosts foi gravado, porem a releitura nao confirmou o conteudo esperado.' `
+            -Recommendation $(if ($bkpPath) { ('Conferir o arquivo manualmente; o conteudo anterior esta em {0}.' -f $bkpPath) } else { 'Conferir o arquivo manualmente.' })
+        Set-NetResult 'WARN' 'conteudo do hosts nao confirmado'
+    }
+
+    # Flush do cache e etapa SEPARADA: limpar cache nao prova resolucao correta.
+    $f = Invoke-NetCommand -FilePath $ipcfg -Arguments @('/flushdns') -TimeoutSeconds 60 -AcceptableExitCodes @(0) -Activity 'ipconfig /flushdns'
+    if ($f.Ok) { Write-Log OK 'Cache DNS local limpo.' }
+    else {
+        Write-Log WARN ('Limpeza do cache DNS nao confirmada: {0}' -f $f.Detalhe)
+        Set-NetResult 'WARN' 'flush de DNS nao confirmado'
+    }
+
+    $nivel = $(if ($confirmado -and $f.Ok) { 'OK' } else { 'WARN' })
+    Add-CompartDiskSection -Title 'Arquivo hosts' -Status (Get-NetSectionStatus $nivel) `
+        -Pairs ([ordered]@{
+            'Caminho'          = $hosts
+            'Existia antes'    = $(if ($existe) { 'Sim' } else { 'Nao' })
+            'Backup'           = (Get-NetSafeText $bkpPath 'nao aplicavel (arquivo inexistente)')
+            'Backup (bytes)'   = $bkpBytes
+            'Conteudo confirmado' = $(if ($confirmado) { 'Sim (releitura)' } else { 'Nao' })
+            'Cache DNS'        = $(if ($f.Ok) { 'limpo' } else { 'nao confirmado' })
+        }) -Summary $(if ($nivel -eq 'OK') { 'Restaurado e confirmado por releitura' } else { 'Concluido com ressalvas' })
+
+    if ($nivel -eq 'OK') {
+        Write-Log OK 'Arquivo hosts restaurado ao conteudo padrao e confirmado por releitura.'
+        Add-CompartDiskFinding -Severity OK -Area 'Rede' `
+            -Message 'Arquivo hosts restaurado ao conteudo padrao e confirmado por releitura.' `
+            -Recommendation $(if ($bkpPath) { ('Conteudo anterior preservado em {0}.' -f $bkpPath) } else { '' })
+    }
+}
+
+# ==============================================================================
+# ACAO: FIREWALL  (modificadora)
+# Regra absoluta: sem backup validado, a politica NAO e redefinida.
+# Perfis nao sao habilitados em bloco: apenas os que estavam habilitados antes
+# e ficaram desabilitados pelo reset sao restaurados ao estado anterior.
+# ==============================================================================
+function Reset-FirewallPolicy {
+    Write-Log INFO 'Preparando reset da politica de firewall...'
+
+    $dominio = Test-NetDomainJoined
+    $antes   = Get-NetFirewallState
+    if (-not $antes.Ok) {
+        Write-Log ERR 'O estado atual dos perfis do firewall nao pode ser lido: o reset foi abortado.'
+        Add-CompartDiskFinding -Severity CRIT -Area 'Firewall' `
+            -Message ('Reset do firewall abortado: o estado atual nao pode ser lido ({0}).' -f (Get-NetSafeText $antes.Detalhe 'consulta indisponivel')) `
+            -Recommendation 'Sem o estado anterior nao e possivel restaurar os perfis corretamente apos o reset.'
+        Add-CompartDiskSection -Title 'Firewall - reset' -Status CRIT -Summary 'Abortado no pre-check'
+        Set-NetResult 'ERROR' 'estado do firewall ilegivel'
+        return
+    }
+
+    $estadoAnterior = @{}
+    foreach ($p in $antes.Perfis) { $estadoAnterior["$($p.Perfil)"] = ("$($p.Habilitado)" -notmatch '^(False|0)$') }
+
+    if ($dominio.Dominio) {
+        Write-Log WARN ("Maquina no dominio '{0}': o reset afeta a politica LOCAL. Regras distribuidas por diretiva permanecem e podem ser reaplicadas." -f $dominio.Nome)
+    }
+    if ($antes.GerenciadoPorGpo) {
+        Write-Log WARN 'Firewall sob diretiva de grupo: parte da configuracao sera reaplicada pela GPO apos o reset.'
+    }
+    if ($antes.ProdutoTerceiro) {
+        Write-Log INFO ('Firewall de terceiros registrado: {0}' -f $antes.ProdutoTerceiro)
+    }
+
+    # ------------------------------------------------------------------ backup
+    $inicio = Get-Date
+    $bkp = Get-NetBackupPath -Prefixo 'Firewall_Backup' -Extensao 'wfw'
+    $dirBkp = Split-Path -Parent $bkp
+    try {
+        if (-not (Test-Path -LiteralPath $dirBkp)) { New-Item -ItemType Directory -Path $dirBkp -Force -ErrorAction Stop | Out-Null }
+    } catch {
+        Write-Log ERR ('Diretorio de backup indisponivel: {0}' -f $dirBkp)
+        Add-CompartDiskFinding -Severity CRIT -Area 'Firewall' `
+            -Message ('Reset do firewall abortado: o diretorio de backup nao pode ser preparado ({0}).' -f $_.Exception.Message) `
+            -Recommendation 'Definir COMPARTDISK_LOGDIR para um diretorio gravavel e repetir.'
+        Add-CompartDiskSection -Title 'Firewall - reset' -Status CRIT -Summary 'Abortado: destino de backup indisponivel'
+        Set-NetResult 'ERROR' 'destino de backup indisponivel'
+        return
+    }
+
+    $exp = Invoke-NetCommand -FilePath $netsh -Arguments @('advfirewall', 'export', "`"$bkp`"") `
+            -TimeoutSeconds 120 -AcceptableExitCodes @(0) -Activity 'netsh advfirewall export'
+    $val = Test-NetBackupFile -Path $bkp -Desde $inicio -TamanhoMinimo 1024
+
+    if (-not $exp.Ok -or -not $val.Ok) {
+        $motivo = $(if (-not $exp.Ok) { (Get-NetSafeText $exp.Detalhe 'exportacao nao concluida') } else { $val.Detalhe })
+        Write-Log ERR ('Backup da politica de firewall nao pode ser validado: {0}. O reset NAO foi executado.' -f $motivo)
+        Add-CompartDiskFinding -Severity CRIT -Area 'Firewall' `
+            -Message ('Reset do firewall abortado: o backup da politica nao pode ser validado ({0}).' -f $motivo) `
+            -Recommendation 'O reset e irreversivel sem a politica exportada. Verificar privilegios administrativos e o diretorio de saida antes de repetir.'
+        Add-CompartDiskSection -Title 'Firewall - reset' -Status CRIT `
+            -Pairs ([ordered]@{ 'Backup' = $bkp; 'Situacao' = 'abortado: backup invalido'; 'Detalhe' = $motivo }) `
+            -Summary 'Abortado antes de qualquer alteracao; politica atual preservada'
+        Set-NetResult 'ERROR' 'backup do firewall invalido'
+        return
+    }
+    Write-Log OK ("Backup da politica validado: {0} ({1} bytes)." -f $bkp, $val.Bytes)
+
+    # ------------------------------------------------------------------- reset
+    $r = Invoke-NetCommand -FilePath $netsh -Arguments @('advfirewall', 'reset') `
+            -TimeoutSeconds 120 -AcceptableExitCodes @(0) -Activity 'netsh advfirewall reset'
+    if (-not $r.Ok) {
+        Write-Log ERR ('O reset da politica de firewall nao foi concluido: {0}' -f $r.Detalhe)
+        Add-CompartDiskFinding -Severity CRIT -Area 'Firewall' `
+            -Message ('O reset da politica de firewall nao foi concluido: {0}' -f $r.Detalhe) `
+            -Recommendation ('A politica anterior permanece exportada em {0}.' -f $bkp)
+        Add-CompartDiskSection -Title 'Firewall - reset' -Status CRIT `
+            -Pairs ([ordered]@{ 'Backup' = $bkp; 'Codigo de retorno' = (Get-NetSafeText $r.ExitCode 'n/d'); 'Situacao' = 'reset nao concluido' }) `
+            -Summary 'Reset nao concluido'
+        Set-NetResult 'ERROR' 'reset do firewall nao concluido'
+        return
+    }
+
+    # ------------------------------------------------- restauracao dos perfis
+    Reset-NetCaches
+    $depois = Get-NetFirewallState
+    $restaurados = New-Object System.Collections.ArrayList
+    $naoRestaurados = New-Object System.Collections.ArrayList
+
+    if ($depois.Ok -and (Test-CompartDiskCommand 'Set-NetFirewallProfile')) {
+        foreach ($p in $depois.Perfis) {
+            $nome = "$($p.Perfil)"
+            $agoraHabilitado = ("$($p.Habilitado)" -notmatch '^(False|0)$')
+            $antesHabilitado = $false
+            if ($estadoAnterior.ContainsKey($nome)) { $antesHabilitado = [bool]$estadoAnterior[$nome] }
+            # Somente o que estava habilitado e o reset desligou. Um perfil
+            # desativado de proposito continua desativado.
+            if ($antesHabilitado -and -not $agoraHabilitado) {
+                $s = Invoke-SafeCommand { Set-NetFirewallProfile -Profile $nome -Enabled True -ErrorAction Stop } -Activity ("Restaurar perfil {0}" -f $nome) -Silent
+                if ($s.Success) { [void]$restaurados.Add($nome) }
+                else { [void]$naoRestaurados.Add(('{0} ({1})' -f $nome, $(if ($s.Error) { $s.Error.Exception.Message } else { 'falha' }))) }
+            }
+        }
+        if (@($restaurados).Count -gt 0) { Reset-NetCaches; $depois = Get-NetFirewallState }
+    }
+
+    # ---------------------------------------------------------- validacao final
+    $desligadosDepois = @()
+    if ($depois.Ok) { $desligadosDepois = @($depois.Desabilitados) }
+
+    $nivel = 'OK'
+    if (-not $depois.Ok) { $nivel = 'WARN' }
+    elseif (@($naoRestaurados).Count -gt 0) { $nivel = 'WARN' }
+    else {
+        foreach ($nome in $estadoAnterior.Keys) {
+            if ([bool]$estadoAnterior[$nome] -and (@($desligadosDepois) -contains $nome)) { $nivel = 'WARN'; break }
+        }
+    }
+    Set-NetResult $nivel 'resultado do reset da politica de firewall'
+
+    $pares = [ordered]@{
+        'Backup da politica'      = $bkp
+        'Backup (bytes)'          = $val.Bytes
+        'Codigo do reset'         = (Get-NetSafeText $r.ExitCode 'n/d')
+        'Perfis antes'            = (($antes.Perfis | ForEach-Object { '{0}={1}' -f $_.Perfil, $(if ("$($_.Habilitado)" -notmatch '^(False|0)$') { 'on' } else { 'off' }) }) -join ', ')
+        'Perfis depois'           = $(if ($depois.Ok) { (($depois.Perfis | ForEach-Object { '{0}={1}' -f $_.Perfil, $(if ("$($_.Habilitado)" -notmatch '^(False|0)$') { 'on' } else { 'off' }) }) -join ', ') } else { 'nao verificado' })
+        'Perfis restaurados'      = $(if (@($restaurados).Count -gt 0) { (@($restaurados) -join ', ') } else { 'nenhum necessario' })
+        'Perfis nao restaurados'  = $(if (@($naoRestaurados).Count -gt 0) { (@($naoRestaurados) -join ', ') } else { 'nenhum' })
+        'Perfil de rede ativo'    = $(if ($depois.Ok) { $depois.PerfilAtivo } else { $antes.PerfilAtivo })
+        'Gerenciado por GPO'      = $(if ($antes.GerenciadoPorGpo) { 'Sim' } else { 'Nao detectado' })
+        'Dominio'                 = $(if ($dominio.Dominio) { $dominio.Nome } else { 'nao ingressada' })
+        'Firewall de terceiros'   = $(if ($antes.ProdutoTerceiro) { $antes.ProdutoTerceiro } else { 'nenhum registrado' })
+        'Status final'            = $nivel
+    }
+    Add-CompartDiskSection -Title 'Firewall - reset' -Status (Get-NetSectionStatus $nivel) -Pairs $pares `
+        -Rows $(if ($depois.Ok) { $depois.Perfis } else { @() }) `
+        -Summary ("Politica local redefinida; {0} perfil(is) restaurado(s) ao estado anterior" -f @($restaurados).Count)
+
+    if ($nivel -eq 'OK') {
+        $msg = 'Politica local de firewall redefinida ao padrao e estado dos perfis confirmado por releitura.'
+        Write-Log OK $msg
+        Add-CompartDiskFinding -Severity OK -Area 'Firewall' -Message $msg `
+            -Recommendation ("Regras personalizadas anteriores estao no backup {0} e podem ser reimportadas com 'netsh advfirewall import'." -f $bkp)
+    } else {
+        $msg = ('Reset da politica executado, porem o estado final dos perfis nao pode ser plenamente confirmado{0}.' -f $(if (@($naoRestaurados).Count -gt 0) { (': ' + (@($naoRestaurados) -join ', ')) } else { '' }))
+        Write-Log WARN $msg
+        Add-CompartDiskFinding -Severity WARN -Area 'Firewall' -Message $msg `
+            -Recommendation ("Conferir os perfis manualmente. O backup {0} permite reimportar a politica anterior." -f $bkp)
+    }
+    if ($antes.GerenciadoPorGpo -or $dominio.Dominio) {
+        Add-CompartDiskFinding -Severity INFO -Area 'Firewall' `
+            -Message 'O reset afeta apenas a politica local; regras distribuidas por diretiva de grupo permanecem e podem ser reaplicadas.' `
+            -Recommendation 'Em parque gerenciado, validar com a equipe responsavel antes de considerar a configuracao final.'
+    }
+}
+
+# ==============================================================================
+# ACAO: PROXY  (estritamente somente leitura)
+# WinINet (por usuario) e WinHTTP (do sistema) sao configuracoes DISTINTAS e
+# podem divergir legitimamente. Proxy configurado NAO e anomalia.
+# ==============================================================================
+function Protect-NetProxyString {
+    <# Mascara credenciais embutidas (usuario:senha@host) antes de exibir. #>
+    param([AllowNull()][object]$Value)
+    $t = "$Value"
+    if ([string]::IsNullOrWhiteSpace($t)) { return $t }
+    return ($t -replace '([A-Za-z0-9._%+\-]+):([^@\s/]+)@', '***:***@')
+}
+
+function Show-ProxyConfig {
+    Write-Log INFO 'Coletando configuracao de proxy (somente leitura)...'
+    $reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+
+    $habilitado = Get-CompartDiskRegistryValue $reg 'ProxyEnable' 0
+    $servidor   = Get-CompartDiskRegistryValue $reg 'ProxyServer' ''
+    $excecoes   = Get-CompartDiskRegistryValue $reg 'ProxyOverride' ''
+    $pac        = Get-CompartDiskRegistryValue $reg 'AutoConfigURL' ''
+    $autoDetect = Get-CompartDiskRegistryValue $reg 'AutoDetect' $null
+
+    $wininet = [ordered]@{
+        'Proxy manual habilitado'      = $(if ("$habilitado" -eq '1') { 'Sim' } else { 'Nao' })
+        'Servidor proxy'               = $(if ($servidor) { (Protect-NetProxyString $servidor) } else { 'nenhum' })
+        'Excecoes'                     = $(if ($excecoes) { "$excecoes" } else { 'nenhuma' })
+        'Script de configuracao automatica' = $(if ($pac) { (Protect-NetProxyString $pac) } else { 'nenhum' })
+        'Deteccao automatica (WPAD)'   = $(if ($null -eq $autoDetect) { 'nao definido' } elseif ("$autoDetect" -eq '1') { 'Sim' } else { 'Nao' })
+        'Escopo'                       = 'usuario atual do processo (HKCU)'
+    }
+
+    # WinHTTP: usado por Windows Update, BITS e servicos. Falha de consulta NAO
+    # pode ser reportada como "sem proxy".
+    $wh = Get-NetWinHttpProxy
+    $winhttp = [ordered]@{}
+    if ($wh.Ok) {
+        $winhttp['Configuracao'] = (Protect-NetProxyString $wh.Texto)
+        $winhttp['Consulta']     = 'concluida'
+    } else {
+        $winhttp['Configuracao'] = 'nao foi possivel consultar o WinHTTP'
+        $winhttp['Consulta']     = (Get-NetSafeText $wh.Detalhe 'falha na consulta')
+    }
+
+    foreach ($k in $wininet.Keys) { Write-NetPair $k $wininet[$k] }
+    Write-NetLine ''
+    foreach ($k in $winhttp.Keys) { Write-NetPair ("WinHTTP - $k") $winhttp[$k] }
+
+    Add-CompartDiskSection -Title 'Proxy - WinINet (usuario)' -Status INFO -Pairs $wininet `
+        -Summary 'Configuracao usada por navegadores e aplicacoes do usuario'
+    Add-CompartDiskSection -Title 'Proxy - WinHTTP (sistema)' -Status $(if ($wh.Ok) { 'INFO' } else { 'WARN' }) -Pairs $winhttp `
+        -Summary 'Configuracao usada por Windows Update, BITS e servicos do sistema'
+
+    if (-not $wh.Ok) {
+        Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
+            -Message ('A configuracao de proxy WinHTTP nao pode ser consultada: {0}' -f (Get-NetSafeText $wh.Detalhe 'falha na consulta')) `
+            -Recommendation 'A ausencia de leitura nao significa ausencia de proxy: repetir a consulta antes de concluir.'
+        Set-NetResult 'WARN' 'consulta WinHTTP indisponivel'
+    } else {
+        $temProxy = (("$habilitado" -eq '1') -or $pac -or ($wh.Texto -notmatch '(?i)direct|direto'))
+        $msg = $(if ($temProxy) { 'Configuracao de proxy presente e coletada. Proxy configurado e condicao normal em ambiente corporativo.' } else { 'Nenhum proxy configurado para o usuario atual nem para o WinHTTP.' })
+        Add-CompartDiskFinding -Severity INFO -Area 'Rede' -Message $msg
+    }
+    Write-Log OK 'Configuracao de proxy coletada (nenhuma alteracao aplicada).'
+}
+
+# ==============================================================================
+# ACAO: WIFI  (estritamente somente leitura)
+# O modulo NAO recupera, NAO exibe e NAO exporta chaves de seguranca: o verbo
+# 'key=clear' do netsh nunca e utilizado.
+# ==============================================================================
+function ConvertFrom-NetshWlanBlock {
+    <# Parsing resiliente a idioma: as chaves sao reconhecidas pelo prefixo
+       ASCII, o que funciona em portugues e ingles e sobrevive a diferencas de
+       codificacao na saida do netsh. #>
+    param([string]$Texto)
+
+    $mapa = @(
+        @{ Campo = 'Interface';    Padrao = '^(Name|Nome)$' }
+        @{ Campo = 'Descricao';    Padrao = '^Descri' }
+        @{ Campo = 'Estado';       Padrao = '^(State|Estado)$' }
+        @{ Campo = 'SSID';         Padrao = '^SSID$' }
+        @{ Campo = 'BSSID';        Padrao = '^BSSID$' }
+        @{ Campo = 'Radio';        Padrao = '^(Radio type|Tipo de r)' }
+        @{ Campo = 'Autenticacao'; Padrao = '^(Authentication|Autentica)' }
+        @{ Campo = 'Criptografia'; Padrao = '^(Cipher|Codifica|Cifra)' }
+        @{ Campo = 'Canal';        Padrao = '^(Channel|Canal)$' }
+        @{ Campo = 'Sinal';        Padrao = '^(Signal|Sinal)$' }
+        @{ Campo = 'Banda';        Padrao = '^(Band|Banda)$' }
+        @{ Campo = 'RecepcaoMbps'; Padrao = '^(Receive rate|Taxa de rec)' }
+        @{ Campo = 'EnvioMbps';    Padrao = '^(Transmit rate|Taxa de trans)' }
+    )
+
+    $blocos = New-Object System.Collections.ArrayList
+    $atual = $null
+    foreach ($linha in ($Texto -split "`r?`n")) {
+        if ($linha -notmatch '^\s*(.+?)\s*:\s*(.*)$') { continue }
+        $chave = $Matches[1].Trim()
+        $valor = $Matches[2].Trim()
+        if ($chave -match '^(Name|Nome)$') {
+            if ($null -ne $atual) { [void]$blocos.Add($atual) }
+            $atual = [ordered]@{}
+            foreach ($m in $mapa) { $atual[$m.Campo] = 'n/d' }
+        }
+        if ($null -eq $atual) { continue }
+        foreach ($m in $mapa) {
+            if ($chave -match $m.Padrao) {
+                # Primeira ocorrencia vence: evita que chaves semelhantes mais
+                # abaixo no bloco sobrescrevam o valor correto.
+                if ($atual[$m.Campo] -eq 'n/d' -and $valor) { $atual[$m.Campo] = $valor }
+                break
+            }
+        }
+    }
+    if ($null -ne $atual) { [void]$blocos.Add($atual) }
+
+    return @(@($blocos) | ForEach-Object {
+        $h = $_
+        $o = [pscustomobject]@{}
+        foreach ($m in $mapa) { Add-Member -InputObject $o -MemberType NoteProperty -Name $m.Campo -Value $h[$m.Campo] }
+        $o
+    })
+}
+
+function Get-NetWifiAdapterPresence {
+    [CmdletBinding()] param()
+    $out = [pscustomobject]@{ Ok = $false; Presente = $false; Total = 0; Detalhe = '' }
+    if (-not (Test-CompartDiskCommand 'Get-NetAdapter')) {
+        $out.Detalhe = 'Get-NetAdapter indisponivel nesta instalacao'
+        return $out
+    }
+    $r = Invoke-SafeCommand { Get-NetAdapter -ErrorAction Stop } -Activity 'Get-NetAdapter (Wi-Fi)' -Silent
+    if (-not $r.Success) {
+        $out.Detalhe = $(if ($r.Error) { $r.Error.Exception.Message } else { 'consulta nao concluida' })
+        return $out
+    }
+    $wifi = @((ConvertTo-NetArray $r.Value) | Where-Object {
+        "$($_.PhysicalMediaType)" -match '802\.11|Wireless' -or "$($_.InterfaceDescription)" -match '(?i)wi-?fi|wireless|802\.11'
+    })
+    $out.Ok = $true
+    $out.Total = $wifi.Count
+    $out.Presente = ($wifi.Count -gt 0)
+    return $out
+}
+
+function Show-WifiInfo {
+    Write-Log INFO 'Coletando diagnostico Wi-Fi (somente leitura)...'
+    $presenca = Get-NetWifiAdapterPresence
+
+    $r = Invoke-NetCommand -FilePath $netsh -Arguments @('wlan', 'show', 'interfaces') `
+            -TimeoutSeconds 45 -AcceptableExitCodes @(0) -Activity 'netsh wlan show interfaces'
+
+    if (-not $r.Ok) {
+        # Ausencia de Wi-Fi e condicao normal em desktop, servidor ou maquina
+        # cabeada: nao e defeito e nao gera CRIT.
+        $semAdaptador = ($presenca.Ok -and -not $presenca.Presente)
+        $sev = $(if ($semAdaptador) { 'INFO' } else { 'WARN' })
+        $msg = $(if ($semAdaptador) {
+            'Nenhum adaptador Wi-Fi presente neste sistema (condicao normal em equipamento cabeado, servidor ou maquina virtual).'
+        } else {
+            ('Nao foi possivel consultar as interfaces Wi-Fi: {0}' -f (Get-NetSafeText $r.Detalhe 'servico WLAN pode estar inativo'))
+        })
+        $rec = $(if ($semAdaptador) { '' } else { 'Verificar se o servico WLAN AutoConfig (WlanSvc) esta em execucao e se o adaptador esta habilitado.' })
+
+        Write-Log $(if ($semAdaptador) { 'INFO' } else { 'WARN' }) $msg
+        Add-CompartDiskSection -Title 'Wi-Fi' -Status $sev `
+            -Pairs ([ordered]@{
+                'Adaptador Wi-Fi'  = $(if ($presenca.Ok) { $(if ($presenca.Presente) { ("{0} presente(s)" -f $presenca.Total) } else { 'nenhum' }) } else { 'nao determinado' })
+                'Consulta netsh'   = (Get-NetSafeText $r.Detalhe 'nao concluida')
+            }) -Summary $msg
+        Add-CompartDiskFinding -Severity $sev -Area 'Rede' -Message $msg -Recommendation $rec
+        if ($sev -eq 'WARN') { Set-NetResult 'WARN' 'consulta Wi-Fi indisponivel' }
+        return
+    }
+
+    $interfaces = ConvertFrom-NetshWlanBlock -Texto $r.StdOut
+    if (@($interfaces).Count -eq 0) {
+        Write-Log INFO 'O servico WLAN respondeu, porem nenhuma interface Wi-Fi foi listada.'
+        Add-CompartDiskSection -Title 'Wi-Fi' -Status INFO -Summary 'Servico WLAN ativo sem interfaces listadas'
+        Add-CompartDiskFinding -Severity INFO -Area 'Rede' `
+            -Message 'O servico WLAN respondeu, porem nenhuma interface Wi-Fi foi listada.' `
+            -Recommendation 'Verificar se o adaptador esta desabilitado ou se o modo aviao esta ativo.'
+        return
+    }
+
+    Write-NetLine ''
+    Write-NetTable -Rows $interfaces -Property @('Interface', 'Estado', 'SSID', 'Sinal', 'Canal', 'Radio', 'Autenticacao', 'Criptografia')
+
+    $conectadas = @($interfaces | Where-Object { "$($_.SSID)" -ne 'n/d' -and "$($_.SSID)" })
+    Add-CompartDiskSection -Title 'Wi-Fi - interfaces' -Status INFO -Rows $interfaces `
+        -Summary ("{0} interface(s) Wi-Fi; {1} associada(s) a uma rede" -f @($interfaces).Count, @($conectadas).Count)
+
+    # Perfis: somente a quantidade e os nomes. Nenhuma chave de seguranca e
+    # consultada, exibida ou exportada por este modulo.
+    $p = Invoke-NetCommand -FilePath $netsh -Arguments @('wlan', 'show', 'profiles') `
+            -TimeoutSeconds 45 -AcceptableExitCodes @(0) -Activity 'netsh wlan show profiles'
+    if ($p.Ok) {
+        $nomes = New-Object System.Collections.ArrayList
+        foreach ($linha in ($p.StdOut -split "`r?`n")) {
+            if ($linha -match '^\s*(All User Profile|Perfil de Todos os Usu|Perfil de todos os usu)[^:]*:\s*(.+?)\s*$') {
+                [void]$nomes.Add($Matches[2].Trim())
+            }
+        }
+        $rows = @(@($nomes) | ForEach-Object { [pscustomobject]@{ Perfil = $_ } })
+        Add-CompartDiskSection -Title 'Wi-Fi - perfis salvos' -Status INFO -Rows $rows `
+            -Pairs ([ordered]@{ 'Perfis salvos' = @($nomes).Count; 'Chaves de seguranca' = 'nao consultadas por decisao de projeto' }) `
+            -Summary ("{0} perfil(is) salvo(s); nenhuma credencial e lida ou exibida" -f @($nomes).Count)
+        Write-NetLine ("`n  Perfis Wi-Fi salvos: {0}" -f @($nomes).Count) 'White'
+    } else {
+        Add-CompartDiskSection -Title 'Wi-Fi - perfis salvos' -Status WARN -Summary 'Consulta de perfis nao concluida'
+        Write-Log WARN ('Nao foi possivel listar os perfis Wi-Fi: {0}' -f (Get-NetSafeText $p.Detalhe 'consulta nao concluida'))
+        Set-NetResult 'WARN' 'consulta de perfis Wi-Fi indisponivel'
+    }
+
+    if (@($conectadas).Count -eq 0) {
+        Add-CompartDiskFinding -Severity INFO -Area 'Rede' `
+            -Message ("{0} interface(s) Wi-Fi presente(s), nenhuma associada a uma rede no momento." -f @($interfaces).Count) `
+            -Recommendation 'Condicao normal quando o equipamento usa cabo ou esta fora do alcance da rede sem fio.'
+    } else {
+        Add-CompartDiskFinding -Severity OK -Area 'Rede' `
+            -Message ("{0} interface(s) Wi-Fi associada(s) a uma rede." -f @($conectadas).Count)
+    }
+    Write-Log OK 'Diagnostico Wi-Fi coletado (nenhuma alteracao aplicada).'
+}
+
+# ==============================================================================
+# DESPACHO
+# Info, Test, Proxy e Wifi sao somente leitura e nao exigem elevacao.
+# Reset, Hosts e Firewall modificam o sistema e exigem administrador.
+# ==============================================================================
+$codigo = $Global:CompartDisk.Exit.ERROR
 try {
     $precisaAdmin = @('Reset', 'Hosts', 'Firewall') -contains $Action
     if (-not (Start-CompartDiskModule -Name 'Network' -Action $Action -RequireAdmin:$precisaAdmin -Quiet:$Quiet)) {
-        exit $Global:CompartDisk.Exit.ERROR
-    }
-
-    switch ($Action) {
-        'Info'     { Show-NetworkInfo }
-        'Reset'    { Reset-NetworkStack }
-        'Hosts'    { Restore-HostsFile }
-        'Firewall' { Reset-FirewallPolicy }
-        'Test'     { Test-NetworkConnectivity }
-        'Proxy'    { Show-ProxyConfig }
-        'Wifi'     { Show-WifiInfo }
+        # Sem isto o estado persistido para o Report.ps1 sairia como OK enquanto
+        # o modulo devolvia codigo de erro.
+        Set-NetResult 'ERROR' 'privilegios administrativos ausentes'
+    } else {
+        if ($precisaAdmin) {
+            $s = Test-NetRemoteSession
+            Write-Log INFO ("Acao modificadora '{0}' iniciada a partir de {1}. Alteracoes de rede podem interromper sessoes remotas." -f $Action, $s.Tipo)
+        }
+        switch ($Action) {
+            'Info'     { Show-NetworkInfo }
+            'Reset'    { Reset-NetworkStack }
+            'Hosts'    { Restore-HostsFile }
+            'Firewall' { Reset-FirewallPolicy }
+            'Test'     { Test-NetworkConnectivity }
+            'Proxy'    { Show-ProxyConfig }
+            'Wifi'     { Show-WifiInfo }
+        }
     }
 } catch {
-    $result = 'ERROR'
+    Set-NetResult 'ERROR' 'excecao nao tratada'
     Write-Log ERR "Falha nao tratada no modulo Network (Acao=$Action)." -ErrorRecord $_
-    Add-CompartDiskFinding -Severity CRIT -Area 'Rede' -Message "Excecao no modulo: $($_.Exception.Message)"
+    Add-CompartDiskFinding -Severity CRIT -Area 'Rede' `
+        -Message ("Excecao no modulo durante a acao '{0}': {1}" -f $Action, $_.Exception.Message) `
+        -Recommendation 'Consultar o log detalhado da sessao para a etapa exata e o codigo do erro.'
 } finally {
-    $codigo = Stop-CompartDiskModule -Result $result -Quiet:$Quiet
+    $codigo = Stop-CompartDiskModule -Result $script:result -Quiet:$Quiet
+    if ($null -eq $codigo) { $codigo = $Global:CompartDisk.Exit[$script:result] }
 }
-exit $codigo
+exit ([int]$codigo)
