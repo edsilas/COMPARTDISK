@@ -1850,6 +1850,7 @@ function Invoke-DebloatCategorias {
             'JaAplicado'   { 'DarkGray' }
             'NaoInstalado' { 'DarkGray' }
             'NaoSuportado' { 'Yellow' }
+            'AdiadoReboot' { 'Yellow' }
             'Protegido'    { 'Yellow' }
             'Falhou'       { 'Red' }
             default        { 'DarkGray' }
@@ -1962,7 +1963,7 @@ function Invoke-DebloatComponentes {
         Write-Log WARN 'Reinicio pendente: a limpeza de componentes foi pulada para nao operar sobre um Component Store em transicao.'
         [void]$linhas.Add([pscustomobject]@{
             Categoria = 'Componentes'; Tipo = 'DISM'; Alvo = 'StartComponentCleanup'; Nivel = $Level
-            Resultado = 'NaoSuportado'; Detalhe = 'Reinicio pendente'; Motivo = $obs
+            Resultado = 'AdiadoReboot'; Detalhe = 'SKIPPED_REBOOT_PENDING: aguarda reinicio para ser executada'; Motivo = $obs
         })
         Add-CompartDiskFinding -Severity WARN -Area 'Debloat' -Message 'Limpeza de componentes adiada por reinicio pendente.' `
             -Recommendation 'Reinicie o computador e execute a acao Components novamente.'
@@ -2675,6 +2676,9 @@ function Write-DebloatResumo {
     $protegidos = @($Linhas | Where-Object { $_.Resultado -eq 'Protegido' }).Count
     $naoSup     = @($Linhas | Where-Object { $_.Resultado -eq 'NaoSuportado' }).Count
     $falhas     = @($Linhas | Where-Object { $_.Resultado -eq 'Falhou' }).Count
+    # Adiado por reinicio nao e "nao suportado" (permanente) nem falha: e uma
+    # operacao que volta a ser possivel depois do reboot.
+    $adiados    = @($Linhas | Where-Object { $_.Resultado -eq 'AdiadoReboot' }).Count
 
     Write-Color ''
     Write-Color "  $Titulo" -Color White
@@ -2687,6 +2691,7 @@ function Write-DebloatResumo {
     Write-Color ("    {0} : {1}" -f 'Ja no estado desejado'.PadRight(26), $jaOk) -Color DarkGray
     if ($protegidos -gt 0) { Write-Color ("    {0} : {1}" -f 'Bloqueados por protecao'.PadRight(26), $protegidos) -Color Yellow }
     if ($naoSup -gt 0)     { Write-Color ("    {0} : {1}" -f 'Nao suportados aqui'.PadRight(26), $naoSup) -Color Yellow }
+    if ($adiados -gt 0)    { Write-Color ("    {0} : {1}" -f 'Adiados ate reiniciar'.PadRight(26), $adiados) -Color Yellow }
     if ($falhas -gt 0)     { Write-Color ("    {0} : {1}" -f 'Falhas'.PadRight(26), $falhas) -Color Red }
 
     $porCategoria = $Linhas | Group-Object Categoria | ForEach-Object {
@@ -2698,6 +2703,7 @@ function Write-DebloatResumo {
             Parciais     = @($_.Group | Where-Object { $_.Resultado -eq 'Parcial' }).Count
             JaOk         = @($_.Group | Where-Object { $_.Resultado -in @('JaAplicado', 'NaoInstalado') }).Count
             NaoSuportado = @($_.Group | Where-Object { $_.Resultado -eq 'NaoSuportado' }).Count
+            AdiadoReboot = @($_.Group | Where-Object { $_.Resultado -eq 'AdiadoReboot' }).Count
             Protegidas   = @($_.Group | Where-Object { $_.Resultado -eq 'Protegido' }).Count
             Falhas       = @($_.Group | Where-Object { $_.Resultado -eq 'Falhou' }).Count
         }
@@ -2707,8 +2713,8 @@ function Write-DebloatResumo {
 
     $status = $(if ($falhas -gt 0 -or $parciais -gt 0) { 'WARN' } else { 'OK' })
     Add-CompartDiskSection -Title $Titulo -Status $status -Rows @($Linhas) `
-        -Summary ("Nivel {0} | confirmadas {1} | parciais {2} | previstas {3} | ja conformes {4} | protegidas {5} | nao suportadas {6} | falhas {7}" -f `
-            $Level, $aplicados, $parciais, $simulados, $jaOk, $protegidos, $naoSup, $falhas)
+        -Summary ("Nivel {0} | confirmadas {1} | parciais {2} | previstas {3} | ja conformes {4} | protegidas {5} | nao suportadas {6} | adiadas por reinicio {7} | falhas {8}" -f `
+            $Level, $aplicados, $parciais, $simulados, $jaOk, $protegidos, $naoSup, $adiados, $falhas)
 
     if ($falhas -gt 0 -or $parciais -gt 0) {
         Add-CompartDiskFinding -Severity WARN -Area 'Debloat' -Message "$falhas alteracao(oes) falharam e $parciais foram aplicadas apenas em parte." `
