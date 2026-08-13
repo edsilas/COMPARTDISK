@@ -191,6 +191,12 @@ exit /b 1
 
 :ELEVACAO_ENVIADA
 call :TRACE "ESTAGIO 07 - instancia elevada solicitada, encerrando instancia atual"
+:: EVIDENCIA: no log de 13/08/2026 as duas sessoes abriram com "A execucao
+:: anterior terminou de forma anormal ... ESTAGIO 07". O encerramento apos o
+:: handoff de elevacao e INTENCIONAL, mas a ultima linha do trace nao continha
+:: o marcador de saida limpa e a instancia elevada o lia como queda. O marcador
+:: passa a ser gravado tambem aqui.
+call :TRACE "ENCERRAMENTO NORMAL - instancia nao elevada encerrada apos handoff de elevacao"
 ping -n 2 127.0.0.1 >nul 2>&1
 del "%COMPARTDISK_VBS%" >nul 2>&1
 exit /b 0
