@@ -59,6 +59,11 @@ set "COMPARTDISK_SELF=%~f0"
 set "CLI_MODE="
 set "COMPARTDISK_GUARD="
 set "TRACEFILE=%TEMP%\COMPARTDISK_Bootstrap.log"
+:: Consolidacao dos desfechos dos modulos executados nesta sessao.
+set "MOD_OK=0"
+set "MOD_WARN=0"
+set "MOD_ERR=0"
+set "MOD_SKIP=0"
 
 :: Recupera o desfecho da execucao anterior antes de sobrescrever o trace
 set "ESTAGIO_ANTERIOR="
@@ -764,6 +769,14 @@ if "%PS_RC%"=="2" call :LOG_MSG "ERR" "Modulo %~1 retornou erro. Consulte o log 
 if "%PS_RC%"=="3" call :LOG_MSG "WARN" "Recurso nao suportado neste hardware/edicao (%~1)."
 :RUN_PS_END
 set "PS_ARGS="
+:: Codigo 3 e os 9001/9002 significam nao executado ou substituido pelo
+:: fallback Batch: contam como pulado, nunca como erro.
+if "%PS_RC%"=="0" set /a MOD_OK+=1
+if "%PS_RC%"=="1" set /a MOD_WARN+=1
+if "%PS_RC%"=="2" set /a MOD_ERR+=1
+if "%PS_RC%"=="3" set /a MOD_SKIP+=1
+if "%PS_RC%"=="9001" set /a MOD_SKIP+=1
+if "%PS_RC%"=="9002" set /a MOD_SKIP+=1
 exit /b %PS_RC%
 
 :: ------------------------------------------------------------------------------
@@ -2097,11 +2110,22 @@ echo.
 pause >nul
 goto FIM
 
+:RESUMO_SESSAO
+:: Consolida os desfechos ja devolvidos pelos modulos. Nao reinterpreta
+:: resultado: apenas soma o que cada modulo reportou.
+set /a MOD_TOTAL=MOD_OK+MOD_WARN+MOD_ERR+MOD_SKIP
+if "%MOD_TOTAL%"=="0" goto :EOF
+call :LOG_MSG "INFO" "RESUMO DA SESSAO - modulos executados: %MOD_TOTAL% | OK: %MOD_OK% | ATENCAO: %MOD_WARN% | ERRO: %MOD_ERR% | PULADOS: %MOD_SKIP%"
+if not "%MOD_ERR%"=="0" call :LOG_MSG "ERR" "%MOD_ERR% modulo(s) terminaram em erro nesta sessao."
+if not "%MOD_WARN%"=="0" call :LOG_MSG "WARN" "%MOD_WARN% modulo(s) terminaram com atencao nesta sessao."
+goto :EOF
+
 :SAIR_CLI
 call :LOG_MSG "INFO" "SESSAO EM LINHA DE COMANDO ENCERRADA."
 goto FIM
 
 :FIM
+call :RESUMO_SESSAO
 :: Encerramento normal: marca o trace como limpo para que a proxima execucao
 :: saiba que nao houve queda.
 call :TRACE "ENCERRAMENTO NORMAL"
