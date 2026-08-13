@@ -1,4 +1,4 @@
-<#
+﻿<#
  COMPARTDISK 1.3.1 - Debloat.ps1
  Desenvolvido por Edsilas
  Acoes: Analyze | Apps | Services | Tasks | Privacy | Tweaks | Components | Full
@@ -1800,6 +1800,16 @@ function Invoke-DebloatCategorias {
         if ($r.Erro -and $r.Resultado -in @('Falhou', 'Parcial')) {
             Write-Log WARN "[$($i.Id)] $($r.Resultado): $($r.Erro)"
         }
+        # EVIDENCIA: no log de 13/08/2026 a acao Apps registrou 16 falhas AppX
+        # (0x80070002) e ainda assim finalizou com Resultado=OK, porque nenhuma
+        # falha de item chegava a Set-DebloatResultado. Um item que falhou ou
+        # ficou parcial contamina o resultado do modulo a partir daqui.
+        if (-not $Simular) {
+            switch ($r.Resultado) {
+                'Falhou'  { Set-DebloatResultado 'WARN' | Out-Null }
+                'Parcial' { Set-DebloatResultado 'WARN' | Out-Null }
+            }
+        }
 
         [void]$linhas.Add([pscustomobject]@{
             Categoria = $i.Categoria
@@ -1843,6 +1853,15 @@ function Invoke-DebloatCategorias {
         })
         Write-Color ("  {0,-19} {1,-46} {2}" -f 'Protegido', `
             (Format-DebloatAlvo $p.Item.Alvo), $p.Motivo) -Color Yellow
+    }
+
+    # Contabiliza o que realmente aconteceu na categoria, para que o resumo do
+    # modulo nao dependa apenas das linhas exibidas no console.
+    $nFalhas   = @($linhas | Where-Object { $_.Resultado -eq 'Falhou' }).Count
+    $nParciais = @($linhas | Where-Object { $_.Resultado -eq 'Parcial' }).Count
+    if (-not $Simular -and ($nFalhas -gt 0 -or $nParciais -gt 0)) {
+        Write-Log WARN ("{0}: {1} item(ns) falharam e {2} ficaram parciais de {3} processado(s)." -f `
+            ($Categorias -join ', '), $nFalhas, $nParciais, @($linhas).Count)
     }
 
     return @($linhas)
