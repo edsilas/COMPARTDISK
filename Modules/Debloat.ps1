@@ -2131,11 +2131,65 @@ function New-DebloatRestorePoint {
         return $false
     }
 
-    $msg = $(if ($r.Error) { "$($r.Error.Exception.Message)" } else { 'motivo nao informado' })
+    $msg  = $(if ($r.Error) { "$($r.Error.Exception.Message)" } else { 'motivo nao informado' })
+    $diag = Get-DebloatRestoreCausa -ErrorRecord $r.Error
     Write-Log WARN "Nao foi possivel criar o ponto de restauracao: $msg"
-    Add-CompartDiskFinding -Severity WARN -Area 'Debloat' -Message 'Ponto de restauracao nao pode ser criado.' `
-        -Recommendation 'Habilite a Protecao do Sistema em Sistema > Protecao do Sistema, ou use -SkipRestorePoint por sua conta e risco.'
+    Write-Log WARN "Causa identificada: $($diag.Causa)."
+    Add-CompartDiskFinding -Severity WARN -Area 'Debloat' -Message "Ponto de restauracao nao pode ser criado: $($diag.Causa)." `
+        -Recommendation $diag.Recomendacao
     return $false
+}
+
+function Get-DebloatRestoreCausa {
+    <# Identifica a causa da falha do Checkpoint-Computer. A Restauracao do
+       Sistema depende do VSS e do provedor swprv: quando um deles esta
+       desabilitado, o erro devolvido e o 1058 generico de servico, que sozinho
+       nao aponta o responsavel. Nenhum servico e alterado aqui. #>
+    param([AllowNull()][System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    $out = [pscustomobject]@{
+        Causa        = 'nao identificada'
+        Recomendacao = 'Habilite a Protecao do Sistema em Sistema > Protecao do Sistema, ou use -SkipRestorePoint por sua conta e risco.'
+        Servicos     = @()
+    }
+
+    $estados = New-Object System.Collections.ArrayList
+    $desabilitados = New-Object System.Collections.ArrayList
+    $ausentes = New-Object System.Collections.ArrayList
+    foreach ($nome in @('VSS', 'swprv')) {
+        $st = Get-DebloatServicoEstado -Nome $nome -Atualizar
+        if (-not $st) { [void]$ausentes.Add($nome); [void]$estados.Add("$nome=ausente"); continue }
+        [void]$estados.Add("$nome=$($st.StartMode)/$($st.State)")
+        if ("$($st.StartMode)" -match '(?i)disabled|desativad|desabilitad') { [void]$desabilitados.Add($nome) }
+    }
+    $out.Servicos = @($estados)
+
+    if ($desabilitados.Count -gt 0) {
+        $out.Causa = ("servico(s) necessario(s) a Restauracao do Sistema desabilitado(s): {0} ({1})" -f (@($desabilitados) -join ', '), (@($estados) -join '; '))
+        $out.Recomendacao = ("Reative {0} com tipo de inicializacao Manual e repita a operacao. O modulo nao altera servicos automaticamente." -f (@($desabilitados) -join ' e '))
+        return $out
+    }
+    if ($ausentes.Count -gt 0) {
+        $out.Causa = ("servico(s) de shadow copy ausente(s): {0}" -f (@($ausentes) -join ', '))
+        $out.Recomendacao = 'Componente de shadow copy ausente: avalie a integridade do Windows com DISM /RestoreHealth e SFC /scannow.'
+        return $out
+    }
+
+    $texto = $(if ($ErrorRecord) { "$($ErrorRecord.Exception.Message)" } else { '' })
+    if ($texto -match '(?i)desabilitad|disabled|1058') {
+        $out.Causa = ("um servico exigido pela Restauracao do Sistema recusou o inicio ({0})" -f (@($estados) -join '; '))
+        $out.Recomendacao = 'Verifique os servicos VSS e swprv e as diretivas que controlam o inicio deles.'
+        return $out
+    }
+    if ($texto -match '(?i)espaco|space|0x80042306') {
+        $out.Causa = 'espaco reservado para pontos de restauracao insuficiente'
+        $out.Recomendacao = 'Aumente o espaco reservado em Sistema > Protecao do Sistema > Configurar.'
+        return $out
+    }
+    if ($texto) {
+        $out.Causa = ("nao identificada a partir do erro devolvido ({0})" -f (@($estados) -join '; '))
+    }
+    return $out
 }
 
 function Invoke-DebloatBackup {
