@@ -1,4 +1,4 @@
-﻿<#
+<#
  COMPARTDISK 1.3.1 - Performance.ps1
  Desenvolvido por Edsilas
 
