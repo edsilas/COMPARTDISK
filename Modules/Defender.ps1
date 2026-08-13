@@ -40,6 +40,7 @@ function Show-DefenderStatus {
         Add-CompartDiskSection -Title 'Produtos antivirus' -Status INFO -Rows $av
         foreach ($p in $av) {
             if ($p.Ativo -eq 'Sim' -and $p.Atualizado -eq 'Nao') {
+                Write-Log WARN "$($p.Produto) esta ativo mas com assinaturas desatualizadas."
                 Add-CompartDiskFinding -Severity WARN -Area 'Antivirus' -Message "$($p.Produto) esta ativo mas com assinaturas desatualizadas." -Recommendation 'Atualizar as definicoes do produto.'
                 $script:result = 'WARN'
             }
@@ -66,6 +67,7 @@ function Show-DefenderStatus {
     Add-CompartDiskSection -Title 'Microsoft Defender' -Status $status -Pairs $st
 
     if ("$($st['Protecao em tempo real'])" -eq 'False') {
+        Write-Log WARN 'Protecao em tempo real do Defender DESABILITADA.'
         Add-CompartDiskFinding -Severity CRIT -Area 'Defender' -Message 'Protecao em tempo real desabilitada.' -Recommendation 'Reativar em Seguranca do Windows > Protecao contra virus e ameacas.'
         $script:result = 'WARN'
     } else {
@@ -75,12 +77,19 @@ function Show-DefenderStatus {
     $idade = 0
     try { $idade = [int]$st['Assinaturas idade (d)'] } catch { }
     if ($idade -gt 7) {
+        Write-Log WARN "Assinaturas do Defender com $idade dias de idade."
         Add-CompartDiskFinding -Severity WARN -Area 'Defender' -Message "Assinaturas com $idade dias de idade." -Recommendation 'Executar a atualizacao de definicoes.'
         $script:result = 'WARN'
     } elseif ($idade -gt 0) {
         Add-CompartDiskFinding -Severity OK -Area 'Defender' -Message "Assinaturas atualizadas ($idade dia(s))."
     }
-    Write-Log OK 'Status do Defender coletado.'
+    # EVIDENCIA: o log encerrava com "Status do Defender coletado." e
+    # Resultado=WARN, sem nenhum motivo gravado no arquivo de log.
+    if ($script:result -eq 'OK') {
+        Write-Log OK 'Status do Defender coletado: nenhuma condicao de atencao encontrada.'
+    } else {
+        Write-Log WARN 'Status do Defender coletado com condicao(oes) de atencao registrada(s) acima.'
+    }
 }
 
 function Update-DefenderSignatures {
@@ -90,7 +99,16 @@ function Update-DefenderSignatures {
         $true
     }
     if ($r) {
-        $st = Get-MpComputerStatus
+        # Mesma classe de defeito do FullScan: chamada nua a Get-MpComputerStatus
+        # propaga CimException e derruba o modulo com "falha nao tratada".
+        $sr = Invoke-SafeCommand { Get-MpComputerStatus -ErrorAction Stop } -Activity 'Get-MpComputerStatus (pos-atualizacao)' -Silent
+        if (-not $sr.Success -or $null -eq $sr.Value) {
+            Write-Log WARN 'Definicoes atualizadas, porem a versao resultante nao pode ser confirmada.'
+            Add-CompartDiskFinding -Severity WARN -Area 'Defender' -Message 'A atualizacao de definicoes foi aceita, mas a versao resultante nao pode ser lida.' -Recommendation 'Confirmar o estado do provedor WMI do Defender antes de considerar as assinaturas atualizadas.'
+            $script:result = 'WARN'
+            return
+        }
+        $st = $sr.Value
         Write-Log OK "Definicoes atualizadas: versao $($st.AntivirusSignatureVersion) ($($st.AntivirusSignatureLastUpdated))."
         Add-CompartDiskFinding -Severity OK -Area 'Defender' -Message "Assinaturas atualizadas para $($st.AntivirusSignatureVersion)."
     }
@@ -105,19 +123,113 @@ function Start-DefenderScan {
             $script:result = 'ERROR'
             return
         }
+    }
+
+    # EVIDENCIA: no log de 13/08/2026 a acao FullScan lancou CimException a
+    # partir de Start-MpScan sem tratamento, produzindo 'Falha nao tratada no
+    # modulo' e ERROR sem diagnostico. A chamada passa a ser envelopada e o
+    # erro, classificado.
+    if ($Tipo -eq 'CustomScan') {
         Write-Log INFO "Iniciando varredura personalizada em '$Alvo'..."
-        Start-MpScan -ScanType CustomScan -ScanPath $Alvo -ErrorAction Stop
+        $r = Invoke-SafeCommand { Start-MpScan -ScanType CustomScan -ScanPath $Alvo -ErrorAction Stop } -Activity 'Start-MpScan (CustomScan)' -Silent
     } else {
         $nome = if ($Tipo -eq 'QuickScan') { 'rapida' } else { 'completa (pode levar horas)' }
         Write-Log INFO "Iniciando varredura $nome..."
-        Start-MpScan -ScanType $Tipo -ErrorAction Stop
+        $r = Invoke-SafeCommand { Start-MpScan -ScanType $Tipo -ErrorAction Stop } -Activity "Start-MpScan ($Tipo)" -Silent
     }
 
-    $st = Get-MpComputerStatus
-    $fim = if ($Tipo -eq 'FullScan') { $st.FullScanEndTime } else { $st.QuickScanEndTime }
-    Write-Log OK "Varredura solicitada. Ultima conclusao registrada: $fim"
-    Add-CompartDiskFinding -Severity OK -Area 'Defender' -Message "Varredura $Tipo executada." -Recommendation 'Conferir ameacas detectadas na acao History.'
+    if (-not $r.Success) {
+        $diag = Get-DefenderScanFailureReason -ErrorRecord $r.Error
+        Write-Log ERR ("A varredura {0} NAO pode ser iniciada: {1}" -f $Tipo, $diag.Mensagem)
+        Add-CompartDiskFinding -Severity CRIT -Area 'Defender' `
+            -Message ("A varredura {0} nao pode ser iniciada: {1}" -f $Tipo, $diag.Mensagem) `
+            -Recommendation $diag.Recomendacao
+        Add-CompartDiskSection -Title 'Varredura do Defender' -Status CRIT `
+            -Pairs ([ordered]@{
+                'Tipo'      = $Tipo
+                'Situacao'  = 'nao iniciada'
+                'Causa'     = $diag.Causa
+                'Detalhe'   = $diag.Mensagem
+            }) -Summary 'Varredura nao iniciada'
+        $script:result = 'ERROR'
+        return
+    }
+
+    # 'Start-MpScan' retorna assim que a varredura e ACEITA pelo servico. Isso
+    # nao significa que ela terminou: a mensagem reflete apenas a solicitacao.
+    $sr = Invoke-SafeCommand { Get-MpComputerStatus -ErrorAction Stop } -Activity 'Get-MpComputerStatus' -Silent
+    $fim = 'nao disponivel'
+    $emAndamento = 'n/d'
+    if ($sr.Success -and $null -ne $sr.Value) {
+        $st = $sr.Value
+        try { $fim = "$(if ($Tipo -eq 'FullScan') { $st.FullScanEndTime } else { $st.QuickScanEndTime })" } catch { $fim = 'nao disponivel' }
+        try { $emAndamento = "$($st.ScanInProgress)" } catch { $emAndamento = 'n/d' }
+        if ([string]::IsNullOrWhiteSpace($fim)) { $fim = 'sem conclusao anterior registrada' }
+    } else {
+        Write-Log WARN 'A varredura foi solicitada, mas o status do Defender nao pode ser consultado em seguida.'
+        $script:result = 'WARN'
+    }
+
+    Write-Log OK ("Varredura {0} SOLICITADA ao servico e aceita. Conclusao anterior registrada: {1}." -f $Tipo, $fim)
+    Write-Log INFO 'A varredura roda em segundo plano: este modulo confirma o inicio, nao a conclusao.'
+    Add-CompartDiskSection -Title 'Varredura do Defender' -Status OK `
+        -Pairs ([ordered]@{
+            'Tipo'                 = $Tipo
+            'Situacao'             = 'solicitada e aceita pelo servico'
+            'Varredura em curso'   = $emAndamento
+            'Conclusao anterior'   = $fim
+        }) -Summary 'Solicitacao aceita; conclusao nao verificada por este modulo'
+    Add-CompartDiskFinding -Severity OK -Area 'Defender' `
+        -Message ("Varredura {0} solicitada e aceita pelo servico do Defender." -f $Tipo) `
+        -Recommendation 'A execucao ocorre em segundo plano. Conferir o resultado depois na acao History ou na Seguranca do Windows.'
     Show-ThreatHistory
+}
+
+function Get-DefenderScanFailureReason {
+    <# Classifica a falha de inicio de varredura em vez de devolver a excecao
+       crua. Cobre os casos observados em campo: CIM/WMI indisponivel, servico
+       parado, Defender substituido por antivirus de terceiros e bloqueio por
+       diretiva. #>
+    param([AllowNull()][System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    $out = [pscustomobject]@{ Causa = 'indeterminada'; Mensagem = 'falha nao identificada'; Recomendacao = '' }
+    if ($null -eq $ErrorRecord) { return $out }
+    $msg = "$($ErrorRecord.Exception.Message)"
+    $tipo = ''
+    try { $tipo = $ErrorRecord.Exception.GetType().FullName } catch { $tipo = '' }
+    $out.Mensagem = $msg
+
+    $terceiro = ''
+    try {
+        $av = @(Get-CompartDiskAntivirusProducts) | Where-Object { $_.Ativo -eq 'Sim' -and "$($_.Produto)" -notmatch '(?i)defender' }
+        if (@($av).Count -gt 0) { $terceiro = (@($av | ForEach-Object { $_.Produto }) -join ', ') }
+    } catch {
+        Write-Log DEBUG "Consulta de produtos antivirus indisponivel: $($_.Exception.Message)" -NoConsole
+    }
+
+    if ($terceiro) {
+        $out.Causa = 'antivirus de terceiros ativo'
+        $out.Recomendacao = ("O Microsoft Defender fica em modo passivo quando ha antivirus de terceiros ativo ({0}). Executar a varredura pelo proprio produto instalado." -f $terceiro)
+        return $out
+    }
+    if ($tipo -like '*CimException*' -or $msg -match '(?i)WMI|CIM|provedor') {
+        $out.Causa = 'provedor WMI/CIM do Defender indisponivel'
+        $out.Recomendacao = 'Confirmar se o servico WinDefend esta em execucao e se o provedor WMI do Defender responde; reiniciar o computador e repetir.'
+        return $out
+    }
+    if ($msg -match '(?i)acesso negado|denied|0x80070005') {
+        $out.Causa = 'permissao insuficiente'
+        $out.Recomendacao = 'Executar o Launcher como administrador e repetir a acao.'
+        return $out
+    }
+    if ($msg -match '(?i)desabilitad|disabled|politica|policy') {
+        $out.Causa = 'bloqueado por diretiva'
+        $out.Recomendacao = 'A varredura foi recusada por configuracao administrativa: tratar com a equipe responsavel pela diretiva.'
+        return $out
+    }
+    $out.Causa = 'erro do servico do Defender'
+    $out.Recomendacao = 'Verificar o estado do servico WinDefend e a integridade do Microsoft Defender antes de repetir.'
+    return $out
 }
 
 function Show-ThreatHistory {
