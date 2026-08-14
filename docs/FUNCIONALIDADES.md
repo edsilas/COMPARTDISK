@@ -22,7 +22,7 @@ veja o [Manual do Usuário](MANUAL-DO-USUARIO.md).
 | `Debloat.ps1` | `Analyze` `Apps` `Services` `Tasks` `Privacy` `Tweaks` `Components` `Full` `Backup` `Restore` `RestorePoint` |
 | `Performance.ps1` | `Analyze` `Ultimate` `Balanced` `Startup` `Processes` `Services` |
 | `Hardware.ps1` | `Info` `Full` `Gpu` `Memory` `Devices` `Temperature` |
-| `Drivers.ps1` | `List` `Problems` `Backup` `Unsigned` `Export` |
+| `Drivers.ps1` | `List` `Problems` `Backup` `Unsigned` `Export` `Diagnose` `Validate` `Restore` `Package` `Last` |
 | `Smart.ps1` | `Status` `Detail` `Volumes` `Shadow` `Spaces` |
 | `Battery.ps1` | `Info` `Report` `Sleep` |
 | `Bitlocker.ps1` | `Status` `Report` `Keys` |
@@ -171,6 +171,38 @@ do próprio Windows.
 
 **Drivers** — inventário completo, dispositivos com código de erro, drivers sem
 assinatura digital e backup por exportação, com verificação prévia de espaço livre.
+
+O ciclo completo do módulo é `Diagnose` → `Backup` → `Validate` → `Package` →
+`Restore`, e cada etapa é uma ação independente:
+
+| Ação | Escreve? | Administrador | O que faz |
+|---|---|---|---|
+| `List` `Problems` `Unsigned` `Export` | não | não | inventário, códigos de erro, assinatura e relatórios |
+| `Diagnose` | não | não | verificação prévia: privilégio, `pnputil`, repositório WMI, destino, espaço, duplicidades |
+| `Last` | não | não | localiza os backups conhecidos e valida rapidamente o mais recente |
+| `Validate` | apenas o registro da validação | não | confere estrutura, contagem, arquivos vazios, leitura real e hashes do manifesto |
+| `Backup` | sim | **sim** | exporta os pacotes por `pnputil /export-driver`, gera manifesto e valida |
+| `Package` | sim | não | prepara um subconjunto para transporte, com manifesto e `.zip` verificado |
+| `Restore` | sim | **sim** | adiciona pacotes de um backup validado por `pnputil /add-driver /install` |
+
+**Destino do backup.** Sem `-Path`, o destino é escolhido nesta ordem: último destino
+usado com sucesso, diretório persistente do projeto, área de documentos do usuário,
+volume fixo com espaço suficiente e, em último caso, o diretório da sessão. Cada
+candidato é validado quanto a caminho protegido, permissão de escrita comprovada por
+gravação real e espaço livre. `-Path` informado pelo operador sempre prevalece e nunca
+é substituído em silêncio: um caminho inválido interrompe a operação.
+
+**Restauração.** É **simulação por padrão** — sem `-Force` nada é instalado, e a ação
+apenas lista o que faria. `-DryRun` força a simulação mesmo com `-Force`. A restauração
+exige um backup aprovado na validação (inclusive hashes), nunca remove nem substitui um
+driver existente, ignora pacotes já publicados no repositório e confirma o resultado por
+reconsulta ao `pnputil`, não pelo código de retorno. Filtros disponíveis: `-InfName`,
+`-Provider`, `-DeviceClass` e `-OnlyMissing` (apenas pacotes cujos IDs de hardware
+correspondem a dispositivos que hoje reportam driver ausente ou inválido).
+
+**Não existe upload.** O COMPARTDISK não possui integração de envio — `remote.ps1`
+apenas baixa o projeto. `Package` entrega o pacote pronto com caminho, tamanho e
+SHA-256 para transporte manual, e nenhum envio é tentado ou simulado.
 
 **BitLocker** é somente leitura. Chaves de recuperação podem ser exibidas na tela, mas
 **nunca são gravadas em arquivo**.

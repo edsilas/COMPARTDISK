@@ -7,6 +7,100 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [Não lançado]
+
+Manutenção do `Modules/Drivers.ps1`. **Nenhuma tecla de menu mudou, nenhum arquivo
+fora do módulo teve comportamento alterado, e as cinco ações existentes
+(`List` `Problems` `Backup` `Unsigned` `Export`) continuam válidas com o mesmo
+significado.** As novas ações são acessíveis por `-Action` e não aparecem no menu.
+
+> A definição do número de versão desta entrega é decisão do mantenedor: o número
+> `1.3.1` aparece em `Core.ps1`, `Launcher.bat`, `README.md` e no cabeçalho de todos
+> os documentos, e não foi alterado por este trabalho.
+
+### Corrigido
+
+- **`Drivers.ps1` falhava ao localizar backups em máquina que nunca concluiu um
+  backup.** `Split-Path -Parent` era chamado com a cadeia vazia do estado persistente
+  e lançava exceção — ou seja, no caso mais comum. Afetava a listagem de backups e,
+  por consequência, toda ação que precisasse localizar um backup existente.
+- **Data do driver lida do INF podia sair com mês e dia trocados.** O campo
+  `DriverVer` é sempre `MM/DD/YYYY` por especificação do formato INF, mas era
+  interpretado pelo analisador genérico de datas, que tenta `dd/MM/yyyy` primeiro:
+  `05/12/2023` virava 5 de dezembro. Passa a usar o formato exato, com o analisador
+  genérico apenas como alternativa.
+- **O destino padrão do backup ficava dentro do diretório de relatórios da sessão**,
+  que é recriado a cada execução. O backup não sobrevivia à sessão seguinte —
+  justamente quando ele é necessário — e divergia do caminho persistente usado pela
+  cópia em Batch. Passa a usar seleção de destino persistente e auditável.
+- **O destino informado em `-Path` não era verificado contra caminhos protegidos.**
+  Um caminho dentro de `%SystemRoot%`, da raiz do volume ou do próprio repositório de
+  drivers era aceito. Passa a ser recusado antes de qualquer escrita.
+- **Argumento de caminho terminado em barra invertida podia escapar a aspa de
+  fechamento** na linha de comando do `pnputil` (`"D:\Dir\"` chega como `D:\Dir"`),
+  gravando a exportação em local diferente do informado.
+- **Espaço livre insuficiente abortava o backup mesmo quando a estimativa era
+  reconhecidamente pessimista.** A estimativa mede o repositório inteiro, incluindo
+  os pacotes do próprio Windows, que não são exportados. O aborto continua sendo o
+  padrão; `-Force` permite prosseguir com o risco declarado e registrado.
+- **A validação do backup lia apenas um `.inf` de amostra.** Passa a amostrar vários
+  pacotes distribuídos, contar arquivos de tamanho zero e pacotes sem `.inf`.
+- Remoção do diretório de execução vazia passa a exigir que **nenhum arquivo** exista
+  em qualquer nível abaixo dele, e que o alvo seja comprovadamente o diretório criado
+  naquela execução.
+- Removido código morto (`Get-DriverFindingSeverity`, nunca chamada) e um parâmetro
+  interno sem uso que poderia envenenar o cache do inventário se acionado.
+- `-ErrorAction SilentlyContinue` retirado da contagem de backups anteriores, que
+  falhava sem deixar rastro.
+
+### Adicionado
+
+- **`Diagnose`** — verificação prévia somente leitura: privilégio, `pnputil`,
+  repositório WMI, repositório de drivers, destino, espaço livre, assinatura,
+  duplicidades e dispositivos com driver ausente. Não cria nem altera nada.
+- **`Validate`** — validação real de um backup: estrutura, contagem, arquivos vazios,
+  leitura efetiva por amostragem e conferência de hashes contra o manifesto.
+- **`Restore`** — restauração dos pacotes de um backup validado, por
+  `pnputil /add-driver /install`. **Simulação é o padrão**; `-Force` aplica e
+  `-DryRun` vence `-Force`. Nunca remove nem substitui driver existente, ignora
+  pacotes já publicados (idempotência) e confirma o resultado por reconsulta ao
+  repositório, não pelo código de retorno. Filtros `-InfName`, `-Provider`,
+  `-DeviceClass` e `-OnlyMissing`.
+- **`Package`** — preparação de pacote para transporte, separada do backup: seleção
+  por filtro, cópia verificada, manifesto próprio, `.zip` opcional (`-Compress`)
+  reaberto e conferido, e SHA-256 do arquivo final.
+- **`Last`** — localiza os backups conhecidos e valida rapidamente o mais recente.
+- **Manifesto do backup** (`Manifest/Drivers_Manifesto.json`): computador, usuário,
+  Windows, build, arquitetura, PowerShell, método, totais e, por pacote, INF,
+  provedor, versão, data, classe, catálogo, tamanho e SHA-256 do `.inf` e do `.cat`.
+  Gravação atômica com releitura e conferência de contagem, no mesmo padrão de
+  `Debloat.ps1` — manifesto truncado é pior que manifesto nenhum.
+- **Seleção inteligente de destino**, auditável em seção própria do relatório: último
+  destino usado, diretório persistente do projeto, documentos do usuário, volume fixo
+  com espaço suficiente, diretório da sessão. Detecta mídia removível e rede, recusa
+  caminhos protegidos e comprova permissão de escrita gravando um arquivo temporário.
+- **Estrutura de backup previsível** — `Drivers/`, `Manifest/`, `Metadata/`,
+  `Validation/` — com nome `Drivers_AAAA-MM-DD_HH-mm-ss`. Backups no formato anterior
+  (pacotes na raiz) continuam sendo lidos, validados, empacotados e restaurados.
+- Inventário passa a expor origem (Windows ou terceiro), localização, `DeviceID` e ID
+  de hardware, obtidos na mesma consulta já existente.
+- Estado operacional explícito por operação: `NaoIniciado`, `EmPreparacao`,
+  `EmExecucao`, `Concluido`, `ConcluidoComAvisos`, `Falhou`, `Cancelado`.
+
+### Segurança
+
+- O módulo continua **sem** `Invoke-Expression`, sem executar qualquer arquivo
+  encontrado no backup (apenas `.inf`, apenas por `pnputil`), sem `/delete-driver`,
+  sem `/force` do `pnputil` e sem tocar em política de assinatura de drivers.
+- `Restore` recusa backup reprovado na validação e recusa backup com hash divergente
+  do manifesto — conteúdo alterado após a criação não é instalado.
+- Nomes de pasta derivados de dados do sistema são neutralizados contra travessia de
+  caminho antes de virarem caminho de arquivo.
+- **Não foi criada nenhuma integração de upload**: o projeto não possui backend de
+  envio, e nenhum envio é simulado.
+
+---
+
 ## [1.3.1] — 2026-08-06
 
 Versão de correção. **Nenhuma tecla de menu mudou de posição, nenhuma ação foi
