@@ -2096,12 +2096,23 @@ function New-DebloatRestorePoint {
         return $true
     }
 
+    # A classe SystemRestoreConfig existe em root\default mesmo com a Protecao do
+    # Sistema desligada: ela guarda a configuracao global, nao o estado do volume.
+    # Tomar a presenca da classe como prova de protecao ativa suprimia a unica
+    # tentativa de recuperacao (Enable-ComputerRestore) exatamente nos sistemas em
+    # que ela era necessaria. RPSessionInterval=0 e o que Disable-ComputerRestore
+    # grava: so esse valor derruba a presuncao; ausente ou ilegivel mantem o
+    # comportamento anterior.
     $protecaoConhecida = $false
     try {
-        $rp = Get-CompartDiskCim -Class SystemRestoreConfig -Namespace 'root\default'
+        $rp = @(Get-CompartDiskCim -Class SystemRestoreConfig -Namespace 'root\default') | Select-Object -First 1
         if ($rp) {
             $protecaoConhecida = $true
             Write-Log DEBUG "SystemRestoreConfig presente (RPSessionInterval=$($rp.RPSessionInterval))." -NoConsole
+            if ($null -ne $rp.RPSessionInterval -and [int]$rp.RPSessionInterval -eq 0) {
+                $protecaoConhecida = $false
+                Write-Log WARN 'Restauracao do Sistema desligada no sistema (RPSessionInterval=0).'
+            }
         }
     } catch {
         Write-Log DEBUG "SystemRestoreConfig indisponivel: $($_.Exception.Message)" -NoConsole
@@ -2178,8 +2189,51 @@ function Get-DebloatRestoreCausa {
 
     $texto = $(if ($ErrorRecord) { "$($ErrorRecord.Exception.Message)" } else { '' })
     if ($texto -match '(?i)desabilitad|disabled|1058') {
-        $out.Causa = ("um servico exigido pela Restauracao do Sistema recusou o inicio ({0})" -f (@($estados) -join '; '))
-        $out.Recomendacao = 'Verifique os servicos VSS e swprv e as diretivas que controlam o inicio deles.'
+        # EVIDENCIA: no log de 13/08/2026 (tres execucoes) esta ramificacao
+        # afirmou "um servico exigido pela Restauracao do Sistema recusou o
+        # inicio" imprimindo, na mesma linha, "VSS=Manual/Running;
+        # swprv=Manual/Running". A causa contradizia a propria evidencia e
+        # mandava o operador investigar dois servicos que estavam em execucao.
+        # O 1058 so pode ser atribuido a VSS/swprv quando um deles nao esta
+        # rodando; caso contrario a recusa vem de outro servico da cadeia.
+        $parados = @($estados | Where-Object { $_ -notmatch '(?i)/(Running|Em execucao|Executando)' })
+        if ($parados.Count -gt 0) {
+            $out.Causa = ("um servico exigido pela Restauracao do Sistema recusou o inicio ({0})" -f (@($estados) -join '; '))
+            $out.Recomendacao = 'Verifique os servicos VSS e swprv e as diretivas que controlam o inicio deles.'
+            return $out
+        }
+
+        # VSS e swprv em execucao: percorrer a cadeia de dependencia, onde o 1058
+        # costuma nascer de fato. Nenhum servico e alterado aqui.
+        $cadeia    = New-Object System.Collections.ArrayList
+        $cadeiaOff = New-Object System.Collections.ArrayList
+        foreach ($nome in @('COMSysApp', 'EventSystem', 'RpcSs', 'DcomLaunch')) {
+            $st = Get-DebloatServicoEstado -Nome $nome -Atualizar
+            if (-not $st) { [void]$cadeia.Add("$nome=ausente"); continue }
+            [void]$cadeia.Add("$nome=$($st.StartMode)/$($st.State)")
+            if ("$($st.StartMode)" -match '(?i)disabled|desativad|desabilitad') { [void]$cadeiaOff.Add($nome) }
+        }
+        $out.Servicos = @($estados) + @($cadeia)
+
+        if ($cadeiaOff.Count -gt 0) {
+            $out.Causa = ("servico(s) da cadeia COM+/VSS desabilitado(s): {0} ({1}; {2})" -f `
+                (@($cadeiaOff) -join ', '), (@($estados) -join '; '), (@($cadeia) -join '; '))
+            $out.Recomendacao = ("Reative {0} com o tipo de inicializacao padrao (Manual) e repita a operacao. O modulo nao altera servicos automaticamente." -f (@($cadeiaOff) -join ' e '))
+            return $out
+        }
+
+        # Nada desabilitado na cadeia: pode ser a Protecao do Sistema desligada
+        # para o volume. RPSessionInterval=0 e o que Disable-ComputerRestore grava.
+        $rpsi = Get-CompartDiskRegistryValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' -Name 'RPSessionInterval' -Default $null
+        if ($null -ne $rpsi -and "$rpsi" -eq '0') {
+            $out.Causa = ("Restauracao do Sistema desligada no sistema (RPSessionInterval=0); os servicos de shadow copy estao em execucao ({0})" -f (@($estados) -join '; '))
+            $out.Recomendacao = 'Ligue a Protecao do Sistema para o volume do sistema em Sistema > Protecao do Sistema > Configurar e repita a operacao.'
+            return $out
+        }
+
+        $out.Causa = ("o Windows devolveu erro de servico desabilitado (1058) com os servicos de shadow copy em execucao ({0}) e a cadeia COM+/VSS habilitada ({1}); a recusa nao vem de VSS nem de swprv" -f `
+            (@($estados) -join '; '), (@($cadeia) -join '; '))
+        $out.Recomendacao = 'Confira em services.msc se algum servico esta Desabilitado por diretiva e se a Protecao do Sistema esta ligada para o volume do sistema; "vssadmin list writers" ajuda a identificar o componente que recusa.'
         return $out
     }
     if ($texto -match '(?i)espaco|space|0x80042306') {
@@ -2819,6 +2873,11 @@ function Invoke-DebloatDespacho {
                     Set-DebloatResultado 'WARN' | Out-Null
                 } elseif (-not (New-DebloatRestorePoint)) {
                     Write-Log ERR 'Rotina interrompida: sem ponto de restauracao nao ha rede de seguranca.'
+                    # O Launcher nao expoe -SkipRestorePoint em nenhum item de menu:
+                    # sem o comando explicito no log, a falha vira um beco sem saida
+                    # para quem so usa o menu. O manifesto continua sendo a unica
+                    # rede de seguranca nesse caminho, e isso e dito aqui.
+                    Write-Log INFO ("Para seguir assumindo o risco, execute manualmente: powershell -ExecutionPolicy Bypass -File `"{0}`" -Action Full -Level {1} -SkipRestorePoint" -f $PSCommandPath, $Level)
                     Add-CompartDiskFinding -Severity CRIT -Area 'Debloat' -Message 'Rotina completa interrompida por ausencia de ponto de restauracao.' `
                         -Recommendation 'Habilitar a Protecao do Sistema, ou reexecutar com -SkipRestorePoint assumindo o risco.'
                     Set-DebloatResultado 'ERROR' | Out-Null
