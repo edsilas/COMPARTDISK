@@ -10,8 +10,9 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1`, `Debloat.ps1`,
-`Repair.ps1`, `Smart.ps1`, `Network.ps1`, `Users.ps1`, `Hardware.ps1` e
-`Collectors.ps1`, e correção de ordenação nos relatórios de todos os módulos.
+`Repair.ps1`, `Smart.ps1`, `Network.ps1`, `Users.ps1`, `Hardware.ps1`,
+`Collectors.ps1`, `Report.ps1` e `Core.ps1`, e correção de ordenação nos relatórios
+de todos os módulos.
 
 **Nenhuma tecla de menu mudou, nenhum rótulo existente foi removido ou renomeado, e
 nenhum caminho de fallback Batch foi alterado.** As cinco ações existentes do módulo de drivers
@@ -376,6 +377,65 @@ listas de proteção permanecem exatamente como estavam.
 > `UNSUPPORTED` quando não há sensor, e as teclas `5` e `6` do menu não mudaram. O
 > módulo permanece **exclusivamente diagnóstico**: nenhum comando que altere registro,
 > serviço, driver, dispositivo, energia, partição ou firmware foi introduzido.
+
+#### Report
+
+- **Falha total da geração era publicada como sucesso.** `New-Report` captura a falha
+  de cada formato individualmente e devolve apenas o que gravou; o módulo registrava
+  `[ OK ] Relatorio consolidado gerado (0 arquivos)` e **devolvia `0` ao Launcher**
+  mesmo com nenhum arquivo no disco. Reproduzido com o diretório de saída somente
+  leitura: os quatro formatos falhavam e a execução terminava em sucesso. Passa a
+  confirmar arquivo a arquivo — o mesmo que `Drivers.ps1` já fazia, com o comentário
+  *"New-Report executou não é prova"* — e a devolver `ERROR` quando nada é confirmado.
+- **Módulo que terminou com `ERROR` não afetava o relatório.** O resultado de cada
+  módulo era exibido numa tabela e nunca escalava o estado do `Report` nem gerava
+  achado — e um módulo que falha frequentemente não publica achado nenhum, então
+  desaparecia por completo do resumo. Cada `ERROR` passa a gerar achado `CRIT`.
+- **Um único campo malformado descartava o módulo inteiro.** Uma severidade fora do
+  `ValidateSet` fazia `Add-CompartDiskFinding` lançar, e o `catch` por arquivo
+  descartava **todas** as seções e **todos** os achados daquele módulo. Verificado:
+  1 severidade inválida custava 2 seções e 3 achados. A importação passa a ser item a
+  item, com a severidade original preservada na mensagem.
+- **Estado ilegível sumia do console.** O aviso era gravado com `-NoConsole` e a
+  contagem informada incluía os arquivos que falharam, então "3 estados agregados"
+  podia significar 2 lidos e 1 perdido.
+- **A cobertura da coleta não era declarada.** O relatório passa a informar
+  explicitamente `Coleta completa` ou `Coleta parcial`, com estados encontrados,
+  lidos, ilegíveis, itens descartados e a contagem de módulos por resultado.
+- **Escrita não atômica.** A gravação ia direto no caminho final: uma interrupção
+  deixava arquivo truncado com aparência de válido, e uma falha destruía o relatório
+  anterior antes de falhar. Passa a gravar em temporário, validar e só então
+  substituir — verificado que o relatório anterior sobrevive byte a byte a uma falha,
+  sem deixar `.tmp` órfão.
+- **Codificação divergia conforme o motor.** `Set-Content -Encoding UTF8` grava BOM no
+  Windows PowerShell 5.1 e **não** grava no PowerShell 7 — e o Launcher prefere o
+  pwsh 7. O CSV saía sem BOM justamente no motor preferido, e o Excel abre a
+  acentuação corrompida. Passa a ser explícito e igual nos dois motores: BOM em
+  TXT/CSV/HTML, sem BOM em JSON (parsers estritos recusam BOM).
+- Material secreto publicado por engano como par chave/valor (`DefaultPassword`,
+  `RecoveryPassword`, token, senha de recuperação) passa a ser ocultado antes de
+  chegar a qualquer formato. A regra compara o **nome completo** da chave: `Tamanho
+  mínimo da senha` continua visível por ser diagnóstico legítimo.
+- Formato solicitado que não chega ao disco passa a ser reportado como perda parcial,
+  nomeando o formato ausente, em vez de contar como sucesso pleno.
+- `Open` deixa de terminar em sucesso quando o arquivo não abre ou está vazio.
+
+#### Core
+
+- Adicionada `Write-CompartDiskReportFile`: escrita atômica, verificada e com
+  codificação explícita, usada por `New-Report` para os quatro formatos. Beneficia
+  também `Audit.ps1`, `Bitlocker.ps1` e `Drivers.ps1`.
+- A verificação por tamanho não distinguia arquivo de diretório: em PowerShell
+  `.Length` devolve `1` para qualquer objeto escalar, inclusive um `DirectoryInfo`, e
+  um diretório ocupando o caminho do relatório passava por arquivo válido enquanto o
+  temporário era movido para dentro dele. A checagem passa a exigir `PSIsContainer`
+  falso. *A mesma verificação em `Drivers.ps1` tem a limitação e não foi alterada.*
+
+> As três ações (`Build` `Consolidate` `Open`) continuam válidas com o mesmo
+> significado, os nomes dos arquivos (`Relatorio_Consolidado_<sessão>.*`) e os quatro
+> formatos permanecem, o HTML continua **autocontido e offline** (zero referências
+> externas), e o `state_Report*` continua sendo excluído da reagregação — verificado
+> que três consolidações seguidas não duplicam achados.
 
 ### Adicionado
 

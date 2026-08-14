@@ -1005,6 +1005,49 @@ function Set-CompartDiskServiceState {
 # ------------------------------------------------------------------------------
 # Relatorios: TXT / CSV / JSON / HTML
 # ------------------------------------------------------------------------------
+function Write-CompartDiskReportFile {
+    <# Escrita ATOMICA e verificada de um arquivo de relatorio.
+
+       A gravacao direta no caminho final deixava dois modos de falha silenciosos:
+       uma interrupcao no meio da escrita produzia um arquivo truncado com aparencia
+       de valido, e uma falha de escrita destruia o relatorio anterior antes de
+       falhar. Grava-se num temporario, confere-se o conteudo e so entao ele
+       substitui o arquivo final - se qualquer etapa falhar, o relatorio anterior
+       permanece intacto e a excecao sobe para quem chamou.
+
+       Codificacao: "Set-Content -Encoding UTF8" grava BOM no Windows PowerShell 5.1
+       e NAO grava no PowerShell 7, produzindo bytes diferentes conforme o motor - e
+       o Launcher prefere o pwsh 7. Sem BOM, o Excel abre o CSV com acentuacao
+       corrompida (a, e, c com til e cedilha). O padrao passa a ser explicito e
+       igual nos dois motores: BOM em TXT/CSV/HTML, sem BOM em JSON. #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Content,
+        [bool]$Bom = $true
+    )
+    $tmp = "$Path.tmp"
+    try {
+        # Um diretorio ocupando o caminho de destino faria Move-Item mover o
+        # temporario para DENTRO dele. Verificar so o "tamanho" nao pega isso: em
+        # PowerShell, .Length devolve 1 para qualquer objeto escalar - inclusive um
+        # DirectoryInfo - entao tamanho maior que zero nao prova que existe arquivo.
+        if (Test-Path -LiteralPath $Path -PathType Container) { throw "o caminho de destino e um diretorio: $Path" }
+
+        [System.IO.File]::WriteAllText($tmp, $Content, (New-Object System.Text.UTF8Encoding($Bom)))
+        $fiTmp = Get-Item -LiteralPath $tmp -ErrorAction Stop
+        if ($fiTmp.PSIsContainer -or $fiTmp.Length -le 0) { throw "conteudo vazio apos a escrita de $([System.IO.Path]::GetFileName($Path))" }
+
+        Move-Item -LiteralPath $tmp -Destination $Path -Force -ErrorAction Stop
+        $fi = Get-Item -LiteralPath $Path -ErrorAction Stop
+        if ($fi.PSIsContainer -or $fi.Length -le 0) { throw "arquivo final invalido ou vazio: $Path" }
+        return $fi.FullName
+    } finally {
+        # O temporario nunca pode sobreviver a uma falha.
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function New-Report {
     [CmdletBinding()]
     param(
@@ -1037,32 +1080,24 @@ function New-Report {
         try {
             switch ($f) {
                 'JSON' {
-                    $p = "$base.json"
-                    # UTF-8 SEM marca de ordem de bytes: "Set-Content -Encoding UTF8"
-                    # grava BOM no Windows PowerShell 5.1 e nao grava no PowerShell 7,
-                    # produzindo bytes diferentes conforme o motor. O JSON e declarado
-                    # para consumo automatizado e parsers estritos recusam o BOM.
-                    # TXT, CSV e HTML permanecem como estao (no CSV o BOM ajuda o Excel).
-                    [System.IO.File]::WriteAllText($p, ($Data | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
-                    [void]$produced.Add($p)
+                    # UTF-8 SEM marca de ordem de bytes: o JSON e declarado para
+                    # consumo automatizado e parsers estritos recusam o BOM.
+                    [void]$produced.Add((Write-CompartDiskReportFile -Path "$base.json" -Content ($Data | ConvertTo-Json -Depth 10) -Bom:$false))
                 }
                 'TXT' {
-                    $p = "$base.txt"
-                    (ConvertTo-CompartDiskText -Data $Data -Title $Title) | Set-Content -LiteralPath $p -Encoding UTF8
-                    [void]$produced.Add($p)
+                    [void]$produced.Add((Write-CompartDiskReportFile -Path "$base.txt" -Content (ConvertTo-CompartDiskText -Data $Data -Title $Title)))
                 }
                 'CSV' {
-                    $p = "$base.csv"
                     $rows = ConvertTo-CompartDiskFlatRows -Data $Data
                     if ($rows.Count -gt 0) {
-                        $rows | Export-Csv -LiteralPath $p -NoTypeInformation -Encoding UTF8 -Delimiter ';'
-                        [void]$produced.Add($p)
+                        $csv = ($rows | ConvertTo-Csv -NoTypeInformation -Delimiter ';') -join "`r`n"
+                        [void]$produced.Add((Write-CompartDiskReportFile -Path "$base.csv" -Content $csv))
+                    } else {
+                        Write-Log DEBUG 'CSV nao gerado: nenhuma linha achatada a publicar.' -NoConsole
                     }
                 }
                 'HTML' {
-                    $p = "$base.html"
-                    (ConvertTo-CompartDiskHtml -Data $Data -Title $Title) | Set-Content -LiteralPath $p -Encoding UTF8
-                    [void]$produced.Add($p)
+                    [void]$produced.Add((Write-CompartDiskReportFile -Path "$base.html" -Content (ConvertTo-CompartDiskHtml -Data $Data -Title $Title)))
                 }
             }
         } catch {
