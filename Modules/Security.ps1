@@ -52,7 +52,11 @@ function Show-SecurityPosture {
     Add-CompartDiskSection -Title 'Postura de seguranca' -Status $(if ($criticos -gt 0) { 'CRIT' } else { 'OK' }) -Pairs $p
 
     # Firewall
-    $fw = Get-CompartDiskFirewallInfo
+    # Mesma causa comprovada em Bitlocker.ps1: os coletores devolvem @($rows) e o
+    # PowerShell desembrulha a colecao de um unico elemento na atribuicao. Com
+    # exatamente uma linha, ".Count" nao resolve no Windows PowerShell 5.1 e a
+    # condicao ficava falsa - a secao inteira era pulada em silencio.
+    $fw = @(Get-CompartDiskFirewallInfo)
     if ($fw.Count -gt 0) {
         Write-Color ''
         $fw | Format-Table -AutoSize | Out-String -Width 160 | Write-Output
@@ -60,7 +64,10 @@ function Show-SecurityPosture {
     }
 
     # BitLocker resumido
-    $bl = Test-BitLocker
+    # No PC do log havia exatamente um volume BitLocker (C:, desprotegido): com
+    # um unico elemento a condicao abaixo era falsa e o aviso de volume do
+    # sistema sem protecao deixava de ser emitido por este modulo.
+    $bl = @(Test-BitLocker)
     if ($bl.Count -gt 0) {
         $sistema = $bl | Where-Object { "$($_.MountPoint)" -like "$($env:SystemDrive)*" } | Select-Object -First 1
         if ($sistema -and "$($sistema.ProtectionStatus)" -notmatch 'On|1') {
