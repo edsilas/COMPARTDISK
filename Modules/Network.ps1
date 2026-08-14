@@ -92,6 +92,57 @@ function Get-NetSafeText {
     return $t
 }
 
+function Get-NetIPv4Class {
+    <# Classifica um endereco IPv4, aceitando a forma "endereco/prefixo" que o
+       coletor devolve. Devolve: Apipa | Loopback | Privado | CGNAT | Publico |
+       Invalido.
+
+       Existe para que a decisao "ha endereco utilizavel?" pare de ser feita por
+       contagem. Ver Test-NetworkConnectivity: a regra anterior so reconhecia
+       APIPA quando havia exatamente UM endereco no sistema. #>
+    param([AllowNull()][object]$Endereco)
+    $t = "$Endereco".Trim()
+    if (-not $t) { return 'Invalido' }
+    $t = ($t -split '/')[0].Trim()
+
+    $ip = [System.Net.IPAddress]::Any
+    if (-not [System.Net.IPAddress]::TryParse($t, [ref]$ip)) { return 'Invalido' }
+    if ($ip.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) { return 'Invalido' }
+
+    $o = $ip.GetAddressBytes()
+    if ($o[0] -eq 169 -and $o[1] -eq 254) { return 'Apipa' }
+    if ($o[0] -eq 127)                    { return 'Loopback' }
+    if ($o[0] -eq 10)                     { return 'Privado' }
+    if ($o[0] -eq 192 -and $o[1] -eq 168) { return 'Privado' }
+    if ($o[0] -eq 172 -and $o[1] -ge 16 -and $o[1] -le 31) { return 'Privado' }
+    if ($o[0] -eq 100 -and $o[1] -ge 64 -and $o[1] -le 127) { return 'CGNAT' }
+    return 'Publico'
+}
+
+function Test-NetIPv4Utilizavel {
+    <# Endereco que permite roteamento: nem APIPA, nem loopback, nem invalido. #>
+    param([AllowNull()][object]$Endereco)
+    return ((Get-NetIPv4Class $Endereco) -in @('Privado', 'CGNAT', 'Publico'))
+}
+
+function Get-NetEstadoNormalizado {
+    <# Traduz o Status bruto do adaptador para um vocabulario estavel.
+       Get-NetAdapter e Win32_NetworkAdapter usam cadeias diferentes, e o
+       relatorio nao deveria expor essa diferenca a quem le. #>
+    param([AllowNull()][object]$Status)
+    $s = "$Status".Trim()
+    if (-not $s) { return 'Unknown' }
+    switch -Regex ($s) {
+        '(?i)^up$'                    { return 'Healthy' }
+        '(?i)disabled'                { return 'Disabled' }
+        '(?i)disconnected'            { return 'Disconnected' }
+        '(?i)not\s*present'           { return 'NotPresent' }
+        '(?i)faulty|failed|error'     { return 'Error' }
+        '(?i)^down$'                  { return 'Disconnected' }
+        default                       { return 'Unknown' }
+    }
+}
+
 # ------------------------------------------------------------------------------
 # Registro de etapas: cada operacao tem resultado proprio e verificavel.
 # ------------------------------------------------------------------------------
@@ -300,13 +351,29 @@ function Get-NetAdapterFacts {
 
             foreach ($a in $adapters) {
                 $alias = Get-NetSafeText $a.Name
-                $ifc = @($ipif | Where-Object { "$($_.InterfaceAlias)" -eq $alias }) | Select-Object -First 1
+                $idx   = $null
+                try { if ($null -ne $a.InterfaceIndex) { $idx = [int]$a.InterfaceIndex } } catch { $idx = $null }
+
+                # Correlacao por InterfaceIndex, com o alias apenas como recurso
+                # secundario. O nome da interface e editavel pelo usuario, muda
+                # entre versoes do Windows e pode repetir-se em ambiente com
+                # muitos adaptadores virtuais: casar por nome associava MTU e
+                # DHCP de uma interface a outra.
+                $ifc = $null
+                if ($null -ne $idx) {
+                    $ifc = @($ipif | Where-Object { "$($_.InterfaceIndex)" -eq "$idx" }) | Select-Object -First 1
+                }
+                if (-not $ifc) {
+                    $ifc = @($ipif | Where-Object { "$($_.InterfaceAlias)" -eq $alias }) | Select-Object -First 1
+                }
                 $dhcp = 'Indeterminado'
                 if ($ifc) { $dhcp = $(if ("$($ifc.Dhcp)" -eq 'Enabled') { 'DHCP' } else { 'Estatico' }) }
                 [void]$linhas.Add([pscustomobject]@{
                     Interface  = $alias
+                    Indice     = $(if ($null -ne $idx) { $idx } else { 'n/d' })
                     Descricao  = (Get-NetSafeText $a.InterfaceDescription)
                     Estado     = (Get-NetSafeText $a.Status)
+                    EstadoNorm = (Get-NetEstadoNormalizado $a.Status)
                     Virtual    = $(if ($a.Virtual) { 'Sim' } else { 'Nao' })
                     Velocidade = (Get-NetSafeText $a.LinkSpeed)
                     ConfigIPv4 = $dhcp
@@ -322,20 +389,43 @@ function Get-NetAdapterFacts {
 
     if ($linhas.Count -eq 0) {
         # Fallback CIM: Windows sem os cmdlets NetTCPIP disponiveis.
-        $cim = Get-CompartDiskCim -Class Win32_NetworkAdapter -Filter 'PhysicalAdapter=True'
+        #
+        # O filtro anterior era 'PhysicalAdapter=True', que descarta TODA
+        # interface virtual: VPN, Hyper-V, VMware, VirtualBox, WSL e Bluetooth
+        # PAN sumiam do inventario justamente na maquina em que os cmdlets
+        # modernos nao existem. O criterio passa a ser ter NetConnectionID, ou
+        # seja, aparecer em Conexoes de Rede - isso inclui os virtuais reais e
+        # continua excluindo miniportas WAN e adaptadores de tunel internos.
+        $cim = Get-CompartDiskCim -Class Win32_NetworkAdapter -Filter 'NetConnectionID IS NOT NULL'
+        if (@(ConvertTo-NetArray $cim).Count -eq 0) {
+            $cim = Get-CompartDiskCim -Class Win32_NetworkAdapter -Filter 'PhysicalAdapter=True'
+        }
         $cfg = Get-CompartDiskCim -Class Win32_NetworkAdapterConfiguration
         foreach ($a in (ConvertTo-NetArray $cim)) {
             $c = @((ConvertTo-NetArray $cfg) | Where-Object { $_.Index -eq $a.Index }) | Select-Object -First 1
+            # Valores de NetConnectionStatus (Win32_NetworkAdapter):
+            # 0 Desconectado, 1 Conectando, 2 Conectado, 3 Desconectando,
+            # 4 Hardware ausente, 5 Hardware desabilitado, 6 Hardware com falha,
+            # 7 Midia desconectada. O mapa anterior colapsava 5 e 6 em 'Down',
+            # e um adaptador desabilitado era contado como desconectado.
             $estado = switch ([int]$a.NetConnectionStatus) {
-                2 { 'Up' } 7 { 'Disconnected' } 0 { 'Disconnected' } default { 'Down' }
+                2 { 'Up' }
+                0 { 'Disconnected' }
+                7 { 'Disconnected' }
+                4 { 'Not Present' }
+                5 { 'Disabled' }
+                6 { 'Hardware Faulty' }
+                default { 'Down' }
             }
             $dhcp = 'Indeterminado'
             if ($c) { $dhcp = $(if ([bool]$c.DHCPEnabled) { 'DHCP' } else { 'Estatico' }) }
             [void]$linhas.Add([pscustomobject]@{
                 Interface  = (Get-NetSafeText $a.NetConnectionID)
+                Indice     = (Get-NetSafeText $a.InterfaceIndex)
                 Descricao  = (Get-NetSafeText $a.Name)
                 Estado     = $estado
-                Virtual    = 'n/d'
+                EstadoNorm = (Get-NetEstadoNormalizado $estado)
+                Virtual    = $(if ($null -ne $a.PhysicalAdapter -and -not [bool]$a.PhysicalAdapter) { 'Sim' } else { 'Nao' })
                 Velocidade = 'n/d'
                 ConfigIPv4 = $dhcp
                 MTU        = 'n/d'
@@ -346,14 +436,20 @@ function Get-NetAdapterFacts {
     $out.Ok = $consultaOk
     if (-not $consultaOk -and -not $out.Detalhe) { $out.Detalhe = 'Nenhuma fonte de inventario de adaptadores respondeu.' }
 
+    # Contagem pelo estado normalizado. Antes, 'Not Present' (adaptador cujo
+    # hardware nao esta no equipamento) era somado a Desconectados, e um
+    # adaptador ausente aparecia no relatorio como cabo desconectado.
     $out.Rows = @($linhas)
     $out.Instalados    = @($linhas).Count
-    $out.Conectados    = @($linhas | Where-Object { $_.Estado -eq 'Up' }).Count
-    $out.Desabilitados = @($linhas | Where-Object { $_.Estado -match 'Disabled' }).Count
-    $out.Desconectados = @($linhas | Where-Object { $_.Estado -notmatch 'Up|Disabled' }).Count
-    $out.DhcpIPv4      = @($linhas | Where-Object { $_.ConfigIPv4 -eq 'DHCP' -and $_.Estado -eq 'Up' } | ForEach-Object { $_.Interface })
-    $out.EstaticoIPv4  = @($linhas | Where-Object { $_.ConfigIPv4 -eq 'Estatico' -and $_.Estado -eq 'Up' } | ForEach-Object { $_.Interface })
-    $out.Indeterminados= @($linhas | Where-Object { $_.ConfigIPv4 -eq 'Indeterminado' -and $_.Estado -eq 'Up' } | ForEach-Object { $_.Interface })
+    $out.Conectados    = @($linhas | Where-Object { $_.EstadoNorm -eq 'Healthy' }).Count
+    $out.Desabilitados = @($linhas | Where-Object { $_.EstadoNorm -eq 'Disabled' }).Count
+    $out.Desconectados = @($linhas | Where-Object { $_.EstadoNorm -eq 'Disconnected' }).Count
+    $out | Add-Member -NotePropertyName 'Ausentes' -NotePropertyValue @($linhas | Where-Object { $_.EstadoNorm -eq 'NotPresent' }).Count -Force
+    $out | Add-Member -NotePropertyName 'ComFalha' -NotePropertyValue @($linhas | Where-Object { $_.EstadoNorm -eq 'Error' }).Count -Force
+    $out | Add-Member -NotePropertyName 'Virtuais' -NotePropertyValue @($linhas | Where-Object { $_.Virtual -eq 'Sim' }).Count -Force
+    $out.DhcpIPv4      = @($linhas | Where-Object { $_.ConfigIPv4 -eq 'DHCP' -and $_.EstadoNorm -eq 'Healthy' } | ForEach-Object { $_.Interface })
+    $out.EstaticoIPv4  = @($linhas | Where-Object { $_.ConfigIPv4 -eq 'Estatico' -and $_.EstadoNorm -eq 'Healthy' } | ForEach-Object { $_.Interface })
+    $out.Indeterminados= @($linhas | Where-Object { $_.ConfigIPv4 -eq 'Indeterminado' -and $_.EstadoNorm -eq 'Healthy' } | ForEach-Object { $_.Interface })
 
     $script:AdapterCache = $out
     return $out
@@ -454,7 +550,7 @@ function Show-NetworkInfo {
 
     if ($facts.Ok) {
         Write-NetLine ''
-        Write-NetTable -Rows $facts.Rows -Property @('Interface', 'Estado', 'ConfigIPv4', 'Velocidade', 'MTU', 'Virtual')
+        Write-NetTable -Rows $facts.Rows -Property @('Interface', 'Indice', 'EstadoNorm', 'ConfigIPv4', 'Velocidade', 'MTU', 'Virtual')
         $st = 'OK'
         $resumo = ("{0} instalado(s): {1} conectado(s), {2} desconectado(s), {3} desabilitado(s)" -f `
             $facts.Instalados, $facts.Conectados, $facts.Desconectados, $facts.Desabilitados)
@@ -467,6 +563,9 @@ function Show-NetworkInfo {
                 'Conectados'     = $facts.Conectados
                 'Desconectados'  = $facts.Desconectados
                 'Desabilitados'  = $facts.Desabilitados
+                'Ausentes'       = $facts.Ausentes
+                'Com falha'      = $facts.ComFalha
+                'Virtuais'       = $facts.Virtuais
                 'IPv4 por DHCP'  = $(if (@($facts.DhcpIPv4).Count -gt 0) { (@($facts.DhcpIPv4) -join ', ') } else { 'nenhum' })
                 'IPv4 estatico'  = $(if (@($facts.EstaticoIPv4).Count -gt 0) { (@($facts.EstaticoIPv4) -join ', ') } else { 'nenhum' })
             })
@@ -488,6 +587,13 @@ function Show-NetworkInfo {
 
     # ------------------------------------------------- configuracao IP detalhada
     if ($inv.Ok -and $inv.Total -gt 0) {
+        # Os dados eram apenas EXIBIDOS: a secao saia com Status OK fixo e
+        # nenhuma condicao era avaliada. Uma interface conectada com endereco
+        # APIPA, sem gateway e sem DNS aparecia no relatorio exatamente como uma
+        # interface saudavel.
+        $avaliacao = New-Object System.Collections.ArrayList
+        $sevsIp = New-Object System.Collections.ArrayList
+
         foreach ($a in $inv.Rows) {
             Write-NetLine ''
             Write-NetLine ("  [{0}]  {1}" -f (Get-NetSafeText $a.Estado), (Get-NetSafeText $a.Interface)) 'White'
@@ -499,9 +605,98 @@ function Show-NetworkInfo {
             Write-NetPair 'Gateway'    (Get-NetSafeText $a.Gateway)
             Write-NetPair 'DNS'        (Get-NetSafeText $a.DNS)
             Write-NetPair 'Perfil'     (Get-NetSafeText $a.Perfil)
+
+            $iface   = Get-NetSafeText $a.Interface
+            $estado  = Get-NetEstadoNormalizado $a.Estado
+            $ipv4    = @(("$($a.IPv4)" -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne 'n/d' })
+            $ipv6    = @(("$($a.IPv6)" -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne 'n/d' })
+            $gw      = @(("$($a.Gateway)" -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne 'n/d' })
+            $dns     = @(("$($a.DNS)" -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne 'n/d' })
+            $rot     = @($ipv4 | Where-Object { Test-NetIPv4Utilizavel $_ })
+            $apipaIf = @($ipv4 | Where-Object { (Get-NetIPv4Class $_) -eq 'Apipa' })
+            # IPv6 link-local (fe80::) nao substitui endereco roteavel.
+            $ipv6Rot = @($ipv6 | Where-Object { $_ -notmatch '(?i)^fe80:' })
+
+            $sit = 'Healthy'
+            $obs = ''
+            # Interface parada nao e defeito: e estado legitimo e nao gera achado.
+            if ($estado -ne 'Healthy') {
+                $sit = $estado
+                $obs = 'Interface nao conectada: a configuracao IP nao e avaliada.'
+            }
+            elseif ($apipaIf.Count -gt 0 -and $rot.Count -eq 0) {
+                $sit = 'Warning'
+                $obs = 'Endereco APIPA (169.254.x) e nenhum endereco roteavel: concessao DHCP nao obtida.'
+                Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
+                    -Message ("Interface '{0}' conectada com endereco APIPA e sem endereco roteavel." -f $iface) `
+                    -Recommendation 'Indica que o servidor DHCP nao respondeu. Conferir cabo, concessao DHCP e o proprio servidor antes de qualquer redefinicao.'
+                [void]$sevsIp.Add('WARN')
+            }
+            elseif ($rot.Count -eq 0 -and $ipv6Rot.Count -eq 0) {
+                $sit = 'Warning'
+                $obs = 'Interface conectada sem endereco IPv4 roteavel nem IPv6 global.'
+                Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
+                    -Message ("Interface '{0}' esta conectada, porem sem endereco IP utilizavel." -f $iface) `
+                    -Recommendation 'Conferir a configuracao IP da interface e a disponibilidade do DHCP.'
+                [void]$sevsIp.Add('WARN')
+            }
+            elseif ($rot.Count -eq 0 -and $ipv6Rot.Count -gt 0) {
+                # Rede somente IPv6 e configuracao valida, nao defeito.
+                $sit = 'Healthy'
+                $obs = 'Sem IPv4 roteavel, com IPv6 global: rede somente IPv6.'
+            }
+            elseif ($gw.Count -eq 0) {
+                # Sem gateway pode ser esperado em VPN e interface virtual, que
+                # roteiam por rotas especificas em vez de rota padrao.
+                $virtual = ("$($a.Descricao)" -match '(?i)virtual|hyper-v|vmware|virtualbox|vpn|tap|tun|wsl|loopback|bluetooth')
+                if ($virtual) {
+                    $sit = 'Healthy'
+                    $obs = 'Sem gateway padrao: esperado em interface virtual ou de VPN.'
+                } else {
+                    $sit = 'Warning'
+                    $obs = 'Interface com IP roteavel e sem gateway padrao.'
+                    Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
+                        -Message ("Interface '{0}' possui endereco IP, porem nenhum gateway padrao." -f $iface) `
+                        -Recommendation 'Sem gateway nao ha saida da rede local por esta interface. Conferir a configuracao IP e a concessao DHCP.'
+                    [void]$sevsIp.Add('WARN')
+                }
+            }
+            elseif ($dns.Count -eq 0) {
+                $sit = 'Warning'
+                $obs = 'Interface roteavel sem servidor DNS configurado.'
+                Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
+                    -Message ("Interface '{0}' nao possui servidor DNS configurado." -f $iface) `
+                    -Recommendation 'Sem DNS a navegacao por nome falha, ainda que o transporte IP funcione. Conferir a concessao DHCP ou a configuracao manual.'
+                [void]$sevsIp.Add('WARN')
+            }
+
+            [void]$avaliacao.Add([pscustomobject]@{
+                Interface = $iface
+                Estado    = $estado
+                IPv4      = $(if ($ipv4.Count -gt 0) { $ipv4 -join ', ' } else { 'nenhum' })
+                Classe    = $(if ($ipv4.Count -gt 0) { (@($ipv4 | ForEach-Object { Get-NetIPv4Class $_ } | Sort-Object -Unique) -join ', ') } else { 'n/d' })
+                IPv6Global= $(if ($ipv6Rot.Count -gt 0) { 'Sim' } else { 'Nao' })
+                Gateway   = $(if ($gw.Count -gt 0) { $gw -join ', ' } else { 'nenhum' })
+                DNS       = $(if ($dns.Count -gt 0) { $dns -join ', ' } else { 'nenhum' })
+                Perfil    = (Get-NetSafeText $a.Perfil)
+                Situacao  = $sit
+                Observacao= $obs
+            })
         }
-        Add-CompartDiskSection -Title 'Configuracao IP por interface' -Status OK -Rows $inv.Rows `
-            -Summary ("{0} interface(s) com configuracao IP" -f $inv.Total)
+
+        $statusIp = Get-NetWorstSeverity @($sevsIp)
+        Write-NetLine ''
+        Write-NetTable -Rows @($avaliacao) -Property @('Interface', 'Estado', 'IPv4', 'Classe', 'Gateway', 'DNS', 'Situacao')
+        Add-CompartDiskSection -Title 'Configuracao IP por interface' -Status $statusIp -Rows @($avaliacao) `
+            -Summary ("{0} interface(s) com configuracao IP" -f $inv.Total) `
+            -Pairs ([ordered]@{
+                'Interfaces avaliadas'    = $inv.Total
+                'Com endereco roteavel'   = @($avaliacao | Where-Object { $_.Classe -match 'Privado|Publico|CGNAT' }).Count
+                'Com APIPA'               = @($avaliacao | Where-Object { $_.Classe -match 'Apipa' }).Count
+                'Sem gateway'             = @($avaliacao | Where-Object { $_.Gateway -eq 'nenhum' }).Count
+                'Sem DNS'                 = @($avaliacao | Where-Object { $_.DNS -eq 'nenhum' }).Count
+            })
+        if (@($sevsIp).Count -gt 0) { [void]$niveis.Add('WARN') }
     } elseif ($inv.Ok) {
         Add-CompartDiskSection -Title 'Configuracao IP por interface' -Status WARN -Summary 'Nenhuma interface com configuracao IP'
     } else {
@@ -776,19 +971,38 @@ function Test-NetworkConnectivity {
         $(if ($facts.Ok) { ("{0} conectado(s) de {1} instalado(s)" -f $facts.Conectados, $facts.Instalados) } else { 'inventario indisponivel' })
 
     # -------------------------------------------------------- 2. endereco IPv4
+    # A regra anterior era:
+    #   $temIp = ($ips.Count -gt 0 -and -not ($ips.Count -eq 1 -and $apipa))
+    # que so reconhecia APIPA quando havia EXATAMENTE UM endereco no sistema.
+    # Num notebook com Ethernet e Wi-Fi, ambos sem concessao DHCP, havia dois
+    # enderecos 169.254.x, a condicao ficava falsa e a camada era dada como OK -
+    # exatamente o cenario que ela existe para detectar.
+    # Agora a decisao e por classe do endereco, nao por contagem.
     $ips = @()
-    $apipa = $false
+    $utilizaveis = @()
+    $apipaList = @()
     foreach ($a in $inv.Rows) {
         foreach ($ip in ("$($a.IPv4)" -split ',')) {
             $t = $ip.Trim()
-            if (-not $t) { continue }
+            if (-not $t -or $t -eq 'n/d') { continue }
             $ips += $t
-            if ($t -match '^169\.254\.') { $apipa = $true }
+            switch (Get-NetIPv4Class $t) {
+                'Apipa'    { $apipaList += $t }
+                'Loopback' { }
+                'Invalido' { }
+                default    { $utilizaveis += $t }
+            }
         }
     }
-    $temIp = ($ips.Count -gt 0 -and -not ($ips.Count -eq 1 -and $apipa))
+    $apipa = ($apipaList.Count -gt 0)
+    $temIp = ($utilizaveis.Count -gt 0)
     $evidIp = $(if ($ips.Count -gt 0) { ($ips -join ', ') } else { 'nenhum endereco IPv4' })
-    if ($apipa) { $evidIp += ' (169.254.x indica falha na obtencao de concessao DHCP)' }
+    if ($apipa) {
+        $evidIp += (' ({0} endereco(s) 169.254.x: concessao DHCP nao obtida)' -f $apipaList.Count)
+    }
+    if ($ips.Count -gt 0 -and -not $temIp) {
+        $evidIp += ' - nenhum endereco roteavel'
+    }
     Add-Camada '2. Endereco IPv4' $(if ($temIp) { 'OK' } else { 'FALHA' }) $evidIp
 
     # -------------------------------------------------------------- 3. gateway

@@ -10,8 +10,8 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1`, `Debloat.ps1`,
-`Repair.ps1` e `Smart.ps1`, e correção de ordenação nos relatórios de todos os
-módulos.
+`Repair.ps1`, `Smart.ps1` e `Network.ps1`, e correção de ordenação nos relatórios
+de todos os módulos.
 
 **Nenhuma tecla de menu mudou, nenhum rótulo existente foi removido ou renomeado, e
 nenhum caminho de fallback Batch foi alterado.** As cinco ações existentes do módulo de drivers
@@ -25,6 +25,40 @@ listas de proteção permanecem exatamente como estavam.
 > os documentos, e não foi alterado por este trabalho.
 
 ### Corrigido
+
+- **`Network.ps1` dava a camada de endereço IPv4 como saudável quando todos os
+  endereços eram APIPA.** A regra era `$ips.Count -gt 0 -and -not ($ips.Count -eq 1
+  -and $apipa)`, que só reconhecia APIPA quando havia **exatamente um** endereço no
+  sistema. Num notebook com Ethernet e Wi-Fi, ambos sem concessão DHCP, havia dois
+  `169.254.x`, a condição ficava falsa e a camada era dada como `OK` — exatamente o
+  cenário que ela existe para detectar. A decisão passa a ser pela classe do
+  endereço (APIPA, loopback, privado, CGNAT, público, inválido), não por contagem.
+- **A configuração IP por interface era exibida mas nunca avaliada.** A seção saía
+  com `Status OK` fixo e nenhum finding era gerado: uma interface conectada com
+  endereço APIPA, sem gateway e sem DNS aparecia no relatório idêntica a uma
+  interface saudável. Passa a avaliar APIPA sem endereço roteável, ausência de IP
+  utilizável, ausência de gateway e ausência de DNS — sem transformar em problema
+  os casos legítimos: interface parada, VPN ou adaptador virtual sem gateway
+  padrão, e rede somente IPv6.
+- **O fallback CIM descartava toda interface virtual.** O filtro era
+  `PhysicalAdapter=True`, então VPN, Hyper-V, VMware, VirtualBox, WSL e Bluetooth
+  PAN sumiam do inventário justamente na máquina em que os cmdlets modernos não
+  existem. O critério passa a ser ter `NetConnectionID` — inclui os virtuais reais
+  e continua excluindo miniportas WAN e adaptadores de túnel internos.
+- **MTU e DHCP eram associados à interface pelo nome.** `Get-NetAdapter` e
+  `Get-NetIPInterface` eram correlacionados por `InterfaceAlias`, que é editável
+  pelo usuário e pode repetir-se em ambiente com muitos adaptadores virtuais. A
+  correlação passa a ser por `InterfaceIndex`, com o nome apenas como recurso
+  secundário.
+- **Adaptador ausente era contado como desconectado.** O mapa de
+  `NetConnectionStatus` colapsava "hardware desabilitado" e "hardware com falha" em
+  `Down`, e a contagem somava "Not Present" a desconectados. Os estados passam a
+  ser normalizados em `Healthy`, `Disconnected`, `Disabled`, `NotPresent`, `Error`
+  e `Unknown`, contabilizados separadamente.
+
+> As ações `Reset`, `Hosts` e `Firewall` **não foram tocadas**: o diff se restringe
+> aos caminhos de leitura. Nenhuma linha alterada envolve `netsh`, redefinição de
+> pilha, arquivo `hosts` ou política de firewall.
 
 - **`Smart.ps1` declarava disco saudável sem ter lido um único atributo
   S.M.A.R.T.** Uma gaveta USB, controladora RAID ou disco virtual reporta
