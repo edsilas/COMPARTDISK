@@ -226,13 +226,28 @@ function Add-CompartDiskFinding {
 }
 
 function Add-CompartDiskSection {
+    <# $Pairs e IDictionary, nao hashtable.
+
+       Todos os modulos montam os pares com [ordered]@{} porque a ordem E a
+       informacao: destino antes de tamanho, tentativa antes de resultado, valor
+       antes da conclusao. Um parametro declarado [hashtable] forcava a conversao
+       de OrderedDictionary para Hashtable, que nao tem ordem definida - as
+       chaves chegavam embaralhadas ao TXT, ao CSV, ao HTML e ao state_*.json, e
+       a cada execucao numa ordem diferente. O Report.ps1 chega a reconstruir um
+       [ordered] a partir do JSON justamente para preservar a sequencia, e essa
+       conversao anulava o esforco.
+
+       IDictionary aceita Hashtable e OrderedDictionary sem converter nenhum dos
+       dois, entao quem passa [ordered] mantem a ordem e quem passa hashtable
+       continua funcionando como antes. E o mesmo tipo que Audit.ps1 ja usa para
+       reconhecer estes dicionarios. #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Title,
         [ValidateSet('CRIT', 'WARN', 'OK', 'INFO')][string]$Status = 'INFO',
         [string]$Summary = '',
         [object[]]$Rows = @(),
-        [hashtable]$Pairs
+        [System.Collections.IDictionary]$Pairs
     )
     [void]$Global:CompartDisk.Sections.Add([pscustomobject]@{
         Title   = $Title

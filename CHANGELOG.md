@@ -9,10 +9,11 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-Manutenção do `Modules/Drivers.ps1`. **Nenhuma tecla de menu mudou, nenhum arquivo
-fora do módulo teve comportamento alterado, e as cinco ações existentes
-(`List` `Problems` `Backup` `Unsigned` `Export`) continuam válidas com o mesmo
-significado.** As novas ações são acessíveis por `-Action` e não aparecem no menu.
+Manutenção do `Modules/Drivers.ps1` e correção de ordenação nos relatórios de todos
+os módulos. **Nenhuma tecla de menu mudou e as cinco ações existentes do módulo de
+drivers (`List` `Problems` `Backup` `Unsigned` `Export`) continuam válidas com o
+mesmo significado.** As novas ações são acessíveis por `-Action` e não aparecem no
+menu.
 
 > A definição do número de versão desta entrega é decisão do mantenedor: o número
 > `1.3.1` aparece em `Core.ps1`, `Launcher.bat`, `README.md` e no cabeçalho de todos
@@ -20,6 +21,17 @@ significado.** As novas ações são acessíveis por `-Action` e não aparecem n
 
 ### Corrigido
 
+- **Os pares de campo/valor apareciam fora de ordem em todos os relatórios, e em
+  ordem diferente a cada execução.** `Add-CompartDiskSection` declarava
+  `[hashtable]$Pairs`, e todos os módulos montam os pares com `[ordered]@{}` porque
+  a ordem é parte da informação — destino antes de tamanho, tentativa antes de
+  resultado. O PowerShell convertia o `OrderedDictionary` para `Hashtable`, que não
+  tem ordem definida, e as chaves chegavam embaralhadas ao TXT, ao CSV, ao HTML e ao
+  `state_*.json`. O `Report.ps1` chegava a reconstruir um `[ordered]` a partir do
+  JSON justamente para preservar a sequência, e a conversão anulava esse esforço. O
+  parâmetro passa a ser `[System.Collections.IDictionary]`, que aceita `Hashtable` e
+  `OrderedDictionary` sem converter nenhum dos dois. Afeta os 15 módulos que montam
+  seções com pares; nenhuma chamada existente precisou mudar.
 - **`Drivers.ps1` falhava ao localizar backups em máquina que nunca concluiu um
   backup.** `Split-Path -Parent` era chamado com a cadeia vazia do estado persistente
   e lançava exceção — ou seja, no caso mais comum. Afetava a listagem de backups e,
