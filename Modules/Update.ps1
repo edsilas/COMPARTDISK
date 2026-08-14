@@ -432,7 +432,12 @@ function Invoke-UpdateServiceTransition {
     param(
         [Parameter(Mandatory)][string[]]$Name,
         [Parameter(Mandatory)][ValidateSet('Start', 'Stop')][string]$Action,
-        [int]$TimeoutSeconds = 45
+        [int]$TimeoutSeconds = 45,
+        # Servicos do fluxo de atualizacao sao de inicio por gatilho: o
+        # Orquestrador religa wuauserv logo apos a parada. Uma nova tentativa
+        # curta resolve o religamento pontual sem prolongar a fase quando o
+        # servico realmente nao para.
+        [int]$RetryOnRestart = 2
     )
     $alvo      = $(if ($Action -eq 'Stop') { 'Stopped' } else { 'Running' })
     $res       = New-Object System.Collections.ArrayList
@@ -474,13 +479,54 @@ function Invoke-UpdateServiceTransition {
         $core = @(Set-CompartDiskServiceState -Name @($pendentes) -Action $Action -TimeoutSeconds $TimeoutSeconds)
         foreach ($r in $res) {
             if (@($pendentes) -notcontains $r.Servico) { continue }
-            $c = $core | Where-Object { $_.Service -eq $r.Servico } | Select-Object -First 1
-            if ($c) { $r.Detalhe = "$($c.Detail)" }
-            $novo       = Sync-UpdateServiceItem -Name $r.Servico
-            $r.Depois   = $(if ($novo) { $novo.Estado } else { 'n/d' })
+            $c       = $core | Where-Object { $_.Service -eq $r.Servico } | Select-Object -First 1
+            $detCore = $(if ($c) { "$($c.Detail)" } else { '' })
+            $okCore  = [bool]($c -and $c.Success)
+
+            $novo         = Sync-UpdateServiceItem -Name $r.Servico
+            $r.Depois     = $(if ($novo) { $novo.Estado } else { 'n/d' })
             $r.Confirmado = ($r.Depois -eq $alvo)
-            if (-not $r.Confirmado -and [string]::IsNullOrWhiteSpace($r.Detalhe)) {
+
+            # EVIDENCIA: no reset de 13/08/2026 20:19 a Fase 2 registrou
+            # "Servico 'wuauserv' nao parou: Parado" - a parada foi observada
+            # pelo Core e a releitura seguinte encontrou o servico de novo em
+            # execucao, religado pelo Orquestrador de Atualizacoes. O veredito
+            # virava definitivo e a Fase 3 recusava renomear SoftwareDistribution,
+            # transformando um religamento momentaneo em ERROR do modulo.
+            $tentativas = 0
+            if (-not $r.Confirmado -and $Action -eq 'Stop' -and $r.Depois -eq 'Running') {
+                while ($tentativas -lt $RetryOnRestart -and -not $r.Confirmado) {
+                    $tentativas++
+                    Write-Log DEBUG ("Servico '{0}' voltou a Running apos a parada; nova tentativa {1}/{2}." -f $r.Servico, $tentativas, $RetryOnRestart) -NoConsole
+                    $re = @(Set-CompartDiskServiceState -Name @($r.Servico) -Action Stop -TimeoutSeconds 15)
+                    $cr = $re | Where-Object { $_.Service -eq $r.Servico } | Select-Object -First 1
+                    if ($cr) { $detCore = "$($cr.Detail)"; $okCore = [bool]$cr.Success }
+                    $novo         = Sync-UpdateServiceItem -Name $r.Servico
+                    $r.Depois     = $(if ($novo) { $novo.Estado } else { 'n/d' })
+                    $r.Confirmado = ($r.Depois -eq $alvo)
+                }
+            }
+
+            if ($r.Confirmado) {
+                $r.Detalhe = $detCore
+                if ($tentativas -gt 0) {
+                    $r.Detalhe = ('{0} (confirmado apos {1} nova(s) tentativa(s): o servico havia sido religado)' -f $detCore, $tentativas)
+                }
+                continue
+            }
+
+            # Sem confirmacao o detalhe passa a descrever o estado observado, e
+            # nao o que o comando disse ter feito: eram justamente esses dois
+            # fatos que se contradiziam no log.
+            if ($okCore -and -not [string]::IsNullOrWhiteSpace($detCore)) {
+                $r.Detalhe = ('o comando concluiu ("{0}"), mas a releitura encontrou {1}' -f $detCore, $r.Depois)
+            } elseif (-not [string]::IsNullOrWhiteSpace($detCore)) {
+                $r.Detalhe = ('{0} (estado observado: {1})' -f $detCore, $r.Depois)
+            } else {
                 $r.Detalhe = ('Estado permaneceu {0}' -f $r.Depois)
+            }
+            if ($tentativas -gt 0) {
+                $r.Detalhe = ('{0}; {1} nova(s) tentativa(s) de parada sem efeito' -f $r.Detalhe, $tentativas)
             }
         }
     }
@@ -1763,13 +1809,31 @@ function Reset-UpdateComponents {
             }
         }
 
-        $pendencia = @($r.Requer | Where-Object { $paradosOk.ContainsKey($_) -and -not $paradosOk[$_] })
+        # A pre-condicao e reavaliada contra o estado real no momento da
+        # renomeacao, e nao contra o retrato da Fase 2. EVIDENCIA: em 13/08/2026
+        # 20:19 wuauserv foi religado por gatilho logo apos parar, o veredito da
+        # Fase 2 ficou congelado e SoftwareDistribution deixou de ser redefinida
+        # mesmo quando ja estava liberada - a mesma renomeacao havia funcionado
+        # as 20:06. O servico que continuar em execucao segue bloqueando.
+        $suspeitos = @($r.Requer | Where-Object { $paradosOk.ContainsKey($_) -and -not $paradosOk[$_] })
+        $pendencia = New-Object System.Collections.ArrayList
+        foreach ($s in $suspeitos) {
+            $atual = Sync-UpdateServiceItem -Name $s
+            $est   = $(if ($atual) { $atual.Estado } else { 'n/d' })
+            if ($est -eq 'Stopped') {
+                Write-Log INFO ("Servico '{0}' esta parado agora: pre-condicao de '{1}' reavaliada e atendida." -f $s, $r.Nome)
+                Add-UpdateStep -Fase 'Fase 3' -Operacao 'Reavaliar pre-condicao' -Alvo $s -Resultado 'OK' `
+                    -Detalhe ("Estado no momento da renomeacao de {0}: Stopped" -f $r.Nome)
+                continue
+            }
+            [void]$pendencia.Add(('{0} ({1})' -f $s, $est))
+        }
         if ($pendencia.Count -gt 0) {
             # Pre-condicao ausente: renomear com o servico ativo falha ou deixa
             # o repositorio em estado inconsistente.
             $bloqueados++
             if ($r.Critico) { $falhaImpeditiva = $true }
-            $det = ('Pre-condicao ausente: {0} nao parou' -f ($pendencia -join ', '))
+            $det = ('Pre-condicao ausente: {0} nao parou' -f (@($pendencia) -join ', '))
             Write-Log WARN ("'{0}' nao foi renomeada. {1}" -f $r.Nome, $det)
             [void]$backups.Add([pscustomobject]@{ Original = $origem; Backup = '-'; Timestamp = (Get-Date -Format 's'); Operacao = 'Renomear'; Resultado = 'IGNORADO'; Detalhe = $det })
             Add-UpdateStep -Fase 'Fase 3' -Operacao 'Renomear repositorio' -Alvo $r.Nome -Resultado 'IGNORADO' -Detalhe $det
