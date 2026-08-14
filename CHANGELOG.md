@@ -10,8 +10,8 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1`, `Debloat.ps1`,
-`Repair.ps1`, `Smart.ps1` e `Network.ps1`, e correção de ordenação nos relatórios
-de todos os módulos.
+`Repair.ps1`, `Smart.ps1`, `Network.ps1` e `Users.ps1`, e correção de ordenação nos
+relatórios de todos os módulos.
 
 **Nenhuma tecla de menu mudou, nenhum rótulo existente foi removido ou renomeado, e
 nenhum caminho de fallback Batch foi alterado.** As cinco ações existentes do módulo de drivers
@@ -229,6 +229,81 @@ listas de proteção permanecem exatamente como estavam.
   interno sem uso que poderia envenenar o cache do inventário se acionado.
 - `-ErrorAction SilentlyContinue` retirado da contagem de backups anteriores, que
   falhava sem deixar rastro.
+
+#### Users
+
+- **`ClearPassword` não passava pela guarda de conta Microsoft.** O ramo `if ($Clear)`
+  retornava **antes** da verificação de `PrincipalSource`, que só protegia
+  `SetPassword`. A senha local de uma conta que entra por e-mail era removida sem
+  aviso — sem alterar a credencial da Microsoft e podendo impedir a entrada no
+  Windows. A guarda passa a ser aplicada às duas ações, antes de qualquer alteração.
+- **O achado "grupo de administradores possui N membros" era gerado com N desconhecido.**
+  No caminho de queda CIM a coluna `Total` vale `n/d`, e a comparação `'n/d' -gt 3` é
+  resolvida como texto (`'n/d' -gt '3'` é verdadeiro): **toda** execução por esse
+  caminho publicava o achado com a contagem `n/d`. A contagem só é avaliada quando é
+  numérica; indisponível vira achado informativo de "não foi possível listar".
+- **Falha ao consultar os membros de um grupo virava "(vazio)".** `Get-LocalGroupMember`
+  falha em cenários comuns (SID órfão de conta removida, membro de domínio
+  irresolvível) e o resultado era um grupo aparentemente sem membros. Passa a ser
+  reportado como indisponível.
+- **A ausência de eventos `4625` era reconhecida pelo texto traduzido da exceção**
+  (`No events were found|Nenhum evento`). Em Windows não inglês a classificação
+  depende da tradução exata do recurso. A decisão passa a usar
+  `FullyQualifiedErrorId` (`NoMatchingEventsFound`, `NoMatchingLogsFound`), que não é
+  traduzido — mesmo discriminador que `Update.ps1` já usa. **A distinção entre
+  "nenhuma falha" e "não foi possível verificar" continua intacta**: nenhum ramo de
+  erro produz atestado de ausência de falhas.
+- **`net accounts` não tinha validação alguma.** Não se verificava a existência do
+  executável, o código de saída nem `stderr`, e saída parcial era publicada como
+  política de contas válida. Falha ou indisponibilidade passa a produzir seção e
+  achado explícitos de "não verificada"; formato não reconhecido preserva a saída
+  original em vez de publicar uma política vazia.
+- **Alterações de conta eram dadas como concluídas sem releitura.** Nem a troca/remoção
+  de senha nem a habilitação do Administrador interno verificavam o estado posterior —
+  a mesma classe de defeito que `Set-CompartDiskRegistryValue` já trata no registro.
+  Passam a confirmar por `PasswordLastSet` (ou `PasswordAge`, no caminho ADSI) e por
+  releitura do estado da conta; sem confirmação o resultado é `não-confirmado`, nunca
+  `OK`.
+- **Execução recusada por falta de privilégio gravava `Resultado=OK`.** O `exit` no ramo
+  de `Start-CompartDiskModule` não marcava `$result`, então o `finally` persistia
+  `OK` em `state_Users_<Ação>.json` enquanto o processo devolvia `2`, e o relatório
+  consolidado herdava esse `OK`.
+- **A comparação das duas senhas digitadas materializava a senha em texto claro.**
+  `PtrToStringAuto` criava duas `String` gerenciadas que o coletor de lixo só recupera
+  depois e que não podem ser zeradas. A comparação passa a ser feita sobre a memória
+  não gerenciada do BSTR (zerada por `ZeroFreeBSTR`), os `SecureString` são
+  descartados, e `Enter` vazio passa a cancelar — como o texto na tela já prometia —
+  em vez de terminar em erro técnico.
+- **A guarda de conta Microsoft ficava inativa no caminho CIM.** `Win32_UserAccount` não
+  publica `PrincipalSource`; a leitura devolvia `$null` e a operação seguia como se a
+  conta fosse local. Origem desconhecida deixa de ser tratada como local e passa a
+  exigir confirmação explícita.
+- **`AutoAdminLogon=1` era atribuído à conta em edição.** O aviso não consultava
+  `DefaultUserName` e afirmava "este computador entra sozinho" para qualquer conta.
+  `DefaultPassword` **nunca é lida**: apenas a existência do valor é verificada, por
+  `GetValueNames()`.
+- Uma consulta com falha na auditoria interrompia toda a ação `Audit`; as cinco etapas
+  passam a ser independentes.
+- Falha total de `Get-LocalGroup` era silenciada por `-ErrorAction SilentlyContinue` e
+  a lista vazia era registrada como "Grupos locais listados" com resultado `OK`.
+- Rejeição de senha pela política do Windows subia até o `catch` global e virava achado
+  `CRIT` "Exceção no módulo"; passa a ser erro de operação com o motivo do Windows
+  exibido ao operador. O módulo continua **sem** impor requisitos próprios de
+  complexidade.
+- O grupo de administradores era reconhecido pela expressão `Administrador|Administrators`,
+  que não casa com `Administratoren` nem `Administrateurs`; passa a ser identificado
+  pelo SID `S-1-5-32-544`, com o texto apenas como último recurso.
+- O módulo não tentava importar `Microsoft.PowerShell.LocalAccounts`: no PowerShell 7,
+  `Get-Command` encontra os cmdlets mas a importação falha por edição, e o módulo caía
+  para CIM/`net.exe` num ambiente em que os cmdlets funcionam.
+- Enumerações repetidas de contas (`List` + `Groups` + busca do Administrador na mesma
+  auditoria) passam a reutilizar um índice único de SID por execução.
+
+> As sete ações (`List` `Groups` `Audit` `ClearPassword` `SetPassword` `EnableAdmin`
+> `DisableAdmin`) continuam válidas com o mesmo significado, os códigos de saída
+> continuam `0/1/2/3`, e nenhum rótulo de menu ou caminho `:FB_USERS*` foi alterado.
+> A identificação do Administrador interno pelo SID terminado em `-500`, a exigência
+> da palavra `REMOVER` e as confirmações de troca de senha foram **preservadas**.
 
 ### Adicionado
 
