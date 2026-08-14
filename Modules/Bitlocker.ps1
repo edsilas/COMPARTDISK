@@ -17,7 +17,14 @@ $ErrorActionPreference = 'Stop'
 $result = 'OK'
 
 function Show-BitlockerStatus {
-    $vols = Test-BitLocker
+    # EVIDENCIA: no state_Bitlocker_Status.json de 13/08/2026 o resumo da secao
+    # saiu como " volume(s)", sem numero. Test-BitLocker devolve @($result) e o
+    # PowerShell desembrulha o array de um unico elemento na atribuicao: $vols
+    # vira um PSCustomObject solto e ".Count" nao resolve. Com zero volumes o
+    # retorno e $null e "$null.Count -eq 0" e falso no Windows PowerShell 5.1,
+    # de modo que o ramo "nenhum volume" nunca era alcancado e o modulo terminava
+    # OK sem dizer nada. @() garante colecao nos dois casos.
+    $vols = @(Test-BitLocker)
     if ($vols.Count -eq 0) {
         Write-Log WARN 'Nenhum volume compativel com BitLocker foi retornado.'
         Add-CompartDiskFinding -Severity INFO -Area 'BitLocker' -Message 'BitLocker indisponivel nesta edicao do Windows ou sem volumes elegiveis.' -Recommendation 'Windows Home suporta apenas a Criptografia de Dispositivo, quando o hardware permite.'
