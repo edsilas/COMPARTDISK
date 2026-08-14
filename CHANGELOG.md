@@ -11,7 +11,8 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1`, `Debloat.ps1`,
 `Repair.ps1`, `Smart.ps1`, `Network.ps1`, `Users.ps1`, `Hardware.ps1`,
-`Collectors.ps1`, `Report.ps1`, `Core.ps1`, `Cleanup.ps1` e `Defender.ps1`, e
+`Collectors.ps1`, `Report.ps1`, `Core.ps1`, `Cleanup.ps1`, `Defender.ps1` e
+`Battery.ps1`, e
 correção de ordenação nos relatórios de todos os módulos.
 
 **Nenhuma tecla de menu mudou, nenhum rótulo existente foi removido ou renomeado, e
@@ -479,6 +480,59 @@ sendo aceitos.
 > continua passando por `Remove-CompartDiskPathSafely` do `Core.ps1` — o módulo possui
 > apenas dois comandos destrutivos próprios: a remoção do `MEMORY.DMP` (arquivo único,
 > após validação) e `Clear-RecycleBin`.
+
+#### Battery
+
+- **Com duas baterias, a saúde da primeira era atribuída a todas.** As classes
+  `BatteryStaticData` e `BatteryFullChargedCapacity` eram consultadas **dentro** do
+  laço de baterias e sempre com `Select-Object -First 1`: num equipamento com duas
+  baterias, a segunda recebia a capacidade e a saúde da primeira, e o mesmo achado
+  era publicado duas vezes. Reproduzido: bateria 1 a 90,7% e bateria 2 a **44%** —
+  ambas reportadas como 90,7%, com o módulo terminando em `OK`. **Uma bateria em
+  estado crítico ficava invisível.** A capacidade passa a ser correlacionada por
+  bateria, com o método de correlação declarado no relatório; quando as contagens
+  das classes divergem, a saúde é declarada não verificável em vez de atribuída ao
+  alvo errado.
+- **Falha de consulta era publicada como "nenhuma bateria presente".**
+  `Get-CompartDiskCim` devolve `$null` tanto para ausência de bateria quanto para
+  recusa do WMI, e o módulo afirmava ausência nos dois casos — num notebook, com
+  saída `UNSUPPORTED`. Passa a usar `-ThrowOnError` para separar as duas condições.
+  **Desktop sem bateria continua `UNSUPPORTED`, nunca erro.**
+- **Ausência de estimativa de autonomia era publicada como "conectada a energia".**
+  O ramo de queda de `EstimatedRunTime` afirmava alimentação externa — uma inferência
+  apresentada como fato. Reproduzido: o relatório exibia `Status: Descarregando` e
+  `Autonomia: conectada a energia` simultaneamente. Passa a informar "não informada
+  pelo sistema", e alimentação externa e carregamento passam a ser derivados de
+  `BatteryStatus`, como estados distintos — um notebook com limite de carga fica na
+  tomada sem carregar.
+- **Saúde indisponível saía do módulo como silêncio e resultado `OK`.** Quando o
+  firmware não publica as capacidades — situação comum —, nenhum achado era gerado.
+  Passa a declarar explicitamente que a saúde não foi verificada e por quê.
+- **O cálculo de saúde não tinha validação.** Sem verificar `FullCharge > 0` nem a
+  relação com a capacidade projetada: capacidade total igual a zero (leitura ausente)
+  produziria 0% e o achado `CRIT` "substituição recomendada". Capacidade acima da
+  projetada — comum após calibração — passa a ser declarada como inconsistência **com
+  o valor bruto preservado**, sem "corrigir" o número em silêncio.
+- **Relatório de bateria vazio era reportado como gerado.** A verificação era só
+  `Test-Path`: um arquivo de 0 byte, ou o arquivo de uma tentativa anterior da mesma
+  sessão, contava como sucesso, e o código de saída do `powercfg` era ignorado. Passa
+  a confirmar existência, tamanho e gravação nesta execução — mesmo critério que o
+  `Cleanup.ps1` já aplica aos backups de log.
+- `Invoke-SafeCommand -Critical` no `/batteryreport` fazia uma falha esperada
+  (privilégio, disco, diretiva) subir ao `catch` global como `CRIT` "Exceção no
+  módulo"; passa a ser classificada. `powercfg.exe` passa a ser validado antes do uso,
+  e `powercfg /energy` avisa quando executado sem elevação.
+- Achado `WARN` de saúde entre 60% e 80% não escalava o resultado do módulo, enquanto
+  o ramo de 60% escalava — o relatório consolidado registrava `OK`.
+- As classes de capacidade passam a ser consultadas **uma vez por execução** (eram
+  duas consultas por bateria), e cada bateria ganha seção própria: antes, duas
+  baterias geravam duas seções com o mesmo título `Bateria` e status fixo `OK`.
+
+> As três ações (`Info` `Report` `Sleep`) continuam válidas com o mesmo significado e
+> as faixas de saúde (`< 60%` crítica, `< 80%` atenção) foram **preservadas**. O módulo
+> permanece **exclusivamente diagnóstico**: `powercfg` é invocado apenas com
+> `/batteryreport`, `/energy` e `/a` — nenhum `setactive`, `/change`, `/hibernate` ou
+> alteração de plano de energia, firmware, driver ou dispositivo.
 
 #### Defender
 
