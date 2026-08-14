@@ -9,10 +9,11 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-Manutenção dos módulos `Drivers.ps1` e `Debloat.ps1`, e correção de ordenação nos
-relatórios de todos os módulos.
+Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1` e `Debloat.ps1`, e correção
+de ordenação nos relatórios de todos os módulos.
 
-**Nenhuma tecla de menu mudou.** As cinco ações existentes do módulo de drivers
+**Nenhuma tecla de menu mudou, nenhum rótulo existente foi removido ou renomeado, e
+nenhum caminho de fallback Batch foi alterado.** As cinco ações existentes do módulo de drivers
 (`List` `Problems` `Backup` `Unsigned` `Export`) continuam válidas com o mesmo
 significado, e as novas são acessíveis por `-Action` sem aparecer no menu. No módulo
 de debloat, os três níveis, a precedência de seleção, o vocabulário de resultado e as
@@ -24,6 +25,30 @@ listas de proteção permanecem exatamente como estavam.
 
 ### Corrigido
 
+- **O `Launcher.bat` sempre saía com código 0, mesmo quando todos os módulos
+  falhavam.** Os contadores de desfecho já existiam e eram corretos, mas não
+  alimentavam o código de saída. Em `/autofix`, `/audit`, `/report` e `/clean` —
+  exatamente os modos consumidos por RMM, GPO e tarefa agendada — a automação
+  registrava sucesso de uma execução que não reparou nada. Passa a devolver `1`
+  quando houve atenção e `2` quando houve erro. **No modo interativo o código
+  continua `0`:** ali quem encerra é o operador e ninguém lê o valor.
+- **O One-Click Fix declarava conclusão sem verificar nenhuma etapa.** As sete
+  etapas eram encadeadas sem checagem e a rotina gravava
+  `[ OK ] === REPARO AUTOMATICO CONCLUIDO ===` incondicionalmente — se as sete
+  falhassem, o operador lia "concluído". Cada etapa passa a ser medida
+  individualmente e o desfecho final distingue concluído, concluído com
+  ressalvas e incompleto, com a contagem por etapa no log.
+- **BitLocker era classificado como ausente em máquina que o possui.** O
+  pré-flight validava com `manage-bde -status`, que exige privilégio
+  administrativo; no caminho degradado (UAC recusado) a chamada falhava por
+  permissão e o menu passava a oferecer o fallback errado. Sem privilégio, a
+  presença do binário passa a ser o que se afirma.
+- **A elevação por PowerShell descartava o parâmetro da linha de comando.** O
+  caminho alternativo, usado quando o Windows Script Host está bloqueado,
+  repassava apenas `/elevated`: `Launcher.bat /autofix` reabria elevado no menu
+  em vez de executar o reparo, e a execução desassistida ficava parada
+  esperando alguém digitar. Um argumento entre aspas também fechava a cadeia de
+  aspas montada para o VBS e a elevação falhava sem explicação.
 - **`Debloat.ps1` aplicava ajustes na plataforma errada e os reportava como
   sucesso.** `TaskbarDa` e `TaskbarMn` só existem no shell do Windows 11 e
   `EnableFeeds` só no do Windows 10, mas os três eram gravados em qualquer máquina.

@@ -159,7 +159,11 @@ if defined COMPARTDISK_GUARD (
 :: --- 2.4 Solicita elevacao
 call :TRACE "ESTAGIO 06 - solicitando elevacao via UAC"
 echo Solicitando privilegios de Administrador...
-set "ELEV_FWD=%*"
+:: %~1 em vez de %* : remove as aspas do argumento e limita o repasse ao unico
+:: parametro que o Launcher interpreta (secao 3.6 le somente %~1). Um argumento
+:: entre aspas em %* fechava a cadeia de aspas montada no VBS abaixo e a
+:: elevacao falhava sem explicacao.
+set "ELEV_FWD=%~1"
 set "COMPARTDISK_VBS=%TEMP%\compartdisk_elevate_%RANDOM%.vbs"
 
 :: O comando reexecutado e:  cmd /d /c ""<script>" /elevated <args> & pause"
@@ -179,7 +183,12 @@ cscript //nologo //B "%COMPARTDISK_VBS%" >nul 2>&1
 if not errorlevel 1 goto ELEVACAO_ENVIADA
 
 call :TRACE "ESTAGIO 06b - WSH indisponivel, tentando elevacao via PowerShell"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:COMPARTDISK_SELF -ArgumentList '/elevated' -Verb RunAs" >nul 2>&1
+:: Este caminho repassava apenas '/elevated' e descartava o parametro original.
+:: Consequencia: numa maquina sem Windows Script Host, "Launcher.bat /autofix"
+:: reabria elevado no MENU em vez de executar o reparo, e a execucao
+:: desassistida ficava parada esperando alguem digitar.
+if defined ELEV_FWD powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:COMPARTDISK_SELF -ArgumentList '/elevated','%ELEV_FWD%' -Verb RunAs" >nul 2>&1
+if not defined ELEV_FWD powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:COMPARTDISK_SELF -ArgumentList '/elevated' -Verb RunAs" >nul 2>&1
 if not errorlevel 1 goto ELEVACAO_ENVIADA
 
 call :TRACE "ESTAGIO 06c - falha em todos os metodos de elevacao"
@@ -279,21 +288,51 @@ set "HAS_MODULES=1"
 if not exist "%COMPARTDISK_MODULES%\Core.ps1" set "HAS_MODULES=0"
 
 :: --- 3.3 Demais ferramentas nativas (blocos explicitos)
-set "HAS_WINGET=1"
+:: A presenca do binario e verificada primeiro, com "where", que e barato e nao
+:: produz efeito colateral. So quando o binario existe o teste funcional roda.
+:: Antes, os quatro comandos eram invocados sempre: em maquina sem winget o
+:: shell ainda pagava a resolucao do comando, e "manage-bde -status" sem alvo
+:: enumera TODOS os volumes, o que custa segundos no arranque.
+set "HAS_WINGET=0"
+where winget >nul 2>&1
+if errorlevel 1 goto PF_WMIC
 winget --info >nul 2>&1
-if errorlevel 1 set "HAS_WINGET=0"
+if not errorlevel 1 set "HAS_WINGET=1"
 
-set "HAS_WMIC=1"
+:PF_WMIC
+:: WMIC foi removido das builds mais recentes do Windows 11. Ausente e um
+:: estado legitimo, nao uma falha.
+set "HAS_WMIC=0"
+where wmic >nul 2>&1
+if errorlevel 1 goto PF_PNP
 wmic os get caption >nul 2>&1
-if errorlevel 1 set "HAS_WMIC=0"
+if not errorlevel 1 set "HAS_WMIC=1"
 
-set "HAS_PNP=1"
+:PF_PNP
+set "HAS_PNP=0"
+where pnputil >nul 2>&1
+if errorlevel 1 goto PF_BDE
 pnputil /? >nul 2>&1
-if errorlevel 1 set "HAS_PNP=0"
+if not errorlevel 1 set "HAS_PNP=1"
 
+:PF_BDE
+:: "manage-bde -status" exige privilegio administrativo. No caminho degradado
+:: (UAC recusado) ele falhava por permissao, e o BitLocker era classificado
+:: como ausente numa maquina que o tem - o menu passava a oferecer o fallback
+:: errado. Sem privilegio, a presenca do binario e o que se pode afirmar.
+set "HAS_BDE=0"
+where manage-bde >nul 2>&1
+if errorlevel 1 goto PF_FIM
+if "%IS_ADMIN%"=="1" goto PF_BDE_TESTE
+:: Sem privilegio, a presenca do binario e tudo o que se pode afirmar.
 set "HAS_BDE=1"
+goto PF_FIM
+
+:PF_BDE_TESTE
 manage-bde -status >nul 2>&1
-if errorlevel 1 set "HAS_BDE=0"
+if not errorlevel 1 set "HAS_BDE=1"
+
+:PF_FIM
 call :TRACE "ESTAGIO 11 - pre-flight concluido (PS=%HAS_PS% MOD=%HAS_MODULES% WINGET=%HAS_WINGET% WMIC=%HAS_WMIC% PNP=%HAS_PNP% BDE=%HAS_BDE%)"
 
 :: --- 3.4 Identificador unico de sessao (compartilhado com os modulos)
@@ -790,15 +829,76 @@ echo   %C_AMARELO%Reinicie o computador para aplicar todas as alteracoes.%C_RESE
 pause & goto MENU_PRINCIPAL
 
 :MOD_AUTO_FIX_CORE
+:: Cada etapa e avaliada individualmente. Antes, as sete eram encadeadas sem
+:: nenhuma verificacao e a rotina gravava "REPARO AUTOMATICO CONCLUIDO" como
+:: [ OK ] mesmo que todas tivessem falhado - o operador lia "concluido" sobre
+:: um reparo que nao aconteceu.
+::
+:: A medicao usa os contadores que :RUN_PS_END ja mantem, que sao alimentados
+:: pelo codigo de saida real de cada modulo. Uma etapa desviada para o fallback
+:: Batch conta como pulada, nao como concluida: o Launcher nao tem como afirmar
+:: que a rotina Batch atingiu o mesmo estado final.
 call :LOG_MSG "INFO" "=== INICIANDO ROTINA ONE-CLICK FIX ==="
-call :MOD_TEMP_LOGS_SILENT
-call :MOD_REDE_RESET
-call :MOD_UPDATE_RESET
-call :MOD_SPOOLER
-call :MOD_EXPLORER
-call :MOD_SFC_DISM
-call :MOD_RELATORIO_SILENCIOSO
-call :LOG_MSG "OK" "=== REPARO AUTOMATICO CONCLUIDO ==="
+set "AF_TOTAL=0"
+set "AF_OK=0"
+set "AF_WARN=0"
+set "AF_ERR=0"
+set "AF_SKIP=0"
+
+call :AF_ETAPA "Limpeza de temporarios e logs"      MOD_TEMP_LOGS_SILENT
+call :AF_ETAPA "Redefinicao da pilha de rede"       MOD_REDE_RESET
+call :AF_ETAPA "Redefinicao do Windows Update"      MOD_UPDATE_RESET
+call :AF_ETAPA "Fila de impressao"                  MOD_SPOOLER
+call :AF_ETAPA "Reinicio do Explorer"               MOD_EXPLORER
+call :AF_ETAPA "Verificacao de integridade do sistema" MOD_SFC_DISM
+call :AF_ETAPA "Geracao dos relatorios"             MOD_RELATORIO_SILENCIOSO
+
+call :LOG_MSG "INFO" "Etapas: %AF_TOTAL% | concluidas: %AF_OK% | com atencao: %AF_WARN% | puladas: %AF_SKIP% | falhas: %AF_ERR%"
+if not "%AF_ERR%"=="0"  goto AF_FIM_ERRO
+if not "%AF_WARN%"=="0" goto AF_FIM_WARN
+if not "%AF_SKIP%"=="0" goto AF_FIM_WARN
+call :LOG_MSG "OK" "=== REPARO AUTOMATICO CONCLUIDO: as %AF_TOTAL% etapas foram concluidas ==="
+goto :EOF
+
+:AF_FIM_ERRO
+call :LOG_MSG "ERR" "=== REPARO AUTOMATICO INCOMPLETO: %AF_ERR% etapa(s) falharam de %AF_TOTAL% ==="
+call :LOG_MSG "INFO" "As etapas concluidas permanecem aplicadas. Consulte o log para a etapa exata."
+goto :EOF
+
+:AF_FIM_WARN
+call :LOG_MSG "WARN" "=== REPARO AUTOMATICO CONCLUIDO COM RESSALVAS: %AF_WARN% com atencao, %AF_SKIP% pulada(s) de %AF_TOTAL% ==="
+goto :EOF
+
+:AF_ETAPA
+:: %~1 = nome legivel da etapa   %~2 = rotulo da rotina a executar
+:: Compara os contadores antes e depois: e o unico jeito de saber o desfecho de
+:: uma etapa que internamente chama varios modulos.
+set /a AF_TOTAL+=1
+set "AF_E0=%MOD_ERR%"
+set "AF_W0=%MOD_WARN%"
+set "AF_S0=%MOD_SKIP%"
+call :LOG_MSG "INFO" "Etapa %AF_TOTAL%: %~1"
+call :%~2
+if not "%MOD_ERR%"=="%AF_E0%"  goto AF_ETAPA_ERRO
+if not "%MOD_WARN%"=="%AF_W0%" goto AF_ETAPA_WARN
+if not "%MOD_SKIP%"=="%AF_S0%" goto AF_ETAPA_SKIP
+set /a AF_OK+=1
+call :LOG_MSG "OK" "Etapa concluida: %~1"
+goto :EOF
+
+:AF_ETAPA_ERRO
+set /a AF_ERR+=1
+call :LOG_MSG "ERR" "Etapa nao concluida: %~1"
+goto :EOF
+
+:AF_ETAPA_WARN
+set /a AF_WARN+=1
+call :LOG_MSG "WARN" "Etapa concluida com ressalvas: %~1"
+goto :EOF
+
+:AF_ETAPA_SKIP
+set /a AF_SKIP+=1
+call :LOG_MSG "WARN" "Etapa desviada para a rotina Batch ou nao suportada: %~1"
 goto :EOF
 
 :: ------------------------------------------------------------------------------
@@ -2129,10 +2229,29 @@ call :RESUMO_SESSAO
 :: Encerramento normal: marca o trace como limpo para que a proxima execucao
 :: saiba que nao houve queda.
 call :TRACE "ENCERRAMENTO NORMAL"
+
+:: Codigo de saida semantico, no mesmo vocabulario dos modulos:
+::   0 = tudo concluido | 1 = concluido com atencao | 2 = houve erro
+::
+:: Aplicado somente em modo linha de comando. E ali que o codigo e consumido -
+:: RMM, GPO e tarefa agendada decidem por ele. Ate aqui o Launcher devolvia 0
+:: mesmo quando todos os modulos falhavam, e a automacao registrava sucesso de
+:: uma execucao que nao reparou nada.
+::
+:: No modo interativo o codigo continua 0: quem encerra e o operador, o valor
+:: nao e lido por ninguem, e altera-lo poderia surpreender quem ja embrulha o
+:: Launcher em outro script.
+set "RC_FINAL=0"
+if not defined CLI_MODE goto FIM_SAIDA
+if not "%MOD_WARN%"=="0" set "RC_FINAL=1"
+if not "%MOD_ERR%"=="0" set "RC_FINAL=2"
+if not "%RC_FINAL%"=="0" call :LOG_MSG "INFO" "Codigo de saida: %RC_FINAL% (0=OK 1=atencao 2=erro)"
+
+:FIM_SAIDA
 :: Sob o guardiao (cmd /c "... & pause") e preciso encerrar o processo inteiro,
 :: caso contrario o "pause" de seguranca dispararia apos uma saida legitima.
-if defined COMPARTDISK_GUARD exit 0
-exit /b 0
+if defined COMPARTDISK_GUARD exit %RC_FINAL%
+exit /b %RC_FINAL%
 
 :SEM_EXTENSOES
 :: Sem Command Extensions nao existem CALL :rotulo, SETLOCAL ou %~dp0. Nada da
