@@ -11,8 +11,8 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1`, `Debloat.ps1`,
 `Repair.ps1`, `Smart.ps1`, `Network.ps1`, `Users.ps1`, `Hardware.ps1`,
-`Collectors.ps1`, `Report.ps1`, `Core.ps1` e `Cleanup.ps1`, e correção de ordenação
-nos relatórios de todos os módulos.
+`Collectors.ps1`, `Report.ps1`, `Core.ps1`, `Cleanup.ps1` e `Defender.ps1`, e
+correção de ordenação nos relatórios de todos os módulos.
 
 **Nenhuma tecla de menu mudou, nenhum rótulo existente foi removido ou renomeado, e
 nenhum caminho de fallback Batch foi alterado.** As cinco ações existentes do módulo de drivers
@@ -479,6 +479,61 @@ sendo aceitos.
 > continua passando por `Remove-CompartDiskPathSafely` do `Core.ps1` — o módulo possui
 > apenas dois comandos destrutivos próprios: a remoção do `MEMORY.DMP` (arquivo único,
 > após validação) e `Clear-RecycleBin`.
+
+#### Defender
+
+- **Estado desconhecido da proteção em tempo real era publicado como "proteção
+  ativa".** A verificação era `if (RTP -eq 'False') { CRIT } else { OK }`: qualquer
+  valor que não fosse exatamente `False` — incluindo `n/d`, vazio ou a chave ausente —
+  caía no `else` e gerava o achado `OK` "Proteção em tempo real ativa", com o módulo
+  terminando em `0`. Falso negativo no controle mais importante do módulo. Passa a ser
+  tri-estado: sem leitura, o resultado é "não verificado".
+- **Antivírus de terceiros ativo produzia falso crítico.** Com o Defender em modo
+  passivo — configuração legítima e comum — `RealTimeProtectionEnabled` é `False`, e o
+  módulo publicava `CRIT` "Proteção em tempo real desabilitada" recomendando reativá-la,
+  o que colocaria dois antivírus disputando a mesma função. O estado passa a ser
+  contextualizado por `AMRunningMode` e pelos produtos registrados no Security Center.
+  **O caso genuinamente grave — proteção desligada sem nenhum outro antivírus — continua
+  `CRIT`.**
+- **Detecção já remediada mantinha a máquina em atenção para sempre.** Toda entrada do
+  histórico gerava `WARN`, sem distinguir ameaça pendente de ameaça tratada com
+  sucesso. Passa a classificar por `ThreatStatusID`: quarentena, limpeza, remoção e
+  bloqueio são resultado positivo (`INFO`); detecção ativa, remediação falha, abandono
+  e ameaça permitida são pendências (`CRIT`).
+- **Falha na atualização de definições virava exceção não tratada.** `Invoke-WithRetry`
+  relança na última tentativa, então uma condição esperada — sem rede, serviço de
+  atualização parado, bloqueio por diretiva — subia ao `catch` global e virava
+  "Falha não tratada no módulo" com `CRIT` genérico. Passa a ser classificada com causa
+  e recomendação.
+- **A atualização era declarada concluída sem comparar antes e depois.** `Update-MpSignature`
+  devolve sucesso mesmo quando já está na versão corrente. Passa a registrar
+  `versão anterior → comando → versão atual`, distinguir "atualizado" de "já estava
+  corrente", e avisar quando o comando é aceito mas as definições continuam antigas.
+- **`Get-MpPreference` era chamado sem proteção** em `Exclusions` e derrubava o módulo
+  com `CRIT` "Exceção no módulo" — mesma classe de defeito já corrigida neste arquivo
+  para `Get-MpComputerStatus` e `Start-MpScan`. O cmdlet recusa em modo passivo e sem
+  privilégio suficiente.
+- **Qualquer exclusão era tratada como vulnerabilidade.** Passa a classificar a
+  abrangência (raiz de unidade, diretório de sistema, extensão executável de uso geral,
+  interpretador como `powershell.exe`/`rundll32.exe`) e publica uma linha por exclusão
+  com `tipo → valor → abrangência → motivo`. Exclusões específicas deixam de gerar
+  alarme; as amplas geram `WARN` pedindo revisão, sem afirmar comprometimento.
+  `ExclusionExtension` e `ExclusionIpAddress`, antes exibidas mas não contabilizadas,
+  entram na conta.
+- **Assinatura atualizada no mesmo dia não gerava evidência.** O ramo `elseif ($idade -gt 0)`
+  descartava justamente o melhor caso, e uma conversão que falhasse no `catch` vazio
+  produzia `$idade = 0` — indistinguível de "atualizada hoje". Agora são três estados.
+- `Get-MpThreat` era consultado **uma vez por detecção** (até 30 chamadas CIM para
+  montar uma tabela); passa a ser consultado uma vez e indexado por `ThreatID`.
+- Tamper Protection desativada passa a gerar achado próprio, e execução recusada por
+  falta de privilégio deixa de persistir `Resultado=OK` para o `Report.ps1`.
+
+> As sete ações (`Status` `Update` `QuickScan` `FullScan` `CustomScan` `Exclusions`
+> `History`) continuam válidas com o mesmo significado e `Start-MpScan` continua
+> reportando **solicitação aceita**, nunca varredura concluída. O módulo permanece
+> **exclusivamente de auditoria**: não há um único comando que altere o Defender —
+> nenhum `Set-MpPreference`, `Add-MpPreference`, `Remove-MpThreat` ou manipulação de
+> registro/serviço. Nenhuma exclusão é removida e nenhuma política é alterada.
 
 ### Adicionado
 
