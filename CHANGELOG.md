@@ -9,11 +9,14 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-Manutenção do `Modules/Drivers.ps1` e correção de ordenação nos relatórios de todos
-os módulos. **Nenhuma tecla de menu mudou e as cinco ações existentes do módulo de
-drivers (`List` `Problems` `Backup` `Unsigned` `Export`) continuam válidas com o
-mesmo significado.** As novas ações são acessíveis por `-Action` e não aparecem no
-menu.
+Manutenção dos módulos `Drivers.ps1` e `Debloat.ps1`, e correção de ordenação nos
+relatórios de todos os módulos.
+
+**Nenhuma tecla de menu mudou.** As cinco ações existentes do módulo de drivers
+(`List` `Problems` `Backup` `Unsigned` `Export`) continuam válidas com o mesmo
+significado, e as novas são acessíveis por `-Action` sem aparecer no menu. No módulo
+de debloat, os três níveis, a precedência de seleção, o vocabulário de resultado e as
+listas de proteção permanecem exatamente como estavam.
 
 > A definição do número de versão desta entrega é decisão do mantenedor: o número
 > `1.3.1` aparece em `Core.ps1`, `Launcher.bat`, `README.md` e no cabeçalho de todos
@@ -21,6 +24,17 @@ menu.
 
 ### Corrigido
 
+- **`Debloat.ps1` aplicava ajustes na plataforma errada e os reportava como
+  sucesso.** `TaskbarDa` e `TaskbarMn` só existem no shell do Windows 11 e
+  `EnableFeeds` só no do Windows 10, mas os três eram gravados em qualquer máquina.
+  Na plataforma errada o valor não falha — fica inerte, e era contado como
+  `Aplicado`. Cada item do catálogo passa a declarar build mínima, build máxima e
+  família; o que não se aplica sai como `NaoSuportado` com o motivo, em vez de ser
+  gravado sem efeito.
+- **`Debloat.ps1` não distinguia ramo de registro protegido de valor barrado por
+  segurança.** Os dois casos produziam o mesmo texto, o que impedia dizer se a
+  alteração parou por estrutura do sistema ou por controle de segurança. Passam a
+  ser motivos separados.
 - **Os pares de campo/valor apareciam fora de ordem em todos os relatórios, e em
   ordem diferente a cada execução.** `Add-CompartDiskSection` declarava
   `[hashtable]$Pairs`, e todos os módulos montam os pares com `[ordered]@{}` porque
@@ -66,6 +80,37 @@ menu.
   falhava sem deixar rastro.
 
 ### Adicionado
+
+#### Debloat
+
+- **Cobertura ampliada de 150 para 197 itens de catálogo** (129 famílias Appx, contra
+  88). Entram WhatsApp, Messenger, Telegram e Viber; a coleção completa de jogos
+  casuais da Microsoft (Mahjong, Sudoku, Jigsaw, Minesweeper, Treasure Hunt, Ultimate
+  Word Games, além do Solitaire já coberto); versões de avaliação de antivírus e VPN
+  (McAfee, Norton, Avast, AVG, ExpressVPN); e mais promocionais de fabricante.
+- **Copilot, Recall e Widgets tratados em todas as camadas.** Antes só o aplicativo
+  `Microsoft.Copilot` era removido, o que deixava o botão na barra, a política ausente
+  e a experiência voltando na atualização seguinte. Agora cada camada é um item
+  próprio: aplicativo e pacotes de IA (Seguro); `TurnOffWindowsCopilot` de máquina e
+  de usuário, `ShowCopilotButton`, `DisableAIDataAnalysis`, `AllowRecallEnablement`,
+  `DisableSearchBoxSuggestions` e `AllowNewsAndInterests` (Moderado, reversíveis).
+- **Gate de compatibilidade por plataforma.** Itens declaram `MinBuild`, `MaxBuild` e
+  `Familia`; os que não se aplicam são reportados como `NaoSuportado` com o motivo, em
+  vez de aplicados inertes. Plataforma não identificada libera o item — perder a
+  detecção não pode zerar o módulo.
+- **Classificação de risco por item**, exposta no relatório ao lado do resultado:
+  `ESSENCIAL`, `SISTEMA`, `SEGURANCA`, `DEPENDENCIA`, `RECOMENDADO_PRESERVAR`,
+  `DEBLOAT_SEGURO`, `DEBLOAT_MODERADO`, `OPCIONAL`, `INEXISTENTE`, `INCOMPATIVEL` e
+  `ERRO`. As quatro primeiras vêm das listas de proteção e explicam por que o item não
+  foi tocado. É um eixo distinto do vocabulário de resultado, que permanece inalterado.
+
+> As listas de proteção não foram afetadas. O pacote dos Widgets
+> (`MicrosoftWindows.Client.WebExperience`) continua protegido pelo prefixo do shell do
+> Windows 11 e **não é removido**: os Widgets são desligados por política, o que é
+> reversível. A precedência `Proteção > -Exclude > -Include > -Level` permanece
+> intacta, e `-Include "*"` continua sem vencer a proteção.
+
+#### Drivers
 
 - **`Diagnose`** — verificação prévia somente leitura: privilégio, `pnputil`,
   repositório WMI, repositório de drivers, destino, espaço livre, assinatura,

@@ -38,6 +38,35 @@
     Falhou        tentativa executada e nao confirmada
     Ignorado      nao avaliado (nao deve aparecer em operacao normal)
  E na acao Restore: Restaurado | JaRestaurado | NaoRestauravel | Falhou | Simulado
+
+ CLASSIFICACAO DE RISCO (eixo distinto do resultado)
+    O RESULTADO diz o que aconteceu; a CLASSE diz o que o alvo e. Sao eixos
+    independentes e ambos aparecem no relatorio.
+
+    Classes de preservacao - nunca vem do catalogo, sempre das listas de
+    protecao, e nenhum item assim e tocado em qualquer nivel:
+       ESSENCIAL     remocao quebra loja, logon, shell, rede ou atualizacao
+       SISTEMA       componente de sistema, pacote nao removivel, tarefa de SO
+       SEGURANCA     valor ou ramo que sustenta defesa, UAC ou criptografia
+       DEPENDENCIA   framework ou pacote de recurso do qual outros dependem
+
+    Classes de alteracao - atribuidas no catalogo, derivadas do nivel quando
+    nao declaradas:
+       DEBLOAT_SEGURO         elegivel a partir do nivel Safe
+       DEBLOAT_MODERADO       elegivel a partir do nivel Moderate
+       OPCIONAL               elegivel apenas em Aggressive
+       RECOMENDADO_PRESERVAR  alto impacto; so entra com -Include explicito
+
+    Classes de situacao - apuradas em tempo de execucao:
+       INEXISTENTE   alvo ausente do sistema (resultado NaoInstalado)
+       INCOMPATIVEL  nao existe nesta build/edicao (resultado NaoSuportado)
+       ERRO          tentativa executada e nao confirmada (resultado Falhou)
+
+ COMPATIBILIDADE DE PLATAFORMA
+    Cada item pode declarar MinBuild, MaxBuild e Familia. Um ajuste aplicado na
+    plataforma errada nao falha: fica inerte. Reportar isso como 'Aplicado'
+    seria sucesso falso, entao o item e barrado antes da execucao e reportado
+    como NaoSuportado com o motivo.
 #>
 [CmdletBinding()]
 param(
@@ -83,6 +112,36 @@ $script:CacheServicos   = $null
 $script:CacheTarefas    = $null
 $script:CacheSsd        = 'nao-avaliado'
 $script:RebootPendente  = $null
+$script:CacheWindows    = $null
+
+function Get-DebloatWindows {
+    <# Retrato unico da plataforma, consultado uma vez por execucao. Alimenta o
+       gate de compatibilidade do catalogo: escrever um valor que so existe no
+       Windows 11 numa maquina Windows 10 nao falha - fica inerte, e um ajuste
+       inerte reportado como 'Aplicado' e sucesso falso.
+
+       Quando a consulta falha, devolve Conhecido=$false. Nesse caso o gate deixa
+       o item passar em vez de barrar tudo: perder a deteccao de plataforma nao
+       pode transformar o modulo inteiro em 'NaoSuportado'. #>
+    if ($null -ne $script:CacheWindows) { return $script:CacheWindows }
+    $out = [pscustomobject]@{
+        Conhecido = $false; Build = 0; Familia = 'Desconhecida'
+        IsWindows11 = $false; IsWindows10 = $false; Edicao = 'n/d'
+    }
+    try {
+        $w = Test-WindowsVersion
+        $out.Conhecido   = $true
+        $out.Build       = [int]$w.Build
+        $out.Familia     = "$($w.Family)"
+        $out.IsWindows11 = [bool]$w.IsWindows11
+        $out.IsWindows10 = [bool]$w.IsWindows10
+        $out.Edicao      = "$($w.Caption)"
+    } catch {
+        Write-Log DEBUG "Plataforma nao identificada para o gate de compatibilidade: $($_.Exception.Message)" -NoConsole
+    }
+    $script:CacheWindows = $out
+    return $out
+}
 
 # ==============================================================================
 # 1. LISTAS DE PROTECAO
@@ -286,6 +345,16 @@ $RegistroValoresProibidos = @(
 # ==============================================================================
 
 function New-CatalogoItem {
+    <# Classe e classificacao de RISCO; Nivel e escopo de execucao. Sao eixos
+       diferentes e nao se substituem: o Nivel decide se o item entra na rodada,
+       a Classe explica o que ele e. As classes de preservacao (ESSENCIAL,
+       SISTEMA, SEGURANCA, DEPENDENCIA) nunca aparecem aqui - o catalogo so
+       contem o que pode ser alterado. Elas sao atribuidas pelas listas de
+       protecao, em Get-DebloatClasseProtecao.
+
+       Compat declara em que plataforma o item faz efeito:
+         MinBuild / MaxBuild - faixa de build (0 = sem limite)
+         Familia             - 'Windows 11', 'Windows 10' ou vazio para ambas #>
     param(
         [Parameter(Mandatory)][string]$Id,
         [Parameter(Mandatory)][ValidateSet('Appx', 'Service', 'Task', 'Registry')][string]$Tipo,
@@ -295,8 +364,22 @@ function New-CatalogoItem {
         [Parameter(Mandatory)][string]$Motivo,
         [bool]$Reversivel = $true,
         [bool]$RequerInclude = $false,
+        [ValidateSet('DEBLOAT_SEGURO', 'DEBLOAT_MODERADO', 'OPCIONAL', 'RECOMENDADO_PRESERVAR')]
+        [string]$Classe = '',
+        [hashtable]$Compat = @{},
         [hashtable]$Dados = @{}
     )
+    # Sem classe declarada, deriva-se do nivel: e o mesmo criterio que o operador
+    # ja usa hoje, apenas explicitado.
+    if ([string]::IsNullOrWhiteSpace($Classe)) {
+        $Classe = switch ($Nivel) {
+            'Safe'     { 'DEBLOAT_SEGURO' }
+            'Moderate' { 'DEBLOAT_MODERADO' }
+            default    { 'OPCIONAL' }
+        }
+    }
+    if ($RequerInclude) { $Classe = 'RECOMENDADO_PRESERVAR' }
+
     return [pscustomobject]@{
         Id            = $Id
         Tipo          = $Tipo
@@ -306,8 +389,54 @@ function New-CatalogoItem {
         Motivo        = $Motivo
         Reversivel    = $Reversivel
         RequerInclude = $RequerInclude
+        Classe        = $Classe
+        Compat        = $Compat
         Dados         = $Dados
     }
+}
+
+function Test-DebloatCompatibilidade {
+    <# Decide se o item faz efeito NESTA plataforma. Devolve { Compativel,
+       Motivo }. Um item declarado para outra familia ou fora da faixa de build
+       nao e "falha": e INCOMPATIVEL, e o vocabulario do modulo ja tem o valor
+       certo para isso - NaoSuportado.
+
+       Plataforma desconhecida libera o item: perder a deteccao nao pode zerar o
+       modulo. O executor ainda validara o resultado por reconsulta. #>
+    param([Parameter(Mandatory)][object]$Item)
+    $out = [pscustomobject]@{ Compativel = $true; Motivo = '' }
+
+    $compat = $Item.Compat
+    if ($null -eq $compat -or $compat.Count -eq 0) { return $out }
+
+    $w = Get-DebloatWindows
+    if (-not $w.Conhecido) { return $out }
+
+    if ($compat.ContainsKey('Familia')) {
+        $fam = "$($compat.Familia)"
+        if ($fam -and $fam -ne $w.Familia) {
+            $out.Compativel = $false
+            $out.Motivo = ('destinado a {0}; esta maquina e {1}' -f $fam, $w.Familia)
+            return $out
+        }
+    }
+    if ($compat.ContainsKey('MinBuild')) {
+        $min = [int]$compat.MinBuild
+        if ($min -gt 0 -and $w.Build -lt $min) {
+            $out.Compativel = $false
+            $out.Motivo = ('exige build {0} ou superior; esta maquina tem {1}' -f $min, $w.Build)
+            return $out
+        }
+    }
+    if ($compat.ContainsKey('MaxBuild')) {
+        $max = [int]$compat.MaxBuild
+        if ($max -gt 0 -and $w.Build -gt $max) {
+            $out.Compativel = $false
+            $out.Motivo = ('valido ate a build {0}; esta maquina tem {1}' -f $max, $w.Build)
+            return $out
+        }
+    }
+    return $out
 }
 
 function Get-DebloatCatalogo {
@@ -377,10 +506,58 @@ function Get-DebloatCatalogo {
         '*PrimeVideo*', '*Amazon.com.Amazon*', '*Hulu*', '*Booking.com*'
         '*iHeartRadio*', '*Plex*', '*Sidia.LiveWallpaper*', '*RoyalRevolt*'
         '*Wunderlist*', '*Flipboard*', '*Asphalt*', '*MarchofEmpires*'
+        # Mensageria e redes sociais pre-instaladas pelo fabricante ou entregues
+        # pelo ContentDeliveryManager. O nome da familia varia por publicador
+        # (5319275A.WhatsAppDesktop e o mais comum), dai o curinga.
+        '*WhatsApp*', '*Messenger*', '*Telegram*', '*Viber*', '*Line.Line*'
+        # Antivirus e VPN de avaliacao. Nao substituem o Defender, que permanece
+        # protegido: o que sai aqui e a versao de teste pre-instalada.
+        '*McAfee*', '*Norton*', '*ExpressVPN*', '*Avast*', '*AVGTechnologies*'
+        # Utilitarios e conteudo promocional de OEM.
+        '*Keeper*', '*Dropbox*', '*Evernote*', '*Fitbit*', '*Prime*'
+        '*SlingTV*', '*Spotify.AB*', '*PicsArt*', '*WinZip*', '*PowerDirector*'
+        '*Sway*', '*Bing.Suggested*', '*Simple.Solitaire*', '*GAMELOFT*'
+        '*Playtika*', '*Rovio*', '*ZeptoLab*', '*TheNewYorkTimes*'
     )
     foreach ($t in $terceiros) {
         & $add (New-CatalogoItem -Id "app:$t" -Tipo Appx -Alvo $t -Categoria 'Aplicativos' `
             -Nivel Safe -Motivo 'Aplicativo comercial pre-instalado pelo fabricante.' -Reversivel $false)
+    }
+
+    # Jogos casuais da propria Microsoft, entregues por provisionamento. Nenhum e
+    # dependencia de nada: sao titulos avulsos com anuncio e assinatura. Ficam em
+    # Safe pelo mesmo criterio ja aplicado ao Solitaire, que era o unico coberto.
+    $jogos = @(
+        @{ N = 'Microsoft.MicrosoftMahjong'; M = 'Jogo casual pre-instalado, com anuncios.' }
+        @{ N = 'Microsoft.MicrosoftSudoku'; M = 'Jogo casual pre-instalado, com anuncios.' }
+        @{ N = 'Microsoft.MicrosoftJigsaw'; M = 'Jogo casual pre-instalado, com anuncios.' }
+        @{ N = 'Microsoft.MicrosoftTreasureHunt'; M = 'Jogo casual pre-instalado, com anuncios.' }
+        @{ N = 'Microsoft.MicrosoftUltimateWordGames'; M = 'Jogo casual pre-instalado, com anuncios.' }
+        @{ N = 'Microsoft.MicrosoftMinesweeper'; M = 'Jogo casual pre-instalado, com anuncios.' }
+        @{ N = 'Microsoft.MicrosoftBingJigsaw'; M = 'Jogo casual pre-instalado, com anuncios.' }
+        @{ N = 'Microsoft.CasualGames'; M = 'Pacote de jogos casuais pre-instalado.' }
+        @{ N = 'Microsoft.MinecraftEducationEdition'; M = 'Edicao educacional do Minecraft, pre-instalada.' }
+    )
+    foreach ($j in $jogos) {
+        & $add (New-CatalogoItem -Id "app:$($j.N)" -Tipo Appx -Alvo $j.N -Categoria 'Aplicativos' `
+            -Nivel Safe -Motivo $j.M -Reversivel $false)
+    }
+
+    # Componentes de IA entregues como Appx. O aplicativo Copilot ja constava em
+    # $appsSafe; aqui entram os pacotes irmaos que o acompanham a partir do
+    # Windows 11 23H2. Nao sao o shell: MicrosoftWindows.Client.* continua
+    # integralmente protegido e nada nesta lista casa com aquele prefixo.
+    $iaApps = @(
+        @{ N = 'Microsoft.Windows.Ai.Copilot.Provider'; M = 'Provedor do Copilot no shell; reinstalavel pela loja.'; B = 22000 }
+        @{ N = 'Microsoft.Copilot.Native'; M = 'Componente nativo do Copilot.'; B = 22000 }
+        @{ N = 'MicrosoftCorporationII.MicrosoftFamily'; M = 'Aplicativo Familia Microsoft, pre-instalado.'; B = 0 }
+        @{ N = 'MicrosoftCorporationII.QuickAssist'; M = 'Assistencia rapida, reinstalavel pela loja.'; B = 0 }
+    )
+    foreach ($a in $iaApps) {
+        $compat = @{}
+        if ($a.B -gt 0) { $compat = @{ MinBuild = $a.B } }
+        & $add (New-CatalogoItem -Id "app:$($a.N)" -Tipo Appx -Alvo $a.N -Categoria 'Aplicativos' `
+            -Nivel Safe -Motivo $a.M -Reversivel $false -Compat $compat)
     }
 
     # ---------- APLICATIVOS: nivel Moderate ----------
@@ -507,28 +684,77 @@ function Get-DebloatCatalogo {
             -Dados @{ Caminho = $p.P; Nome = $p.N; Valor = $p.V; Tipo = 'DWord' })
     }
 
+    # ---------- IA E EXPERIENCIAS DO CONSUMIDOR ----------
+    # Copilot, Recall e Widgets nao sao um unico interruptor: existem como
+    # aplicativo, como politica de maquina, como botao de shell e como recurso.
+    # Remover so o Appx deixa o botao na barra e a politica ausente, e a
+    # experiencia volta na atualizacao seguinte. Cada camada e um item proprio,
+    # com o build minimo em que ela existe - abaixo dele o valor e inerte, e
+    # aplicar valor inerte seria declarar sucesso sem efeito.
+    #
+    # Todos sao gravacao de valor, portanto reversiveis pela acao Restore, que
+    # guarda o estado anterior no manifesto.
+    $ia = @(
+        @{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot'; N = 'TurnOffWindowsCopilot'; V = 1
+           L = 'Moderate'; B = 22621; F = 'Windows 11'
+           M = 'Politica de maquina que desliga o Copilot para todos os usuarios.' }
+        @{ P = 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot'; N = 'TurnOffWindowsCopilot'; V = 1
+           L = 'Moderate'; B = 22621; F = 'Windows 11'
+           M = 'Mesma politica no perfil do usuario atual.' }
+        @{ P = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; N = 'ShowCopilotButton'; V = 0
+           L = 'Moderate'; B = 22621; F = 'Windows 11'
+           M = 'Oculta o botao do Copilot na barra de tarefas.' }
+        @{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'; N = 'DisableAIDataAnalysis'; V = 1
+           L = 'Moderate'; B = 26100; F = 'Windows 11'
+           M = 'Desliga o Recall, que captura e indexa imagens da tela. Aumenta a privacidade; nao desativa nenhum controle de seguranca.' }
+        @{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'; N = 'AllowRecallEnablement'; V = 0
+           L = 'Moderate'; B = 26100; F = 'Windows 11'
+           M = 'Impede que o Recall seja reativado por atualizacao ou por configuracao do usuario.' }
+        @{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer'; N = 'DisableSearchBoxSuggestions'; V = 1
+           L = 'Moderate'; B = 22621; F = 'Windows 11'
+           M = 'Remove as sugestoes web da caixa de busca. E a chave que efetiva o bloqueio no Windows 11 22H2+, onde BingSearchEnabled sozinho nao basta.' }
+        # Widgets: desativado por configuracao e politica, sem remover pacote. O
+        # pacote MicrosoftWindows.Client.WebExperience permanece protegido pelo
+        # prefixo do shell, e esta e a via reversivel de desligar a experiencia.
+        @{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh'; N = 'AllowNewsAndInterests'; V = 0
+           L = 'Moderate'; B = 22000; F = 'Windows 11'
+           M = 'Politica que desliga Widgets no Windows 11 sem remover o pacote do shell.' }
+    )
+    foreach ($k in $ia) {
+        $compat = @{}
+        if ($k.B -gt 0) { $compat['MinBuild'] = $k.B }
+        if ($k.F)       { $compat['Familia']  = $k.F }
+        & $add (New-CatalogoItem -Id "reg:$($k.P)\$($k.N)" -Tipo Registry -Alvo "$($k.P)\$($k.N)" `
+            -Categoria 'Privacidade' -Nivel $k.L -Motivo $k.M -Reversivel $true -Compat $compat `
+            -Dados @{ Caminho = $k.P; Nome = $k.N; Valor = $k.V; Tipo = 'DWord' })
+    }
+
     # ---------- AJUSTES OPCIONAIS ----------
     # NtfsDisableLastAccessUpdate foi retirado: o valor so tem efeito em
     # HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem (ramo protegido) e o
     # mecanismo nativo e 'fsutil behavior set disablelastaccess'. Escrito no
     # caminho antigo (\Policies) era inerte.
+    # O campo C declara a plataforma em que o ajuste tem efeito. TaskbarDa e
+    # TaskbarMn so existem no shell do Windows 11, e EnableFeeds so no do
+    # Windows 10: aplicados na plataforma errada nao falham, ficam inertes - e
+    # eram reportados como 'Aplicado', que e sucesso sem efeito.
     $adv = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
     $tweaks = @(
-        @{ P = $adv; N = 'HideFileExt'; V = 0; L = 'Safe'; M = 'Exibe a extensao dos arquivos; reduz risco de arquivo disfarcado.' }
-        @{ P = $adv; N = 'LaunchTo'; V = 1; L = 'Safe'; M = 'Explorer abre em Este Computador em vez de Acesso Rapido.' }
-        @{ P = $adv; N = 'ShowTaskViewButton'; V = 0; L = 'Safe'; M = 'Oculta o botao de Visao de Tarefas na barra.' }
-        @{ P = $adv; N = 'TaskbarDa'; V = 0; L = 'Safe'; M = 'Oculta Widgets na barra de tarefas (somente Windows 11).' }
-        @{ P = $adv; N = 'TaskbarMn'; V = 0; L = 'Safe'; M = 'Oculta o Chat na barra de tarefas (somente Windows 11).' }
-        @{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds'; N = 'EnableFeeds'; V = 0; L = 'Safe'; M = 'Desativa Noticias e Interesses (somente Windows 10).' }
-        @{ P = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SmartActionPlatform\SmartClipboard'; N = 'Disabled'; V = 1; L = 'Moderate'; M = 'Acoes sugeridas ao copiar texto.' }
-        @{ P = $adv; N = 'ShowSyncProviderNotifications'; V = 0; L = 'Moderate'; M = 'Anuncios do OneDrive dentro do Explorer.' }
-        @{ P = 'HKCU:\Control Panel\Desktop'; N = 'MenuShowDelay'; V = 200; L = 'Aggressive'; M = 'Reduz o atraso de abertura de menus de 400 ms para 200 ms.' }
+        @{ P = $adv; N = 'HideFileExt'; V = 0; L = 'Safe'; C = @{}; M = 'Exibe a extensao dos arquivos; reduz risco de arquivo disfarcado.' }
+        @{ P = $adv; N = 'LaunchTo'; V = 1; L = 'Safe'; C = @{}; M = 'Explorer abre em Este Computador em vez de Acesso Rapido.' }
+        @{ P = $adv; N = 'ShowTaskViewButton'; V = 0; L = 'Safe'; C = @{}; M = 'Oculta o botao de Visao de Tarefas na barra.' }
+        @{ P = $adv; N = 'TaskbarDa'; V = 0; L = 'Safe'; C = @{ Familia = 'Windows 11' }; M = 'Oculta Widgets na barra de tarefas do Windows 11.' }
+        @{ P = $adv; N = 'TaskbarMn'; V = 0; L = 'Safe'; C = @{ Familia = 'Windows 11' }; M = 'Oculta o Chat na barra de tarefas do Windows 11.' }
+        @{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds'; N = 'EnableFeeds'; V = 0; L = 'Safe'; C = @{ Familia = 'Windows 10' }; M = 'Desativa Noticias e Interesses no Windows 10.' }
+        @{ P = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SmartActionPlatform\SmartClipboard'; N = 'Disabled'; V = 1; L = 'Moderate'; C = @{}; M = 'Acoes sugeridas ao copiar texto.' }
+        @{ P = $adv; N = 'ShowSyncProviderNotifications'; V = 0; L = 'Moderate'; C = @{}; M = 'Anuncios do OneDrive dentro do Explorer.' }
+        @{ P = 'HKCU:\Control Panel\Desktop'; N = 'MenuShowDelay'; V = 200; L = 'Aggressive'; C = @{}; M = 'Reduz o atraso de abertura de menus de 400 ms para 200 ms.' }
     )
     foreach ($t in $tweaks) {
         $tipoReg = if ($t.P -eq 'HKCU:\Control Panel\Desktop') { 'String' } else { 'DWord' }
         $valor   = if ($tipoReg -eq 'String') { "$($t.V)" } else { $t.V }
         & $add (New-CatalogoItem -Id "reg:$($t.P)\$($t.N)" -Tipo Registry -Alvo "$($t.P)\$($t.N)" `
-            -Categoria 'Ajustes' -Nivel $t.L -Motivo $t.M -Reversivel $true `
+            -Categoria 'Ajustes' -Nivel $t.L -Motivo $t.M -Reversivel $true -Compat $t.C `
             -Dados @{ Caminho = $t.P; Nome = $t.N; Valor = $valor; Tipo = $tipoReg })
     }
 
@@ -622,7 +848,14 @@ function Get-DebloatMotivoProtecao {
         'Registry' {
             $cam = "$($Item.Dados.Caminho)"
             $nom = "$($Item.Dados.Nome)"
-            if (Test-RegistroProtegido -Caminho $cam -Nome $nom) { return 'ramo ou valor de registro protegido' }
+            # Os dois bloqueios sao reportados separadamente: um ramo protegido e
+            # estrutura do sistema, um valor barrado e controle de seguranca. O
+            # texto unico anterior impedia classificar corretamente qual dos dois
+            # impediu a alteracao.
+            if ($nom -and ($RegistroValoresProibidos -contains $nom)) {
+                return 'valor de registro barrado por seguranca'
+            }
+            if (Test-RegistroProtegido -Caminho $cam -Nome $nom) { return 'ramo de registro protegido' }
         }
         default    { return 'tipo desconhecido' }
     }
@@ -632,6 +865,37 @@ function Get-DebloatMotivoProtecao {
 function Test-ItemProtegido {
     param([Parameter(Mandatory)][object]$Item)
     return [bool](Get-DebloatMotivoProtecao -Item $Item)
+}
+
+function Get-DebloatClasseProtecao {
+    <# Traduz o motivo tecnico da protecao para a classe de risco correspondente.
+       E o que responde "por que este item nao foi tocado" numa palavra, sem
+       obrigar quem le o relatorio a interpretar o texto do motivo.
+
+       Nao substitui o vocabulario de RESULTADO: um item barrado continua saindo
+       como 'Protegido'. A classe acompanha, explicando a natureza do bloqueio. #>
+    param(
+        [Parameter(Mandatory)][object]$Item,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Motivo
+    )
+    if ([string]::IsNullOrWhiteSpace($Motivo)) { return $Item.Classe }
+
+    # A ordem importa: o primeiro padrao que casar devolve. Os motivos mais
+    # especificos vem antes dos mais genericos.
+    switch -Wildcard ($Motivo) {
+        '*barrado por seguranca*'     { return 'SEGURANCA' }
+        '*framework*'                 { return 'DEPENDENCIA' }
+        '*pacote de recurso*'         { return 'DEPENDENCIA' }
+        '*componente de sistema*'     { return 'SISTEMA' }
+        '*nao removivel*'             { return 'SISTEMA' }
+        '*tarefa de sistema*'         { return 'SISTEMA' }
+        '*ramo de registro*'          { return 'SISTEMA' }
+        '*servico protegido*'         { return 'ESSENCIAL' }
+        '*familia Appx protegida*'    { return 'ESSENCIAL' }
+        '*lista de protecao*'         { return 'ESSENCIAL' }
+        '*provisionamento protegido*' { return 'ESSENCIAL' }
+        default                       { return 'SISTEMA' }
+    }
 }
 
 function Test-DebloatPadrao {
@@ -653,11 +917,12 @@ function Select-DebloatItens {
         [string[]]$Incluir = @(),
         [string[]]$Excluir = @()
     )
-    $teto       = $NiveisOrdem[$NivelMaximo]
-    $sel        = New-Object System.Collections.ArrayList
-    $protegidos = New-Object System.Collections.ArrayList
-    $promovidos = New-Object System.Collections.ArrayList
-    $pendentes  = New-Object System.Collections.ArrayList
+    $teto          = $NiveisOrdem[$NivelMaximo]
+    $sel           = New-Object System.Collections.ArrayList
+    $protegidos    = New-Object System.Collections.ArrayList
+    $promovidos    = New-Object System.Collections.ArrayList
+    $pendentes     = New-Object System.Collections.ArrayList
+    $incompativeis = New-Object System.Collections.ArrayList
 
     foreach ($i in @($Catalogo)) {
         $pedidoExplicito = $false
@@ -687,7 +952,21 @@ function Select-DebloatItens {
         $motivo = Get-DebloatMotivoProtecao -Item $i
         if ($motivo) {
             Write-Log DEBUG "Item protegido ignorado: $($i.Id) ($motivo)" -NoConsole
-            [void]$protegidos.Add([pscustomobject]@{ Item = $i; Motivo = $motivo })
+            [void]$protegidos.Add([pscustomobject]@{
+                Item = $i; Motivo = $motivo
+                Classe = (Get-DebloatClasseProtecao -Item $i -Motivo $motivo)
+            })
+            continue
+        }
+
+        # 5. Compatibilidade de plataforma. Avaliada DEPOIS da protecao: um item
+        #    protegido continua sendo reportado como protegido, nao como
+        #    incompativel. Aplicar um ajuste inerte e sucesso falso, entao ele
+        #    sai da selecao e e reportado - nunca silenciado.
+        $compat = Test-DebloatCompatibilidade -Item $i
+        if (-not $compat.Compativel) {
+            Write-Log DEBUG "Item incompativel com esta plataforma: $($i.Id) ($($compat.Motivo))" -NoConsole
+            [void]$incompativeis.Add([pscustomobject]@{ Item = $i; Motivo = $compat.Motivo })
             continue
         }
 
@@ -696,10 +975,11 @@ function Select-DebloatItens {
     }
 
     return [pscustomobject]@{
-        Itens      = @($sel)
-        Protegidos = @($protegidos)
-        Promovidos = @($promovidos)
-        Pendentes  = @($pendentes)
+        Itens         = @($sel)
+        Protegidos    = @($protegidos)
+        Promovidos    = @($promovidos)
+        Pendentes     = @($pendentes)
+        Incompativeis = @($incompativeis)
     }
 }
 
@@ -1777,10 +2057,11 @@ function Invoke-DebloatCategorias {
     $catalogo = Get-DebloatCatalogo
     $selecao  = Select-DebloatItens -Catalogo $catalogo -NivelMaximo $Level -Incluir $Include -Excluir $Exclude
 
-    $itens      = @($selecao.Itens      | Where-Object { $Categorias -contains $_.Categoria })
-    $protegidos = @($selecao.Protegidos | Where-Object { $Categorias -contains $_.Item.Categoria })
-    $promovidos = @($selecao.Promovidos | Where-Object { $Categorias -contains $_.Categoria })
-    $pendentes  = @($selecao.Pendentes  | Where-Object { $Categorias -contains $_.Categoria })
+    $itens         = @($selecao.Itens         | Where-Object { $Categorias -contains $_.Categoria })
+    $protegidos    = @($selecao.Protegidos    | Where-Object { $Categorias -contains $_.Item.Categoria })
+    $promovidos    = @($selecao.Promovidos    | Where-Object { $Categorias -contains $_.Categoria })
+    $pendentes     = @($selecao.Pendentes     | Where-Object { $Categorias -contains $_.Categoria })
+    $incompativeis = @($selecao.Incompativeis | Where-Object { $Categorias -contains $_.Item.Categoria })
 
     # SysMain so faz sentido em disco mecanico. Sem confirmacao de que o disco do
     # sistema e SSD, o item e preservado: na duvida, nao altera.
@@ -1801,7 +2082,30 @@ function Invoke-DebloatCategorias {
             $pendentes.Count, (@($pendentes | ForEach-Object { $_.Id }) -join ', '))
     }
 
-    if ($itens.Count -eq 0 -and $protegidos.Count -eq 0) {
+    # Incompativel nao e falha nem omissao: e um item que nao existe nesta
+    # plataforma. Entra no relatorio como NaoSuportado, com o motivo, em vez de
+    # ser aplicado inerte e contado como sucesso.
+    $linhasIncompat = New-Object System.Collections.ArrayList
+    if ($incompativeis.Count -gt 0) {
+        $w = Get-DebloatWindows
+        Write-Log INFO ("{0} item(ns) nao se aplicam a esta plataforma ({1}, build {2}) e foram ignorados." -f `
+            $incompativeis.Count, $w.Familia, $w.Build)
+        foreach ($x in $incompativeis) {
+            Write-Log DEBUG ("Incompativel: {0} - {1}" -f $x.Item.Id, $x.Motivo) -NoConsole
+            [void]$linhasIncompat.Add([pscustomobject]@{
+                Categoria = $x.Item.Categoria
+                Tipo      = $x.Item.Tipo
+                Alvo      = $x.Item.Alvo
+                Nivel     = $x.Item.Nivel
+                Classe    = 'INCOMPATIVEL'
+                Resultado = 'NaoSuportado'
+                Detalhe   = $x.Motivo
+                Motivo    = $x.Item.Motivo
+            })
+        }
+    }
+
+    if ($itens.Count -eq 0 -and $protegidos.Count -eq 0 -and $incompativeis.Count -eq 0) {
         Write-Log WARN "Nenhum item elegivel em: $($Categorias -join ', ') (nivel $Level)."
         return @()
     }
@@ -1838,6 +2142,10 @@ function Invoke-DebloatCategorias {
             Tipo      = $i.Tipo
             Alvo      = $i.Alvo
             Nivel     = $i.Nivel
+            Classe    = $(if ($r.Resultado -eq 'NaoInstalado') { 'INEXISTENTE' }
+                          elseif ($r.Resultado -eq 'Falhou')   { 'ERRO' }
+                          elseif ($r.Resultado -eq 'Protegido'){ (Get-DebloatClasseProtecao -Item $i -Motivo $r.Detalhe) }
+                          else { $i.Classe })
             Resultado = $r.Resultado
             Detalhe   = $r.Detalhe
             Motivo    = $i.Motivo
@@ -1864,18 +2172,29 @@ function Invoke-DebloatCategorias {
     }
 
     # Itens barrados por protecao aparecem no relatorio em vez de desaparecer.
+    # A classe diz em uma palavra por que o item e intocavel.
     foreach ($p in $protegidos) {
+        $classe = $(if ($p.PSObject.Properties.Name -contains 'Classe' -and $p.Classe) { $p.Classe }
+                    else { Get-DebloatClasseProtecao -Item $p.Item -Motivo $p.Motivo })
         [void]$linhas.Add([pscustomobject]@{
             Categoria = $p.Item.Categoria
             Tipo      = $p.Item.Tipo
             Alvo      = $p.Item.Alvo
             Nivel     = $p.Item.Nivel
+            Classe    = $classe
             Resultado = 'Protegido'
             Detalhe   = $p.Motivo
             Motivo    = $p.Item.Motivo
         })
         Write-Color ("  {0,-19} {1,-46} {2}" -f 'Protegido', `
-            (Format-DebloatAlvo $p.Item.Alvo), $p.Motivo) -Color Yellow
+            (Format-DebloatAlvo $p.Item.Alvo), ("[$classe] " + $p.Motivo)) -Color Yellow
+    }
+
+    # Incompativeis entram por ultimo, ja formatados acima.
+    foreach ($li in $linhasIncompat) {
+        [void]$linhas.Add($li)
+        Write-Color ("  {0,-19} {1,-46} {2}" -f 'NaoSuportado', `
+            (Format-DebloatAlvo $li.Alvo), ('[INCOMPATIVEL] ' + $li.Detalhe)) -Color DarkGray
     }
 
     # Contabiliza o que realmente aconteceu na categoria, para que o resumo do
@@ -2765,6 +3084,21 @@ function Write-DebloatResumo {
     Write-Color ''
     Write-DebloatTabela -Linhas @($porCategoria)
 
+    # Quebra por classe de risco: responde "o que o modulo nao tocou, e por que"
+    # sem obrigar quem le a interpretar o texto do motivo item a item.
+    $porClasse = @($Linhas | Where-Object { $_.PSObject.Properties.Name -contains 'Classe' -and $_.Classe } |
+        Group-Object Classe | Sort-Object Name | ForEach-Object {
+            [pscustomobject]@{ Classe = $_.Name; Itens = $_.Count }
+        })
+    $preservadas = @($porClasse | Where-Object {
+        $_.Classe -in @('ESSENCIAL', 'SISTEMA', 'SEGURANCA', 'DEPENDENCIA', 'RECOMENDADO_PRESERVAR', 'INCOMPATIVEL')
+    })
+    if ($preservadas.Count -gt 0) {
+        Write-Color ''
+        Write-Color '  Classificacao de risco dos itens nao alterados' -Color White
+        Write-DebloatTabela -Linhas @($porClasse)
+    }
+
     $status = $(if ($falhas -gt 0 -or $parciais -gt 0) { 'WARN' } else { 'OK' })
     Add-CompartDiskSection -Title $Titulo -Status $status -Rows @($Linhas) `
         -Summary ("Nivel {0} | confirmadas {1} | parciais {2} | previstas {3} | ja conformes {4} | protegidas {5} | nao suportadas {6} | adiadas por reinicio {7} | falhas {8}" -f `
@@ -2776,9 +3110,26 @@ function Write-DebloatResumo {
         Set-DebloatResultado 'WARN' | Out-Null
     }
     if ($naoSup -gt 0) {
-        Add-CompartDiskFinding -Severity INFO -Area 'Debloat' -Message "$naoSup item(ns) nao sao suportados nesta versao do Windows ou nesta sessao." `
-            -Recommendation 'Nenhuma acao necessaria: o alvo nao existe ou o mecanismo nao esta disponivel aqui.'
+        $incompat = @($Linhas | Where-Object {
+            $_.Resultado -eq 'NaoSuportado' -and
+            $_.PSObject.Properties.Name -contains 'Classe' -and $_.Classe -eq 'INCOMPATIVEL'
+        }).Count
+        $detalhe = $(if ($incompat -gt 0) {
+            " Destes, $incompat nao existem nesta build ou edicao do Windows."
+        } else { '' })
+        Add-CompartDiskFinding -Severity INFO -Area 'Debloat' -Message "$naoSup item(ns) nao sao suportados nesta versao do Windows ou nesta sessao.$detalhe" `
+            -Recommendation 'Nenhuma acao necessaria: o alvo nao existe nesta plataforma ou o mecanismo nao esta disponivel aqui. Um ajuste aplicado fora da plataforma correta seria inerte.'
         Set-DebloatResultado 'WARN' | Out-Null
+    }
+    if ($protegidos -gt 0) {
+        $classes = @($Linhas | Where-Object {
+            $_.Resultado -eq 'Protegido' -and
+            $_.PSObject.Properties.Name -contains 'Classe' -and $_.Classe
+        } | ForEach-Object { $_.Classe } | Sort-Object -Unique)
+        Add-CompartDiskFinding -Severity INFO -Area 'Debloat' `
+            -Message ("{0} item(ns) foram preservados pelas listas de protecao{1}." -f $protegidos,
+                      $(if ($classes.Count -gt 0) { ' (' + ($classes -join ', ') + ')' } else { '' })) `
+            -Recommendation 'Comportamento esperado: sao componentes de sistema, seguranca ou dependencia. Nenhum nivel deste modulo os alcanca, nem mesmo -Include.'
     }
     if ($aplicados -gt 0 -or $parciais -gt 0) {
         Add-CompartDiskFinding -Severity OK -Area 'Debloat' -Message "$aplicados alteracao(oes) confirmada(s) no nivel $Level." `

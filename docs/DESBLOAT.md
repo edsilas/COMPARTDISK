@@ -48,12 +48,18 @@ funcionar.
 
 | | Aplicativos | Serviços | Tarefas | Privacidade | Ajustes | **Total** |
 |---|---:|---:|---:|---:|---:|---:|
-| Seguro | 68 | 6 | 8 | 16 | 6 | **104** |
-| Moderado (acumulado) | 84 | 13 | 14 | 23 | 9 | **143** |
-| Avançado (acumulado) | 88 | 15 | 14 | 23 | 10 | **150** |
+| Seguro | 109 | 6 | 8 | 16 | 6 | **145** |
+| Moderado (acumulado) | 125 | 13 | 14 | 30 | 8 | **190** |
+| Avançado (acumulado) | 129 | 15 | 14 | 30 | 9 | **197** |
 
 Os níveis são cumulativos: o Moderado inclui tudo do Seguro, e o Avançado inclui tudo
 dos dois anteriores.
+
+Esses são os números do catálogo completo. **O total efetivo em uma máquina específica
+é menor**, por dois motivos: 12 itens declaram a plataforma em que fazem efeito e são
+ignorados fora dela, e itens cujo alvo não existe no sistema saem como `NaoInstalado`.
+Um ajuste que só existe no Windows 11 não é aplicado no Windows 10 — seria inerte, e
+relatar isso como sucesso seria falso.
 
 ---
 
@@ -165,7 +171,7 @@ completa.
 | **Menu** | `[4]` › `[9]` › `[5]` |
 | **Ação interna** | `-Action Apps` |
 | **Finalidade** | Remover aplicativos da Microsoft Store instalados sem escolha do usuário |
-| **O que remove** | 88 famílias no total: aplicativos Bing, suíte 3D descontinuada, Skype pré-instalado, Solitaire, Mapas, Feedback Hub, Teams pessoal, Clipchamp, Cortana, Office Hub, e pré-instalados de terceiros como jogos, streaming e redes sociais |
+| **O que remove** | 129 famílias no total: aplicativos Bing, suíte 3D descontinuada, Skype pré-instalado, Mapas, Feedback Hub, Teams pessoal, Clipchamp, Cortana, Office Hub; a coleção de jogos casuais da Microsoft (Solitaire, Mahjong, Sudoku, Jigsaw, Minesweeper, Treasure Hunt, Ultimate Word Games); o aplicativo Copilot e os pacotes de IA que o acompanham no Windows 11; e pré-instalados de terceiros como LinkedIn, WhatsApp, streaming, redes sociais, jogos e versões de avaliação de antivírus e VPN |
 | **Componentes envolvidos** | Subsistema Appx do Windows, via `Get-AppxPackage`, `Remove-AppxPackage` e `Remove-AppxProvisionedPackage` |
 | **Impacto esperado** | Menos itens no menu Iniciar, menos processos em segundo plano, alguns centenas de MB liberados |
 | **Dependências** | Módulo `Appx`. Sem ele, a categoria é ignorada com aviso |
@@ -232,14 +238,40 @@ completa.
 | **Menu** | `[4]` › `[9]` › `[7]` |
 | **Ação interna** | `-Action Privacy` |
 | **Finalidade** | Desligar sugestões, conteúdo promocional e coleta implícita na interface |
-| **O que altera** | 23 valores de registro |
-| **Principais efeitos** | Fim da instalação silenciosa de aplicativos promovidos; fim das sugestões no menu Iniciar, na tela de bloqueio e em Configurações; fim da reinstalação automática de aplicativos de fabricante; busca web desligada no menu Iniciar; coleta implícita de texto digitado e de escrita a caneta restrita; experiências personalizadas por diagnóstico desligadas |
-| **Componentes envolvidos** | `ContentDeliveryManager`, `Privacy`, `UserProfileEngagement`, `InputPersonalization`, `Search`, políticas de `Windows Search` e `CloudContent` |
+| **O que altera** | 30 valores de registro |
+| **Principais efeitos** | Fim da instalação silenciosa de aplicativos promovidos; fim das sugestões no menu Iniciar, na tela de bloqueio e em Configurações; fim da reinstalação automática de aplicativos de fabricante; busca web desligada no menu Iniciar; coleta implícita de texto digitado e de escrita a caneta restrita; experiências personalizadas por diagnóstico desligadas; Copilot, Recall e Widgets desligados no Windows 11 |
+| **Componentes envolvidos** | `ContentDeliveryManager`, `Privacy`, `UserProfileEngagement`, `InputPersonalization`, `Search`, políticas de `Windows Search`, `CloudContent`, `WindowsCopilot`, `WindowsAI`, `Explorer` e `Dsh` |
 | **Impacto esperado** | Interface sem publicidade e sem reinstalação automática de aplicativos |
 | **Dependências** | Nenhuma |
 | **Compatibilidade** | Algumas políticas de `CloudContent` são ignoradas na edição Home por desenho da Microsoft. O módulo grava o valor mesmo assim, sem erro |
 | **Reversão** | **Completa.** O valor anterior é gravado. Valores que não existiam antes são **removidos** na reversão, e não zerados |
 | **Observações** | Complementa o módulo Telemetry sem repetir nenhuma das cinco chaves que ele já controla |
+
+#### Copilot, Recall e Widgets
+
+Nenhum dos três é um interruptor único: existem como aplicativo, como política de
+máquina, como botão do shell e como recurso. Remover só o aplicativo deixa o botão na
+barra e a política ausente, e a experiência volta na atualização seguinte. Por isso
+cada camada é um item próprio:
+
+| Camada | Nível | O que faz |
+|---|---|---|
+| Aplicativo Copilot e pacotes de IA que o acompanham | Seguro | Remove os pacotes; reinstaláveis pela Microsoft Store |
+| `TurnOffWindowsCopilot` (máquina e usuário) | Moderado | Desliga o Copilot por política |
+| `ShowCopilotButton` | Moderado | Oculta o botão na barra de tarefas |
+| `DisableAIDataAnalysis` e `AllowRecallEnablement` | Moderado | Desligam o Recall e impedem que ele volte por atualização |
+| `AllowNewsAndInterests` e `TaskbarDa` | Moderado / Seguro | Desligam os Widgets |
+
+O pacote dos Widgets (`MicrosoftWindows.Client.WebExperience`) **não é removido**: ele
+cai no prefixo protegido do shell do Windows 11. Desligar por política é reversível e
+não expõe o shell — na dúvida, o módulo não remove.
+
+Todas essas chaves têm build mínima declarada. Numa máquina Windows 10, ou num Windows
+11 anterior à build em que o recurso existe, elas saem como `NaoSuportado` com o motivo,
+em vez de serem gravadas sem efeito.
+
+Desligar o Recall **aumenta** a privacidade e não desativa nenhum controle de
+segurança do Windows.
 
 ### 4.5 Ajustes opcionais
 
@@ -303,6 +335,29 @@ Existe um conjunto de itens que o módulo **nunca** toca, em nenhum nível.
 **A proteção tem precedência absoluta.** Ela é avaliada **depois** de qualquer filtro
 do operador, inclusive do parâmetro `-Include`. Isso é deliberado: nem quem opera a
 ferramenta consegue contorná-la por parâmetro.
+
+### Classificação de risco
+
+Todo item do relatório carrega uma **classe**, que responde "o que é este alvo" — eixo
+diferente do **resultado**, que responde "o que aconteceu com ele".
+
+| Classe | Significado |
+|---|---|
+| `ESSENCIAL` | Remover quebra loja, logon, shell, rede ou atualização |
+| `SISTEMA` | Componente de sistema, pacote não removível ou tarefa do próprio Windows |
+| `SEGURANCA` | Valor que sustenta defesa, UAC ou criptografia |
+| `DEPENDENCIA` | Framework ou pacote de recurso do qual outros dependem |
+| `RECOMENDADO_PRESERVAR` | Alto impacto; só entra com `-Include` explícito |
+| `DEBLOAT_SEGURO` | Elegível a partir do nível Seguro |
+| `DEBLOAT_MODERADO` | Elegível a partir do nível Moderado |
+| `OPCIONAL` | Elegível apenas no nível Avançado |
+| `INEXISTENTE` | O alvo não está no sistema |
+| `INCOMPATIVEL` | Não existe nesta build ou edição do Windows |
+| `ERRO` | Tentativa executada e não confirmada |
+
+As quatro primeiras nunca vêm do catálogo — são atribuídas pelas listas de proteção. Um
+item assim aparece no relatório com resultado `Protegido` e a classe explicando por quê,
+em vez de simplesmente desaparecer da lista.
 
 ---
 
