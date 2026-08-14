@@ -66,22 +66,70 @@ function Set-Telemetry {
     Write-Log INFO "Iniciando $alvo da telemetria da Microsoft..."
 
     # 1) Servicos
+    # EVIDENCIA: a versao anterior gravava "Servico 'X' parado e desabilitado"
+    # logo apos as chamadas, sem reler nada, e o Stop-Service usava
+    # -ErrorAction SilentlyContinue: uma parada recusada nao aparecia em lugar
+    # nenhum e a linha de sucesso saia do mesmo jeito. Um unico catch generico
+    # ainda classificava qualquer erro - inclusive acesso negado - como
+    # "indisponivel neste build". Agora: executar, reler, e so entao registrar.
+    $svcOk = 0; $svcFalha = 0; $svcAusente = 0
     foreach ($s in $servicos) {
+        $svc = $null
+        try { $svc = Get-Service -Name $s -ErrorAction Stop }
+        catch {
+            $svcAusente++
+            Write-Log INFO "Servico '$s' inexistente neste build do Windows." -NoConsole
+            continue
+        }
+
         try {
-            $svc = Get-Service -Name $s -ErrorAction Stop
             if ($Desabilitar) {
                 if ($svc.Status -eq 'Running') { Stop-Service -Name $s -Force -ErrorAction SilentlyContinue }
                 Set-Service -Name $s -StartupType Disabled -ErrorAction Stop
-                Write-Log OK "Servico '$s' parado e desabilitado."
             } else {
                 Set-Service -Name $s -StartupType Automatic -ErrorAction Stop
                 Start-Service -Name $s -ErrorAction SilentlyContinue
-                Write-Log OK "Servico '$s' restaurado para Automatico."
             }
         } catch {
-            Write-Log WARN "Servico '$s' indisponivel neste build do Windows." -NoConsole
+            $svcFalha++
+            Write-Log WARN "Servico '$s': alteracao recusada - $($_.Exception.Message)"
+            continue
+        }
+
+        $estado = 'n/d'; $modo = 'n/d'
+        try {
+            $estado = "$((Get-Service -Name $s -ErrorAction Stop).Status)"
+            $wmi = Get-CompartDiskCim -Class Win32_Service -Filter "Name='$s'"
+            if ($wmi) { $modo = "$($wmi.StartMode)" }
+        } catch {
+            Write-Log DEBUG "Releitura do servico '$s' falhou: $($_.Exception.Message)" -NoConsole
+        }
+
+        if ($Desabilitar) {
+            $modoOk   = ("$modo"   -match '(?i)disabled|desabilitad|desativad')
+            $estadoOk = ("$estado" -match '(?i)stopped|parado')
+            if ($modoOk -and $estadoOk) {
+                $svcOk++
+                Write-Log OK "Servico '$s' parado e desabilitado (confirmado por releitura)."
+            } elseif ($modoOk) {
+                $svcFalha++
+                Write-Log WARN "Servico '$s' desabilitado, mas ainda em execucao (estado=$estado): a parada so se consolida no proximo reinicio."
+            } else {
+                $svcFalha++
+                Write-Log WARN "Servico '$s' nao ficou desabilitado: inicializacao=$modo, estado=$estado."
+            }
+        } else {
+            $modoOk = ("$modo" -match '(?i)auto')
+            if ($modoOk) {
+                $svcOk++
+                Write-Log OK "Servico '$s' restaurado para Automatico (confirmado por releitura; estado=$estado)."
+            } else {
+                $svcFalha++
+                Write-Log WARN "Servico '$s' nao voltou para Automatico: inicializacao=$modo, estado=$estado."
+            }
         }
     }
+    Write-Log DEBUG ("Servicos de telemetria: {0} confirmado(s), {1} sem confirmacao, {2} inexistente(s) neste build." -f $svcOk, $svcFalha, $svcAusente) -NoConsole
 
     # 2) Politicas de registro
     $valor = if ($Desabilitar) { 0 } else { 1 }
@@ -92,7 +140,15 @@ function Set-Telemetry {
         @{ P = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo'; N = 'Enabled'; V = $valor }
         @{ P = 'HKCU:\SOFTWARE\Microsoft\Siuf\Rules'; N = 'NumberOfSIUFInPeriod'; V = $(if ($Desabilitar) { 0 } else { 1 }) }
     )
-    foreach ($c in $chaves) { Set-CompartDiskRegistryValue -Path $c.P -Name $c.N -Value $c.V -Type DWord | Out-Null }
+    # Set-CompartDiskRegistryValue ja releia e devolve $false quando o valor nao
+    # se confirma. O retorno era jogado fora com Out-Null: uma diretiva ou ACL
+    # que recusasse a gravacao nao mudava em nada o desfecho do modulo.
+    $regFalhas = New-Object System.Collections.ArrayList
+    foreach ($c in $chaves) {
+        if (-not (Set-CompartDiskRegistryValue -Path $c.P -Name $c.N -Value $c.V -Type DWord)) {
+            [void]$regFalhas.Add("$($c.P)\$($c.N)")
+        }
+    }
 
     if ($Desabilitar) {
         $ed = (Test-WindowsVersion).Caption
@@ -102,22 +158,79 @@ function Set-Telemetry {
     }
 
     # 3) Tarefas agendadas
+    # EVIDENCIA: a linha "Tarefas agendadas de telemetria ajustadas." era escrita
+    # fora do laco e sem condicao alguma - saia identica com seis tarefas
+    # ajustadas ou com seis falhas. Alem disso, o unico catch tratava acesso
+    # negado (comum nestas tarefas, protegidas pelo TrustedInstaller) como
+    # "inexistente neste build". A existencia passa a ser verificada antes, e o
+    # resultado, depois.
+    $tkOk = 0; $tkFalha = 0; $tkAusente = 0
+    $tkProblema = New-Object System.Collections.ArrayList
     if (Test-CompartDiskCommand 'Get-ScheduledTask') {
         foreach ($t in $tarefas) {
             $nome = Split-Path $t -Leaf
             $caminho = (Split-Path $t -Parent) + '\'
+
+            try { Get-ScheduledTask -TaskName $nome -TaskPath $caminho -ErrorAction Stop | Out-Null }
+            catch {
+                $tkAusente++
+                Write-Log DEBUG "Tarefa '$nome' inexistente neste build." -NoConsole
+                continue
+            }
+
             try {
                 if ($Desabilitar) { Disable-ScheduledTask -TaskName $nome -TaskPath $caminho -ErrorAction Stop | Out-Null }
                 else              { Enable-ScheduledTask  -TaskName $nome -TaskPath $caminho -ErrorAction Stop | Out-Null }
-                Write-Log DEBUG "Tarefa '$nome' ajustada." -NoConsole
             } catch {
-                Write-Log DEBUG "Tarefa '$nome' inexistente neste build." -NoConsole
+                $tkFalha++
+                [void]$tkProblema.Add($nome)
+                Write-Log WARN "Tarefa '$nome' nao pode ser ajustada: $($_.Exception.Message)"
+                continue
+            }
+
+            $estadoTk = 'n/d'
+            try { $estadoTk = "$((Get-ScheduledTask -TaskName $nome -TaskPath $caminho -ErrorAction Stop).State)" }
+            catch { Write-Log DEBUG "Releitura da tarefa '$nome' falhou: $($_.Exception.Message)" -NoConsole }
+
+            $esperado = $(if ($Desabilitar) { '(?i)disabled|desabilitad' } else { '(?i)ready|running|pronto' })
+            if ($estadoTk -match $esperado) {
+                $tkOk++
+                Write-Log DEBUG "Tarefa '$nome' ajustada (estado=$estadoTk)." -NoConsole
+            } else {
+                $tkFalha++
+                [void]$tkProblema.Add($nome)
+                Write-Log WARN "Tarefa '$nome': comando aceito, mas o estado relido e '$estadoTk'."
             }
         }
-        Write-Log OK 'Tarefas agendadas de telemetria ajustadas.'
+
+        if ($tkFalha -eq 0) {
+            Write-Log OK ("Tarefas agendadas de telemetria ajustadas: {0} de {1} confirmada(s) por releitura; {2} inexistente(s) neste build." -f $tkOk, $tarefas.Count, $tkAusente)
+        } else {
+            Write-Log WARN ("Tarefas agendadas de telemetria: {0} confirmada(s), {1} nao ajustada(s) ({2}), {3} inexistente(s) neste build." -f `
+                $tkOk, $tkFalha, ((@($tkProblema) | Select-Object -Unique) -join ', '), $tkAusente)
+        }
     }
 
-    if ($Desabilitar) {
+    # Desfecho construido sobre o que foi confirmado, e nao sobre o fato de o
+    # modulo ter chegado ao fim sem excecao.
+    $pendencias = New-Object System.Collections.ArrayList
+    if ($svcFalha -gt 0)         { [void]$pendencias.Add("$svcFalha servico(s) nao confirmado(s)") }
+    if ($regFalhas.Count -gt 0)  { [void]$pendencias.Add("$($regFalhas.Count) chave(s) de registro sem confirmacao: $((@($regFalhas)) -join ', ')") }
+    if ($tkFalha -gt 0)          { [void]$pendencias.Add("$tkFalha tarefa(s) agendada(s) nao ajustada(s)") }
+
+    if ($pendencias.Count -gt 0) {
+        $script:result = 'WARN'
+        $resumo = ($pendencias -join '; ')
+        if ($Desabilitar) {
+            Add-CompartDiskFinding -Severity WARN -Area 'Privacidade' -Message "Telemetria desativada parcialmente: $resumo." `
+                -Recommendation 'Verificar diretivas de grupo/MDM e privilegios administrativos, e repetir apos reiniciar. Reversivel pela acao Enable deste modulo.'
+            Write-Log WARN "Telemetria desativada parcialmente: $resumo."
+        } else {
+            Add-CompartDiskFinding -Severity WARN -Area 'Privacidade' -Message "Restauracao parcial das configuracoes de telemetria: $resumo." `
+                -Recommendation 'Verificar diretivas de grupo/MDM e privilegios administrativos, e repetir apos reiniciar.'
+            Write-Log WARN "Telemetria restaurada parcialmente: $resumo."
+        }
+    } elseif ($Desabilitar) {
         Add-CompartDiskFinding -Severity OK -Area 'Privacidade' -Message 'Telemetria da Microsoft desativada no nivel maximo permitido pela edicao.' -Recommendation 'Reversivel pela acao Enable deste modulo.'
         Write-Log OK 'Telemetria desativada.'
     } else {
