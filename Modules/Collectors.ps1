@@ -75,15 +75,26 @@ function Get-CompartDiskHardwareInfo {
 function Get-CompartDiskMemoryModules {
     [CmdletBinding()] param()
     $rows = New-Object System.Collections.ArrayList
-    $tipos = @{ 0 = 'Desconhecido'; 20 = 'DDR'; 21 = 'DDR2'; 24 = 'DDR3'; 26 = 'DDR4'; 34 = 'DDR5' }
+    $tipos = @{
+        0 = 'Desconhecido'; 20 = 'DDR'; 21 = 'DDR2'; 22 = 'DDR2 FB-DIMM'; 24 = 'DDR3'; 26 = 'DDR4'
+        27 = 'LPDDR'; 28 = 'LPDDR2'; 29 = 'LPDDR3'; 30 = 'LPDDR4'; 34 = 'DDR5'; 35 = 'LPDDR5'
+    }
     foreach ($m in (Get-CompartDiskCim -Class Win32_PhysicalMemory)) {
+        # Speed e a velocidade NOMINAL do modulo; ConfiguredClockSpeed e a que ele
+        # realmente opera. Publicar so uma das duas faz um modulo DDR4-3200 rodando
+        # a 2133 parecer estar na velocidade de catalogo.
         [void]$rows.Add([pscustomobject]@{
             Slot        = $m.DeviceLocator
             Capacidade  = (ConvertTo-CompartDiskSize $m.Capacity)
-            Velocidade  = "$($m.Speed) MHz"
+            Velocidade  = $(if ($m.Speed) { "$($m.Speed) MHz" } else { 'n/d' })
+            VelocidadeConfigurada = $(if ($m.ConfiguredClockSpeed) { "$($m.ConfiguredClockSpeed) MHz" } else { 'n/d' })
             Tipo        = $(if ($tipos.ContainsKey([int]$m.SMBIOSMemoryType)) { $tipos[[int]$m.SMBIOSMemoryType] } else { "Codigo $($m.SMBIOSMemoryType)" })
             Fabricante  = "$($m.Manufacturer)".Trim()
+            PartNumber  = "$($m.PartNumber)".Trim()
             NumeroSerie = "$($m.SerialNumber)".Trim()
+            # Valores crus para calculo e validacao, sem reparsing de texto.
+            CapacidadeBytes      = $m.Capacity
+            VelocidadeNominalMHz = $m.Speed
         })
     }
     return @($rows)
@@ -101,6 +112,11 @@ function Get-CompartDiskGpuInfo {
             Resolucao    = "$($g.CurrentHorizontalResolution)x$($g.CurrentVerticalResolution)"
             Atualizacao  = $(if ($g.CurrentRefreshRate) { "$($g.CurrentRefreshRate) Hz" } else { 'n/d' })
             Status       = $g.Status
+            # PNPDeviceID distingue adaptador fisico (PCI\) de adaptador de software
+            # (ROOT\, SW\) sem comparar nomes traduziveis. AdapterRAM cru permite ao
+            # consumidor detectar a saturacao de 32 bits desta propriedade.
+            PNPDeviceID    = "$($g.PNPDeviceID)"
+            AdapterRAMBytes = $g.AdapterRAM
         })
     }
     return @($rows)
@@ -438,19 +454,12 @@ function Test-CompartDiskPendingReboot {
 
 function Get-CompartDiskDriverInfo {
     [CmdletBinding()] param([switch]$OnlyProblems)
-    $rows = New-Object System.Collections.ArrayList
-    foreach ($d in (Get-CompartDiskCim -Class Win32_PnPSignedDriver)) {
-        if ([string]::IsNullOrWhiteSpace($d.DeviceName)) { continue }
-        [void]$rows.Add([pscustomobject]@{
-            Dispositivo = $d.DeviceName
-            Fabricante  = $d.Manufacturer
-            Versao      = $d.DriverVersion
-            Data        = $(if ($d.DriverDate) { (Get-Date $d.DriverDate -Format 'yyyy-MM-dd') } else { 'n/d' })
-            Assinado    = $(if ($d.IsSigned) { 'Sim' } else { 'NAO' })
-            Provedor    = $d.DriverProviderName
-            InfName     = $d.InfName
-        })
-    }
+
+    # -OnlyProblems nao usa o inventario de drivers: o resultado do laco abaixo era
+    # inteiramente descartado. Como Win32_PnPSignedDriver e uma das classes mais
+    # lentas do repositorio (enumeracao completa de todos os drivers assinados),
+    # cada consulta de "dispositivos com problema" pagava esse custo por nada -
+    # em Hardware.ps1, em Drivers.ps1 e em Audit.ps1. A saida e identica.
     if ($OnlyProblems) {
         $problem = New-Object System.Collections.ArrayList
         foreach ($p in (Get-CompartDiskCim -Class Win32_PnPEntity -Filter 'ConfigManagerErrorCode <> 0')) {
@@ -465,7 +474,48 @@ function Get-CompartDiskDriverInfo {
         }
         return @($problem)
     }
+
+    $rows = New-Object System.Collections.ArrayList
+    foreach ($d in (Get-CompartDiskCim -Class Win32_PnPSignedDriver)) {
+        if ([string]::IsNullOrWhiteSpace($d.DeviceName)) { continue }
+        [void]$rows.Add([pscustomobject]@{
+            Dispositivo = $d.DeviceName
+            Fabricante  = $d.Manufacturer
+            Versao      = $d.DriverVersion
+            Data        = $(if ($d.DriverDate) { (Get-Date $d.DriverDate -Format 'yyyy-MM-dd') } else { 'n/d' })
+            Assinado    = $(if ($d.IsSigned) { 'Sim' } else { 'NAO' })
+            Provedor    = $d.DriverProviderName
+            InfName     = $d.InfName
+        })
+    }
     return @($rows)
+}
+
+function Get-CompartDiskDeviceErrorSeverity {
+    <# Severidade de um ConfigManagerErrorCode.
+
+       Nem todo codigo diferente de zero e falha: 22 (desabilitado pelo operador) e
+       45 (nao conectado) sao estados NORMAIS, e 21 (removendo) e transitorio.
+       Trata-los como critico produz alarme falso em praticamente qualquer maquina
+       que tenha um dispositivo desativado de proposito.
+
+       A tabela espelha $script:CodigoSeveridade de Drivers.ps1, dono da auditoria de
+       drivers, para que os dois modulos nao publiquem severidades diferentes para o
+       mesmo dispositivo. Consolidar as duas numa unica fonte e trabalho para o
+       proprio Drivers.ps1 e nao foi feito aqui. #>
+    param([AllowNull()][object]$Code)
+    $m = @{
+        1  = 'CRIT'; 3  = 'CRIT'; 10 = 'CRIT'; 12 = 'CRIT'; 19 = 'CRIT'; 31 = 'CRIT'; 39 = 'CRIT'; 41 = 'CRIT'
+        43 = 'CRIT'
+        14 = 'WARN'; 18 = 'WARN'; 24 = 'WARN'; 28 = 'WARN'; 32 = 'WARN'; 35 = 'WARN'; 37 = 'WARN'; 38 = 'WARN'
+        40 = 'WARN'; 42 = 'WARN'; 44 = 'WARN'; 47 = 'WARN'; 48 = 'WARN'; 49 = 'WARN'; 52 = 'WARN'
+        21 = 'INFO'; 22 = 'INFO'; 45 = 'INFO'; 46 = 'INFO'
+    }
+    $n = -1
+    try { $n = [int]$Code } catch { $n = -1 }
+    if ($n -lt 0) { return 'WARN' }
+    if ($m.ContainsKey($n)) { return $m[$n] }
+    return 'WARN'
 }
 
 function Get-CompartDiskDeviceErrorText {

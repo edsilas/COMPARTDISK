@@ -10,8 +10,8 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1`, `Debloat.ps1`,
-`Repair.ps1`, `Smart.ps1`, `Network.ps1` e `Users.ps1`, e correção de ordenação nos
-relatórios de todos os módulos.
+`Repair.ps1`, `Smart.ps1`, `Network.ps1`, `Users.ps1`, `Hardware.ps1` e
+`Collectors.ps1`, e correção de ordenação nos relatórios de todos os módulos.
 
 **Nenhuma tecla de menu mudou, nenhum rótulo existente foi removido ou renomeado, e
 nenhum caminho de fallback Batch foi alterado.** As cinco ações existentes do módulo de drivers
@@ -304,6 +304,78 @@ listas de proteção permanecem exatamente como estavam.
 > continuam `0/1/2/3`, e nenhum rótulo de menu ou caminho `:FB_USERS*` foi alterado.
 > A identificação do Administrador interno pelo SID terminado em `-500`, a exigência
 > da palavra `REMOVER` e as confirmações de troca de senha foram **preservadas**.
+
+#### Hardware
+
+- **Todo `ConfigManagerErrorCode` diferente de zero era publicado como achado `CRIT`**
+  com a recomendação "reinstalar o driver". Um dispositivo deliberadamente
+  desabilitado (código 22) ou simplesmente desconectado (código 45) — situações
+  normais — geravam falha crítica, e o **mesmo equipamento recebia severidades
+  contraditórias** de `Hardware.ps1` e de `Drivers.ps1`, que já classificava esses
+  códigos como `INFO`. A severidade passa a ser por código.
+- **A falha da consulta de dispositivos virava atestado de saúde.** Quando a consulta
+  não respondia, a coleção vazia caía no ramo `else` e o módulo publicava "Nenhum
+  dispositivo com código de erro" como achado `OK`. Falha de consulta e ausência de
+  problema passam a ser estados distintos.
+- **A enumeração USB primária era código morto no PowerShell 7.** O caminho percorria
+  `Win32_USBControllerDevice` resolvendo cada referência com o acelerador `[wmi]`, que
+  **não existe no PowerShell 7** — e o `Launcher.bat` procura o `pwsh` 7 **antes** do
+  `powershell.exe`. Na engine preferida do projeto a conversão lançava, um `catch {}`
+  vazio silenciava, e o inventário caía sem aviso para `PNPClass='USB'`, que vê apenas
+  hubs e controladores: teclado, mouse, webcam e áudio USB sumiam do relatório. A
+  enumeração passa a ser por `DeviceID`, idêntica em 5.1 e 7, com VID/PID e o método
+  de coleta registrado.
+- **Temperatura sem validação de faixa.** `(CurrentTemperature / 10) - 273.15` era
+  publicado direto: um firmware que reporta `0` produzia **-273,15 °C** apresentado
+  como leitura real, e `2732` (zero absoluto, sentinela usual de "sem sensor") virava
+  "0 °C". Leituras fora de 5 °C a 125 °C passam a ser descartadas e contabilizadas.
+- **Falha em um componente cancelava o inventário inteiro.** Qualquer exceção subia ao
+  `catch` global e a ação terminava: uma consulta de GPU indisponível impedia a
+  enumeração da placa-mãe, dos discos e de todo o restante. As etapas passam a ser
+  independentes.
+- **`AdapterRAM` é `UInt32` e satura em 4 GB**: qualquer placa de 4 GB ou mais era
+  publicada como "4 GB". Passa a tentar o valor que o próprio driver grava
+  (`qwMemorySize`) e, quando ele não existe, declara o limite em vez de afirmar um
+  número.
+- Achado `WARN` de uso de memória entre 80% e 90% não escalava o resultado do módulo,
+  enquanto o ramo de 90% escalava — o relatório consolidado registrava `OK`.
+- `Show-Gpu` não produzia seção, achado nem log quando nenhum adaptador era retornado.
+- Módulos de memória ilegíveis encerravam a ação sem seção e sem achado; a ausência de
+  SMBIOS tipo 17 (comum em máquina virtual) passa a ser limitação declarada, não falha.
+- Velocidade **nominal** e velocidade **configurada** dos módulos de memória eram
+  colapsadas numa só coluna, e `PartNumber` não era coletado. Velocidades diferentes
+  entre módulos passam a gerar achado informativo, nunca defeito.
+- `Get-CompartDiskHardwareInfo` era consultado duas vezes em `Info` e em `Full`, e
+  `Win32_ComputerSystem` era reconsultado depois de `Get-CompartDiskSystemInfo`. Cada
+  coletor passa a ser consultado uma única vez por execução.
+- Estados de TPM colapsados numa cadeia única passam a distinguir ausente, presente,
+  habilitado e pronto — ausência de TPM não é defeito de hardware.
+- Presença de bateria entra no inventário; **desktop sem bateria nunca gera achado**. A
+  saúde e o desgaste continuam sendo responsabilidade exclusiva do `Battery.ps1`.
+- Adicionada seção de controladoras e barramentos, derivada da mesma leitura de
+  `Win32_PnPEntity`, sem consulta adicional.
+
+#### Collectors
+
+- **`Get-CompartDiskDriverInfo -OnlyProblems` enumerava `Win32_PnPSignedDriver` inteira
+  e descartava o resultado.** É uma das classes mais lentas do repositório, e o custo
+  era pago por `Hardware.ps1`, `Drivers.ps1` e `Audit.ps1` a cada consulta de
+  dispositivos com problema. O retorno antecipado é anterior à enumeração e a saída é
+  idêntica.
+- `Get-CompartDiskMemoryModules` passa a publicar `PartNumber`,
+  `VelocidadeConfigurada` e os valores crus de capacidade e frequência; `Speed` nulo
+  deixa de virar a cadeia `" MHz"`. Tipos LPDDR/LPDDR5 e DDR2 FB-DIMM reconhecidos.
+- `Get-CompartDiskGpuInfo` passa a publicar `PNPDeviceID` e `AdapterRAM` cru, para que
+  o consumidor distinga adaptador físico de virtual sem comparar nome traduzível.
+- Adicionada `Get-CompartDiskDeviceErrorSeverity`, espelhando a tabela canônica de
+  `Drivers.ps1`. *As duas tabelas permanecem duplicadas: consolidá-las numa única fonte
+  é trabalho para o próprio `Drivers.ps1` e não foi feito aqui.*
+
+> As seis ações de hardware (`Info` `Full` `Gpu` `Memory` `Devices` `Temperature`)
+> continuam válidas com o mesmo significado, `Temperature` continua devolvendo
+> `UNSUPPORTED` quando não há sensor, e as teclas `5` e `6` do menu não mudaram. O
+> módulo permanece **exclusivamente diagnóstico**: nenhum comando que altere registro,
+> serviço, driver, dispositivo, energia, partição ou firmware foi introduzido.
 
 ### Adicionado
 
