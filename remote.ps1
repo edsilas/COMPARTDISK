@@ -41,7 +41,7 @@ $ProgressPreference    = 'SilentlyContinue'   # acelera muito o Invoke-WebReques
 # ==============================================================================
 $Repo     = if ($env:COMPARTDISK_REPO)  { $env:COMPARTDISK_REPO }  else { 'edsilas/compartdisk' }
 $TagFixa  = if ($env:COMPARTDISK_TAG)   { $env:COMPARTDISK_TAG }   else { 'v1.3.1' }
-$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { 'fe0412f72ea21211a6ca8b1319fda117a50d85b979facad3043f428b9f0c4c13' }
+$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { '28da0fa9af06ed679f06ae81684af8e6f8ab36a6673a353245fcced33e0fc4f6' }
 $Origem   = "https://github.com/$Repo"
 $ApiBase  = "https://api.github.com/repos/$Repo"
 
