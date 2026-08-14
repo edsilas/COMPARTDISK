@@ -9,8 +9,8 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1` e `Debloat.ps1`, e correção
-de ordenação nos relatórios de todos os módulos.
+Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1`, `Debloat.ps1` e
+`Repair.ps1`, e correção de ordenação nos relatórios de todos os módulos.
 
 **Nenhuma tecla de menu mudou, nenhum rótulo existente foi removido ou renomeado, e
 nenhum caminho de fallback Batch foi alterado.** As cinco ações existentes do módulo de drivers
@@ -25,6 +25,55 @@ listas de proteção permanecem exatamente como estavam.
 
 ### Corrigido
 
+- **`Repair.ps1` rebaixava erro para aviso.** O estado do módulo era atribuído
+  diretamente por cada função, sem ordem. Numa ação `Full`, um `ScanHealth` que
+  falhava marcava `ERROR` e o `RestoreHealth` seguinte rebaixava para `WARN`: o
+  módulo devolvia "atenção" ao Launcher para uma execução em que o DISM não pôde
+  nem ser localizado. O estado passa a ser monotônico (`OK → WARN → ERROR`, nunca
+  regride), no mesmo padrão de `Drivers.ps1` e `Debloat.ps1`.
+- **O SFC ignorava o código de retorno.** A classificação usava apenas a contagem
+  de padrões no `CBS.log`, e a função encerrava com `Write-Log OK` mesmo quando o
+  `sfc.exe` não conseguia iniciar — `SFC finalizado (codigo 1)` era gravado como
+  sucesso e o finding dizia "não encontrou violações". O código passa a decidir
+  primeiro, distinguindo íntegro, reparos aplicados, corrupção não reparada e
+  execução não concluída.
+- **O SFC contava reparos históricos como se fossem da execução atual.** O
+  `CBS.log` é cumulativo e sobrevive a reinícios; ler as últimas 4000 linhas
+  contabilizava um reparo de semanas atrás. A leitura passa a filtrar pelo carimbo
+  de data/hora a partir do início da execução, e quando o carimbo não pode ser
+  interpretado a contagem é descartada em vez de gerar número falso.
+- **Falha de `DISM RestoreHealth` era tratada como simples aviso.** Qualquer código
+  diferente de `0`/`3010` virava `WARN`, inclusive numa imagem que continuava
+  corrompida. Falha da operação de reparo passa a ser `ERROR`; `ScanHealth` e
+  `CheckHealth`, que apenas diagnosticam, permanecem `WARN`. Os códigos passam a
+  ser traduzidos no relatório, e o motivo do fallback para `Dism.exe` é registrado.
+- **A ação `Component` terminava sempre em `OK`.** O código de retorno do
+  `AnalyzeComponentStore` era apenas logado e nunca afetava o resultado, e o
+  `Dism.exe` era invocado sem verificação de existência — numa máquina sem ele, a
+  ação caía no `catch` global como falha não tratada.
+- **A ação `Chkdsk` não validava a unidade.** `-Drive ''`, `-Drive 'CC'` ou um
+  caminho arbitrário seguiam direto para `Repair-Volume` e para `fsutil dirty set`.
+  Passa a normalizar e validar (letra única, volume existente, não é rede nem
+  mídia óptica) e a recusar entrada inválida antes de qualquer operação de disco.
+- **O `Chkdsk` declarava agendamento sem confirmar.** O volume era marcado como
+  sujo com base apenas no código de saída do `fsutil`. O estado passa a ser
+  reconsultado com `fsutil dirty query`, e o agendamento só é declarado quando
+  confirmado. O `chkntfs` passa a ser interpretado no log em vez de despejado com
+  `Write-Output` no stream de sucesso do script.
+- **O `Chkdsk` forçava verificação offline mesmo em disco íntegro.** O volume era
+  marcado incondicionalmente, o que impõe um CHKDSK completo no próximo boot —
+  horas em disco grande — mesmo quando a varredura online acabara de confirmar que
+  não havia erro. O reparo offline passa a ser agendado quando há erro confirmado,
+  quando o diagnóstico é inconclusivo, ou por pedido explícito com `-Forcar`.
+- **Falha do `Repair-Volume` era ignorada por completo.** Sem log, sem finding e
+  sem efeito no resultado.
+- **Sem privilégio administrativo, o módulo saía com erro mas persistia estado
+  `OK`.** O `exit` direto dispara o `finally`, que gravava o estado ainda em `OK`
+  no `state_Repair_*.json`; o relatório consolidado não via a falha.
+- **A ação `Full` executava `ScanHealth` e `RestoreHealth` sempre.** Quando o scan
+  confirma imagem íntegra, o `RestoreHealth` passa a ser dispensado e registrado
+  como tal — a etapa custa dezenas de minutos e não teria o que reparar. A
+  sequência ganha uma seção de consolidação que reflete o pior estado encontrado.
 - **O `Launcher.bat` sempre saía com código 0, mesmo quando todos os módulos
   falhavam.** Os contadores de desfecho já existiam e eram corretos, mas não
   alimentavam o código de saída. Em `/autofix`, `/audit`, `/report` e `/clean` —
