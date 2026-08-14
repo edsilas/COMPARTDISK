@@ -610,13 +610,19 @@ function Get-PerfSettingState {
         [Parameter(Mandatory = $true)][string]$SubGuid,
         [Parameter(Mandatory = $true)][string]$SettingGuid
     )
-    $out = [pscustomobject]@{ Exists = $false; Ac = $null; Dc = $null; Motivo = '' }
+    # 'Presente' distingue as duas causas de Exists=$false, que nao sao a mesma
+    # coisa: a consulta ter falhado (configuracao ausente do plano/hardware) e a
+    # consulta ter funcionado sem que o indice atual pudesse ser lido. O log de
+    # 13/08/2026 chamava as duas de "nao suportado" e depois somava as duas em
+    # "nao existe(m) neste hardware", afirmando mais do que a evidencia permite.
+    $out = [pscustomobject]@{ Exists = $false; Presente = $false; Ac = $null; Dc = $null; Motivo = '' }
 
     $q = Invoke-PerfPowercfg -Arguments @('/query', $SchemeGuid, $SubGuid, $SettingGuid) -TimeoutSeconds 30 -Step 'Consultar configuracao'
     if (-not (Test-PerfCommandOk $q)) {
         $out.Motivo = "configuracao nao exposta neste plano/hardware ($(Get-PerfCommandDetail $q))"
         return $out
     }
+    $out.Presente = $true
 
     $mAc = [regex]::Match($q.StdOut, '(?im)^\s*Current AC Power Setting Index:\s*0x([0-9A-Fa-f]+)\s*$')
     $mDc = [regex]::Match($q.StdOut, '(?im)^\s*Current DC Power Setting Index:\s*0x([0-9A-Fa-f]+)\s*$')
@@ -671,7 +677,11 @@ function Set-PerfSettingValue {
     if (-not $antes.Exists) {
         $res.Status = 'SKIP'
         $res.Detalhe = $antes.Motivo
-        Write-Log WARN "[$Line] $Label : nao suportado - $($antes.Motivo)."
+        # "nao suportado" so pode ser dito quando a consulta provou a ausencia.
+        # Com a consulta bem sucedida e o indice ilegivel, o que se sabe e que a
+        # escrita nao foi tentada - nao que o hardware nao tenha a configuracao.
+        if ($antes.Presente) { Write-Log WARN "[$Line] $Label : nao aplicado - $($antes.Motivo)." }
+        else                 { Write-Log WARN "[$Line] $Label : nao suportado - $($antes.Motivo)." }
         return $res
     }
     $atual = $antes.Ac
@@ -1043,7 +1053,7 @@ function Invoke-PerfUltimate {
             -Recommendation 'Verificar politicas de grupo de gerenciamento de energia e privilegios administrativos.'
     }
     if ($nSkip -gt 0) {
-        Write-Log INFO "$nSkip configuracao(oes) nao existe(m) neste hardware/plano e foi(ram) ignorada(s) com seguranca."
+        Write-Log INFO "$nSkip configuracao(oes) nao foi(ram) aplicada(s): ausente(s) neste plano/hardware ou com o valor atual ilegivel. Nenhuma escrita foi tentada."
     }
 
     if ($resultados.Count -gt 0) {
@@ -1051,7 +1061,7 @@ function Invoke-PerfUltimate {
         $resultados | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
         Add-CompartDiskSection -Title 'Configuracoes de energia aplicadas' `
             -Status $(if ($nFalha -gt 0) { 'WARN' } else { 'OK' }) -Rows ($resultados.ToArray()) `
-            -Summary "$nAplic aplicada(s), $nJa ja conforme, $nSkip nao suportada(s), $nFalha com falha"
+            -Summary "$nAplic aplicada(s), $nJa ja conforme, $nSkip nao aplicada(s), $nFalha com falha"
     }
 
     # ---------- Hibernacao: decisao consciente de NAO alterar ----------
