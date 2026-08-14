@@ -9,8 +9,9 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1`, `Debloat.ps1` e
-`Repair.ps1`, e correção de ordenação nos relatórios de todos os módulos.
+Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1`, `Debloat.ps1`,
+`Repair.ps1` e `Smart.ps1`, e correção de ordenação nos relatórios de todos os
+módulos.
 
 **Nenhuma tecla de menu mudou, nenhum rótulo existente foi removido ou renomeado, e
 nenhum caminho de fallback Batch foi alterado.** As cinco ações existentes do módulo de drivers
@@ -24,6 +25,48 @@ listas de proteção permanecem exatamente como estavam.
 > os documentos, e não foi alterado por este trabalho.
 
 ### Corrigido
+
+- **`Smart.ps1` declarava disco saudável sem ter lido um único atributo
+  S.M.A.R.T.** Uma gaveta USB, controladora RAID ou disco virtual reporta
+  `HealthStatus = Healthy` pelo subsistema de armazenamento mesmo sem repassar
+  S.M.A.R.T. ao Windows, e o módulo emitia "Disco X: saúde Healthy" como se
+  tivesse lido atributos — falso negativo exatamente onde mais importa. O estado
+  passa a distinguir `Healthy` (confirmado por evidência) de `NotSupported`
+  (nenhum atributo legível), com a evidência declarada por disco.
+- **A seção "Discos físicos" era sempre `OK`,** mesmo com um disco em `Pred Fail`
+  e predição de falha iminente: o relatório mostrava a seção verde enquanto os
+  findings diziam crítico. O status passa a refletir o pior disco encontrado.
+- **Um volume com percentual ilegível abortava a análise de todos os demais.**
+  `[double]("n/d")` lança, a exceção subia até o `catch` global e um volume a 97%
+  logo abaixo nunca era avaliado. A conversão passa a devolver "não interpretado"
+  em vez de lançar, e o volume problemático é reportado.
+- **Alerta de desgaste era descartado em valor fracionário.** O padrão exigia
+  `^(\d+)%$`, então `87,5%` não casava e o aviso nunca era emitido.
+- **`Smart.ps1` rebaixava erro para aviso.** O estado era atribuído diretamente
+  por cada função: em `Detail`, não conseguir enumerar disco algum marcava `ERROR`
+  e a análise de contadores logo abaixo rebaixava para `WARN`.
+- **Falha de contador por disco era engolida.** O `catch { continue }` descartava
+  o erro sem log, sem finding e sem efeito no resultado; com todos os discos
+  falhando, a função terminava em silêncio e o módulo reportava `OK`.
+- **`Detail` consultava os mesmos discos duas vezes.** `Get-PhysicalDisk` e
+  `Get-StorageReliabilityCounter` eram chamados pelo coletor e repetidos logo em
+  seguida. Passam a ser coletados uma vez e reutilizados.
+- **O modo `-Quiet` não silenciava as tabelas.** Elas eram emitidas com
+  `Out-String | Write-Output`, que escreve no stream de sucesso do script e ignora
+  o parâmetro. Passam por um formatador que respeita `-Quiet`, sem alterar logs,
+  findings nem seções.
+- **Volume ou pool não saudável não gerava finding.** `Get-Volume` e
+  `Get-StoragePool` eram listados sem que `HealthStatus` fosse avaliado.
+- **Sem conseguir iniciar, o módulo saía com erro mas persistia estado `OK`** no
+  `state_Smart_*.json` — mesmo defeito já corrigido em `Drivers.ps1` e `Repair.ps1`.
+
+> Nenhuma dependência externa foi introduzida. O `smartctl` nunca fez parte do
+> projeto e continua fora: o módulo usa apenas o que o Windows expõe
+> (`Get-PhysicalDisk`, `Get-StorageReliabilityCounter`,
+> `MSStorageDriver_FailurePredictStatus`, WMI/CIM). Para NVMe, o desgaste passa a
+> ser rotulado como `Percentage Used`, e o relatório declara explicitamente que
+> `Available Spare`, `Critical Warning` e `Media Errors` **não** são expostos pelo
+> subsistema nativo — em vez de omitir a limitação.
 
 - **`Repair.ps1` rebaixava erro para aviso.** O estado do módulo era atribuído
   diretamente por cada função, sem ordem. Numa ação `Full`, um `ScanHealth` que
