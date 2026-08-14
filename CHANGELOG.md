@@ -11,8 +11,8 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1`, `Debloat.ps1`,
 `Repair.ps1`, `Smart.ps1`, `Network.ps1`, `Users.ps1`, `Hardware.ps1`,
-`Collectors.ps1`, `Report.ps1` e `Core.ps1`, e correção de ordenação nos relatórios
-de todos os módulos.
+`Collectors.ps1`, `Report.ps1`, `Core.ps1` e `Cleanup.ps1`, e correção de ordenação
+nos relatórios de todos os módulos.
 
 **Nenhuma tecla de menu mudou, nenhum rótulo existente foi removido ou renomeado, e
 nenhum caminho de fallback Batch foi alterado.** As cinco ações existentes do módulo de drivers
@@ -436,6 +436,49 @@ listas de proteção permanecem exatamente como estavam.
 > formatos permanecem, o HTML continua **autocontido e offline** (zero referências
 > externas), e o `state_Report*` continua sendo excluído da reagregação — verificado
 > que três consolidações seguidas não duplicam achados.
+
+#### Cleanup
+
+Endurecimento da **guarda de caminhos**. O catálogo de alvos é byte a byte idêntico:
+nenhum alvo foi criado, removido ou reapontado, e os 14 alvos legítimos continuam
+sendo aceitos.
+
+- **`%SystemDrive%` vale `"C:"`, sem barra — e `"C:"` é um caminho relativo à
+  unidade.** `GetFullPath("C:")` devolve o *diretório corrente* daquela unidade, não a
+  raiz, então a entrada protegida gerada a partir de `%SystemDrive%` apontava para o
+  diretório de trabalho do processo. Consequência real: com o diretório corrente
+  coincidindo com um alvo, aquele alvo era recusado em silêncio. `C:\` permanecia
+  protegido pela checagem independente de raiz de volume. O `Core.ps1` já documentava
+  e corrigia essa mesma armadilha em `Test-CompartDiskProtectedPath`; a guarda passa a
+  existir também aqui.
+- **A lista de caminhos proibidos era comparada apenas por igualdade.** Como
+  `%SystemRoot%` é raiz permitida (é de lá que saem `Windows\Temp`,
+  `SoftwareDistribution\Download` e `Prefetch`), qualquer caminho sob ela que não
+  fosse *idêntico* a uma entrada passava pela guarda: `System32\config\SAM`,
+  `System32\DriverStore\FileRepository`, `WinSxS\Backup`, `Windows\Installer`,
+  `Windows\Fonts` e `System32\catroot2` eram todos aceitos. As proteções passam a ter
+  duas classes — `Exato` para raízes das quais se pode descer, e `Subárvore` para
+  árvores onde nada pode ser removido em nenhuma profundidade. **Nenhum alvo do
+  catálogo apontava para essas árvores**: era uma fraqueza da guarda, não uma remoção
+  indevida em curso.
+- **Varredura de reparse points falhava em silêncio.** A busca por junction aninhada
+  usava `-ErrorAction SilentlyContinue`: um subdiretório sem permissão de leitura era
+  pulado sem rastro e uma junction escondida dentro dele não era detectada, deixando o
+  diretório elegível para `Remove-Item -Recurse` — que no Windows PowerShell 5.1 pode
+  atravessar a junction e apagar a árvore de destino, exatamente o risco que o próprio
+  comentário do módulo já descrevia. A varredura passa a **falhar fechado**: scan
+  incompleto preserva o item. Perde-se limpeza, nunca dados.
+- **Raiz permitida que seja raiz de volume passa a ser descartada.** Com `%TEMP%`
+  apontando para `C:\` por ambiente corrompido, `C:\` viraria raiz permitida e a guarda
+  de escopo perderia o efeito.
+
+> As cinco ações (`Analyze` `Standard` `Deep` `Browsers` `Logs`) continuam válidas com
+> o mesmo significado, `Analyze` continua **estritamente somente leitura**, e o módulo
+> continua sem encerrar processos, sem parar serviços e sem tocar em registro,
+> energia, WinSxS, DriverStore ou componentes do Windows. Toda remoção de diretório
+> continua passando por `Remove-CompartDiskPathSafely` do `Core.ps1` — o módulo possui
+> apenas dois comandos destrutivos próprios: a remoção do `MEMORY.DMP` (arquivo único,
+> após validação) e `Clear-RecycleBin`.
 
 ### Adicionado
 

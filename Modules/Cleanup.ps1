@@ -113,7 +113,19 @@ function Get-CleanupAllowedRoots {
     foreach ($r in @($env:SystemRoot, $env:LOCALAPPDATA, $env:APPDATA, $env:ProgramData, $env:TEMP, $env:TMP)) {
         if ([string]::IsNullOrWhiteSpace($r)) { continue }
         $n = ConvertTo-CleanupNormalizedPath $r
-        if ($n -and (@($lista) -notcontains $n)) { [void]$lista.Add($n) }
+        if (-not $n) { continue }
+        # Uma raiz permitida que seja a RAIZ DE UM VOLUME anularia a propria guarda:
+        # com %TEMP% apontando para 'C:\' por engano ou por ambiente corrompido,
+        # qualquer caminho do disco passaria a estar "dentro de raiz permitida".
+        # Estas variaveis sempre apontam para diretorios profundos; uma raiz de
+        # volume aqui e sinal de ambiente invalido, nao de alvo legitimo.
+        $raizVol = ''
+        try { $raizVol = [System.IO.Path]::GetPathRoot($n) } catch { $raizVol = '' }
+        if ($raizVol -and $n.TrimEnd($script:Sep).Length -le $raizVol.TrimEnd($script:Sep).Length) {
+            Write-Log DEBUG ("Raiz permitida descartada por ser raiz de volume: '{0}'" -f $n) -NoConsole
+            continue
+        }
+        if (@($lista) -notcontains $n) { [void]$lista.Add($n) }
     }
     $script:RaizesPermitidas = @($lista)
     return $script:RaizesPermitidas
@@ -129,8 +141,15 @@ function ConvertTo-CleanupNormalizedPath {
     param([AllowNull()][object]$Path)
     $p = "$Path"
     if ([string]::IsNullOrWhiteSpace($p)) { return '' }
+    $p = $p.Trim()
+    # "C:" (sem barra) e um caminho RELATIVO A UNIDADE: GetFullPath devolve o
+    # diretorio corrente daquela unidade, nunca a raiz. %SystemDrive% vale
+    # exatamente "C:", entao a entrada protegida virava o diretorio de trabalho -
+    # e, se ele coincidisse com um alvo, a limpeza daquele alvo era recusada em
+    # silencio. Mesma guarda que Test-CompartDiskProtectedPath ja aplica no Core.
+    if ($p -match '^[A-Za-z]:$') { $p = $p + $script:Sep }
     try {
-        $full = [System.IO.Path]::GetFullPath($p.Trim())
+        $full = [System.IO.Path]::GetFullPath($p)
         if ([string]::IsNullOrWhiteSpace($full)) { return '' }
         $raiz = ''
         try { $raiz = [System.IO.Path]::GetPathRoot($full) } catch { $raiz = '' }
@@ -153,28 +172,52 @@ function Test-CleanupPathUnder {
 }
 
 function Get-CleanupForbiddenPaths {
-    $itens = @(
+    <# Duas classes de protecao:
+
+       'Exato'    - raizes das quais se PODE descer para alvos legitimos. %TEMP% fica
+                    sob %LOCALAPPDATA%, e Temp/SoftwareDistribution\Download ficam sob
+                    %SystemRoot%: bloquear a subarvore inteira eliminaria a limpeza.
+                    Aqui recusa-se apenas o proprio diretorio.
+       'Subarvore'- arvores em que nada, em nenhuma profundidade, pode ser removido por
+                    este modulo. Antes a comparacao era so por igualdade, entao
+                    System32\config\SAM ou WinSxS\Backup passavam pela guarda por
+                    estarem sob %SystemRoot% (raiz permitida) sem serem iguais a
+                    nenhuma entrada. Nenhum alvo do catalogo aponta para elas: a
+                    mudanca fecha a guarda sem alterar o que e limpo. #>
+    $exatos = @(
         $env:SystemRoot
-        (Join-Path $env:SystemRoot 'System32')
-        (Join-Path $env:SystemRoot 'SysWOW64')
-        (Join-Path $env:SystemRoot 'WinSxS')
-        (Join-Path $env:SystemRoot 'assembly')
-        (Join-Path $env:SystemRoot 'System32\config')
         (Join-Path $env:SystemRoot 'SoftwareDistribution')
         $env:SystemDrive
-        $env:ProgramFiles
-        ${env:ProgramFiles(x86)}
         $env:ProgramData
         $env:USERPROFILE
         $env:LOCALAPPDATA
         $env:APPDATA
         (Join-Path $env:SystemDrive 'Users')
     )
+    $subarvores = @(
+        (Join-Path $env:SystemRoot 'System32')
+        (Join-Path $env:SystemRoot 'SysWOW64')
+        (Join-Path $env:SystemRoot 'WinSxS')
+        (Join-Path $env:SystemRoot 'assembly')
+        (Join-Path $env:SystemRoot 'Installer')
+        (Join-Path $env:SystemRoot 'Fonts')
+        (Join-Path $env:SystemRoot 'System32\config')
+        (Join-Path $env:SystemRoot 'System32\DriverStore')
+        (Join-Path $env:SystemRoot 'System32\catroot')
+        (Join-Path $env:SystemRoot 'System32\catroot2')
+        (Join-Path $env:SystemRoot 'System32\spool\drivers')
+        $env:ProgramFiles
+        ${env:ProgramFiles(x86)}
+    )
     $out = New-Object System.Collections.ArrayList
-    foreach ($i in $itens) {
-        if ([string]::IsNullOrWhiteSpace($i)) { continue }
-        $n = ConvertTo-CleanupNormalizedPath $i
-        if ($n -and (@($out) -notcontains $n)) { [void]$out.Add($n) }
+    foreach ($par in @(@{ L = $exatos; M = 'Exato' }, @{ L = $subarvores; M = 'Subarvore' })) {
+        foreach ($i in $par.L) {
+            if ([string]::IsNullOrWhiteSpace($i)) { continue }
+            $n = ConvertTo-CleanupNormalizedPath $i
+            if (-not $n) { continue }
+            if (@($out | Where-Object { $_.Caminho -eq $n })) { continue }
+            [void]$out.Add([pscustomobject]@{ Caminho = $n; Modo = $par.M })
+        }
     }
     return @($out)
 }
@@ -204,8 +247,11 @@ function Test-CleanupTargetSafety {
     }
 
     foreach ($p in (Get-CleanupForbiddenPaths)) {
-        if ($norm.Equals($p, [System.StringComparison]::OrdinalIgnoreCase)) {
-            $out.Motivo = ('caminho protegido do sistema: {0}' -f $p); return $out
+        if ($norm.Equals($p.Caminho, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $out.Motivo = ('caminho protegido do sistema: {0}' -f $p.Caminho); return $out
+        }
+        if ($p.Modo -eq 'Subarvore' -and (Test-CleanupPathUnder -Child $norm -Parent $p.Caminho)) {
+            $out.Motivo = ('caminho dentro de arvore protegida do sistema: {0}' -f $p.Caminho); return $out
         }
     }
 
@@ -263,12 +309,28 @@ function Get-CleanupReparseChildren {
             if ($ehReparse) { [void]$nomes.Add($filho.Name); continue }
             if (-not $filho.PSIsContainer) { continue }
             # Varredura apenas de diretorios (barata) em busca de reparse aninhado.
+            #
+            # FALHA FECHA: com -ErrorAction SilentlyContinue, um subdiretorio sem
+            # permissao de leitura era pulado sem deixar rastro, e uma junction
+            # escondida dentro dele NAO era detectada - o filho seguia elegivel para
+            # Remove-Item -Recurse, que no Windows PowerShell 5.1 pode atravessar a
+            # junction e apagar a arvore de destino. Varredura incompleta passa a
+            # excluir o filho: perde-se limpeza, nunca dados.
             try {
-                $netos = @(Get-ChildItem -LiteralPath $filho.FullName -Directory -Recurse -Force -ErrorAction SilentlyContinue |
+                $errosVarredura = $null
+                $netos = @(Get-ChildItem -LiteralPath $filho.FullName -Directory -Recurse -Force `
+                            -ErrorAction SilentlyContinue -ErrorVariable errosVarredura |
                     Where-Object { $_.Attributes -band [System.IO.FileAttributes]::ReparsePoint })
-                if ($netos.Count -gt 0) { [void]$nomes.Add($filho.Name) }
+                if ($netos.Count -gt 0) {
+                    [void]$nomes.Add($filho.Name)
+                } elseif (@($errosVarredura).Count -gt 0) {
+                    [void]$nomes.Add($filho.Name)
+                    Write-Log DEBUG ("Varredura de reparse incompleta em '{0}' ({1} erro[s]): preservado por precaucao." -f $filho.FullName, @($errosVarredura).Count) -NoConsole
+                }
             } catch {
-                Write-Log DEBUG ("Varredura de reparse em '{0}': {1}" -f $filho.FullName, $_.Exception.Message) -NoConsole
+                # Sem varredura nao ha como afirmar que nao existe junction dentro.
+                [void]$nomes.Add($filho.Name)
+                Write-Log DEBUG ("Varredura de reparse falhou em '{0}': {1}. Preservado por precaucao." -f $filho.FullName, $_.Exception.Message) -NoConsole
             }
         }
     } catch {
