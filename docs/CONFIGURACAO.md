@@ -1,6 +1,6 @@
 # Guia de Configuração
 
-**COMPARTDISK 1.4.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.1** · Desenvolvido por Edsilas
 
 O COMPARTDISK funciona sem qualquer configuração. Este guia existe para quem quer
 saber **onde as coisas ficam** e **como ajustar** o comportamento padrão.

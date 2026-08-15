@@ -13,6 +13,93 @@ Sem alterações pendentes.
 
 ---
 
+## [1.4.1] — 2026-08-15
+
+Correção da navegação dos menus dos módulos PowerShell e atualização do catálogo de
+aplicativos. Publicação em
+[Releases](https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.1).
+
+> **Compatibilidade — leia antes de atualizar.** A numeração **dentro da categoria
+> Acesso Remoto** mudou: `Instalar todos` passa de `[4]` para `[3]`, e a tecla `[1]`
+> deixa de ser RustDesk e passa a ser TeamViewer. Nenhuma tecla de menu estática
+> mudou — menu principal, submenus e a lista de categorias continuam idênticos —, e
+> a superfície de automação (`-Action`, `-Category`, argumentos de linha de comando,
+> códigos de saída, variáveis de ambiente e esquema de relatório) está inalterada.
+> O único uso que deixa de funcionar é `-Action Install -Id RustDesk` e
+> `-Action Install -Id RDP`: os dois itens saíram do catálogo e passam a ser
+> recusados antes de qualquer chamada ao Winget.
+
+### Corrigido
+
+- **Menus dos módulos PowerShell passam a agir na tecla, sem Enter.** O `README.md`,
+  o `MANUAL-DO-USUARIO.md` e o `UTILIZACAO.md` já descreviam a navegação numérica
+  *sem necessidade de pressionar Enter* — é o comportamento do `CHOICE` nos menus do
+  `Launcher.bat` —, mas os menus de `Winget.ps1` e `Apps.ps1` liam a opção por linha
+  (`Read-Host`) e exigiam Enter. A leitura passou a ser por tecla no **único ponto
+  compartilhado**, `Read-CompartDiskOpcao` do `Core.ps1`: nenhum fluxo exclusivo foi
+  criado para o WinGet, e os dois módulos ficaram consistentes com o resto da
+  interface pela mesma correção.
+
+  A escolha vale assim que o número não pode mais crescer para outra opção válida.
+  Em menu de até 10 opções (`0` a `9`) a primeira tecla decide; onde existe opção de
+  dois dígitos — hoje apenas a categoria *Windows / Sistema*, que vai até `10` — só o
+  prefixo ambíguo espera a tecla seguinte, e Enter confirma o prefixo. `Backspace`
+  corrige e `Esc` equivale a `[0]`. A validação, as mensagens de recusa
+  (`Use apenas numeros.`, `Opcao invalida. Informe um numero de 0 a N.`) e o valor de
+  retorno permanecem os de antes.
+
+  Sem console — entrada redirecionada, host sem `RawUI`, execução desassistida — a
+  leitura por linha continua valendo: nenhum ambiente perde o menu, e as ações
+  automatizáveis não foram tocadas.
+
+- **Fallback Batch: a categoria `Utilitarios` não aparecia em duas telas.**
+  `:FB_APPS_WALK6` era percorrida na instalação, mas não na lista de confirmação de
+  *Instalar todos* nem em *Ver aplicativos instalados* — inofensivo enquanto a
+  categoria estava vazia, e um item instalado sem ter sido listado assim que
+  deixasse de estar. As duas telas passam a percorrê-la.
+
+### Adicionado
+
+- **Catálogo de aplicativos — `Utilitarios` deixa de ser apenas ponto de extensão:**
+  **7-Zip** (`7zip.7zip`) e **Rufus** (`Rufus.Rufus`).
+- **Catálogo de aplicativos — `Acesso Remoto`:** **TeamViewer**
+  (`TeamViewer.TeamViewer`).
+
+Os três identificadores foram conferidos em 15/08/2026 contra os manifestos
+publicados em `microsoft/winget-pkgs`. Nenhum foi inferido, e nada mudou na
+instalação, na verificação de estado final, nas mensagens de status ou no tratamento
+de falha: as entradas novas são linhas do mesmo catálogo declarativo, e o `Launcher.bat`
+recebeu as mesmas linhas nas rotinas `:FB_APPS_WALKn` do fallback Batch.
+
+### Removido
+
+- **Catálogo de aplicativos — `Acesso Remoto`:** **RustDesk** (declarado sem pacote na
+  fonte oficial) e **RDP** (declarado recurso nativo do Windows).
+
+> **Posição das teclas.** A remoção mexe na numeração da categoria *Acesso Remoto*, o
+> que é inerente ao que foi pedido. O **TeamViewer entrou na posição `[1]`**, antes do
+> AnyDesk, justamente para que o **AnyDesk permanecesse em `[2]`**; *Instalar todos*
+> passa de `[4]` para `[3]`. Nenhuma outra tecla de nenhum outro menu mudou de posição
+> ou de destino.
+>
+> Com a saída de RustDesk e RDP, o catálogo fica sem item `Native` ou sem pacote. O
+> código que trata esses casos — `RECURSO NATIVO`, `NAO DISPONIVEL`, o campo `Note` e o
+> terceiro argumento das rotinas Batch — **foi mantido**: é capacidade do catálogo, não
+> código morto de duas entradas.
+
+### Versão
+
+A numeração passa de `1.4.0` para `1.4.1` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
+`README.md`, no cabeçalho de todos os módulos e de todos os documentos.
+
+`remote.ps1` passa a apontar para a tag `v1.4.1`. O SHA-256 fixado no script fica
+**vazio até a release ser publicada e o pacote conferido**: enquanto isso a integridade
+é validada pelo hash publicado nas notas da release, mecanismo que o próprio script já
+implementa. Não havendo hash publicado, `Test-Integridade` declara a limitação em vez
+de aceitar o pacote em silêncio — a validação nunca é ignorada.
+
+---
+
 ## [1.4.0] — 2026-08-14
 
 **Instalação de aplicativos via WinGet**, acrescentada ao lado da atualização que já
@@ -1118,6 +1205,7 @@ Primeira versão da arquitetura modular.
 
 ---
 
+[1.4.1]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.1
 [1.4.0]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.0
 [1.3.1]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.3.1
 [1.3.0]: https://github.com/edsilas/compartdisk/releases/tag/v1.3.0

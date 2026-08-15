@@ -1,6 +1,6 @@
 ﻿<#
 ================================================================================
- COMPARTDISK 1.4.0 - Collectors.ps1
+ COMPARTDISK 1.4.1 - Collectors.ps1
  Desenvolvido por Edsilas
  Coletores de dados reutilizaveis (somente leitura, nao alteram o sistema).
  Carregado automaticamente pelo Core.ps1.

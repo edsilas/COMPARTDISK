@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.0 - Cleanup.ps1
+ COMPARTDISK 1.4.1 - Cleanup.ps1
  Desenvolvido por Edsilas
  Acoes: Analyze | Standard | Deep | Browsers | Logs
 

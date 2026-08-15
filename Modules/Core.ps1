@@ -1,6 +1,6 @@
 ﻿<#
 ================================================================================
- COMPARTDISK 1.4.0 - Core.ps1
+ COMPARTDISK 1.4.1 - Core.ps1
  Desenvolvido por Edsilas
  Biblioteca central de funcoes reutilizaveis.
  Compativel com Windows PowerShell 5.1 e PowerShell 7.x (pwsh).
@@ -26,7 +26,7 @@ if (-not $Global:CompartDisk) { $Global:CompartDisk = @{} }
 
 $Global:CompartDisk.CoreDir    = $__CompartDiskCoreDir
 $Global:CompartDisk.Root       = Split-Path -Parent $__CompartDiskCoreDir
-$Global:CompartDisk.Version    = '1.4.0'
+$Global:CompartDisk.Version    = '1.4.1'
 $Global:CompartDisk.Product    = 'COMPARTDISK'
 $Global:CompartDisk.Author     = 'Edsilas'
 $Global:CompartDisk.Signature  = 'DESENVOLVIDO POR EDSILAS'

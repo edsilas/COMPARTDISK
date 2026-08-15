@@ -1,6 +1,6 @@
 # Guia de Utilização
 
-**COMPARTDISK 1.4.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.1** · Desenvolvido por Edsilas
 
 Como usar a ferramenta no dia a dia. Se você quer a explicação de cada opção
 individualmente, vá para o [Manual do Usuário](MANUAL-DO-USUARIO.md).
