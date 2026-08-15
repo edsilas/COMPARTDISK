@@ -225,9 +225,23 @@ function Get-CompartDiskNetworkInfo {
     [CmdletBinding()] param()
     $rows = New-Object System.Collections.ArrayList
 
+    # DHCP e MTU por indice de interface. Consulta ACRESCENTADA: os campos que ja
+    # existiam continuam com o mesmo nome e o mesmo valor, e quem le apenas os
+    # antigos nao percebe diferenca.
+    $ipif = @{}
+    if (Test-CompartDiskCommand 'Get-NetIPInterface') {
+        try {
+            foreach ($i in (Get-NetIPInterface -AddressFamily IPv4 -ErrorAction Stop)) {
+                $ipif[[int]$i.InterfaceIndex] = $i
+            }
+        } catch { Write-Log DEBUG "Get-NetIPInterface: $($_.Exception.Message)" -NoConsole }
+    }
+
     if (Test-CompartDiskCommand 'Get-NetIPConfiguration') {
         try {
             foreach ($c in (Get-NetIPConfiguration -Detailed -ErrorAction Stop)) {
+                $idx = $(try { [int]$c.InterfaceIndex } catch { -1 })
+                $i   = $(if ($ipif.ContainsKey($idx)) { $ipif[$idx] } else { $null })
                 [void]$rows.Add([pscustomobject]@{
                     Interface = $c.InterfaceAlias
                     Descricao = $c.InterfaceDescription
@@ -238,6 +252,8 @@ function Get-CompartDiskNetworkInfo {
                     IPv6      = (($c.IPv6Address | ForEach-Object { $_.IPAddress }) -join ', ')
                     Gateway   = (($c.IPv4DefaultGateway | ForEach-Object { $_.NextHop }) -join ', ')
                     DNS       = (($c.DNSServer | ForEach-Object { $_.ServerAddresses }) -join ', ')
+                    DHCP      = $(if ($i) { "$($i.Dhcp)" } else { 'N/A' })
+                    MTU       = $(if ($i -and $i.NlMtu) { "$($i.NlMtu)" } else { 'N/A' })
                     Perfil    = "$($c.NetProfile.NetworkCategory)"
                 })
             }
@@ -251,6 +267,8 @@ function Get-CompartDiskNetworkInfo {
                 MAC = $n.MACAddress; Velocidade = 'n/d'
                 IPv4 = ($n.IPAddress -join ', '); IPv6 = ''
                 Gateway = ($n.DefaultIPGateway -join ', '); DNS = ($n.DNSServerSearchOrder -join ', ')
+                DHCP = $(if ($null -ne $n.DHCPEnabled) { $(if ([bool]$n.DHCPEnabled) { 'Enabled' } else { 'Disabled' }) } else { 'N/A' })
+                MTU  = $(if ($n.MTU) { "$($n.MTU)" } else { 'N/A' })
                 Perfil = 'n/d'
             })
         }
@@ -262,11 +280,27 @@ function Get-CompartDiskFirewallInfo {
     [CmdletBinding()] param()
     $rows = New-Object System.Collections.ArrayList
     if (Test-CompartDiskCommand 'Get-NetFirewallProfile') {
+        # Qual perfil esta em uso agora. O Audit ja consultava 'PerfilAtivo' em
+        # cada linha, mas nenhuma delas trazia o campo: sem ele, nao dava para
+        # distinguir "perfil desligado" de "perfil desligado E em uso".
+        $categoriasAtivas = @()
+        if (Test-CompartDiskCommand 'Get-NetConnectionProfile') {
+            try {
+                $categoriasAtivas = @(Get-NetConnectionProfile -ErrorAction Stop | ForEach-Object { "$($_.NetworkCategory)" })
+            } catch { Write-Log DEBUG "Get-NetConnectionProfile: $($_.Exception.Message)" -NoConsole }
+        }
         try {
             foreach ($p in (Get-NetFirewallProfile -ErrorAction Stop)) {
+                $nome = "$($p.Name)"
+                # NetworkCategory devolve Public/Private/DomainAuthenticated;
+                # o perfil do firewall chama-se Public/Private/Domain.
+                $ativo = $(if ($categoriasAtivas.Count -eq 0) { 'N/A' }
+                           elseif ($categoriasAtivas -contains $nome -or ($nome -eq 'Domain' -and ($categoriasAtivas -match 'Domain'))) { 'Sim' }
+                           else { 'Nao' })
                 [void]$rows.Add([pscustomobject]@{
-                    Perfil          = $p.Name
+                    Perfil          = $nome
                     Habilitado      = $p.Enabled
+                    PerfilAtivo     = $ativo
                     EntradaPadrao   = "$($p.DefaultInboundAction)"
                     SaidaPadrao     = "$($p.DefaultOutboundAction)"
                     NotificarBloqueio = $p.NotifyOnListen
@@ -797,4 +831,370 @@ function Get-CompartDiskPrinters {
         })
     }
     return @($rows)
+}
+
+# ==============================================================================
+# INTEGRIDADE DE EXECUTAVEL, PROCESSOS, REDE E COMPARTILHAMENTOS
+#
+# Tudo aqui e SOMENTE LEITURA, como o restante deste arquivo: nenhuma consulta
+# altera estado, abre porta, muda regra de firewall ou encerra processo.
+#
+# Um dado que o Windows nao expoe - executavel protegido, arquivo removido,
+# processo encerrado durante a coleta, cmdlet ausente na edicao - vira 'N/A',
+# 'Acesso negado' ou 'Indisponivel'. Nunca um valor inventado, e nunca uma
+# excecao que interrompa o restante do relatorio.
+# ==============================================================================
+
+function Get-CompartDiskFileTrust {
+    <# SHA-256 real e estado da assinatura de UM arquivo.
+
+       O resultado e cacheado por caminho durante a sessao: dezenas de processos
+       compartilham o mesmo executavel (svchost.exe, conhost.exe), e sem cache o
+       mesmo arquivo seria lido e o mesmo certificado validado dezenas de vezes.
+       Como a chave e o caminho e o hash vem do arquivo real, o cache nao muda
+       nenhum valor - so evita repetir o trabalho. #>
+    [CmdletBinding()] param([AllowNull()][string]$Path, [switch]$SemHash)
+
+    $vazio = [pscustomobject]@{
+        SHA256 = 'N/A'; Assinatura = 'N/A'; Editor = 'N/A'; Detalhe = ''
+    }
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $vazio }
+
+    if (-not $Global:CompartDisk.ContainsKey('FileTrust') -or $null -eq $Global:CompartDisk.FileTrust) {
+        $Global:CompartDisk.FileTrust = @{}
+    }
+    $chave = ('{0}|{1}' -f $Path.ToLowerInvariant(), [int][bool]$SemHash)
+    if ($Global:CompartDisk.FileTrust.ContainsKey($chave)) { return $Global:CompartDisk.FileTrust[$chave] }
+
+    $out = [pscustomobject]@{
+        SHA256 = 'N/A'; Assinatura = 'Nao foi possivel verificar'; Editor = 'N/A'; Detalhe = ''
+    }
+
+    $existe = $false
+    try { $existe = Test-Path -LiteralPath $Path -PathType Leaf } catch { }
+    if (-not $existe) {
+        $out.Assinatura = 'N/A'
+        $out.Detalhe    = 'Arquivo nao encontrado'
+        $Global:CompartDisk.FileTrust[$chave] = $out
+        return $out
+    }
+
+    # --- SHA-256 do arquivo real -------------------------------------------
+    if (-not $SemHash) {
+        try {
+            $out.SHA256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        } catch {
+            $msg = $_.Exception.Message
+            $out.SHA256  = $(if ($msg -match 'denied|negad') { 'Acesso negado' } else { 'Indisponivel' })
+            $out.Detalhe = (Get-CompartDiskTrechoErro $msg)
+        }
+    }
+
+    # --- assinatura digital -------------------------------------------------
+    if (-not (Test-CompartDiskCommand 'Get-AuthenticodeSignature')) {
+        $out.Assinatura = 'Nao foi possivel verificar'
+        $out.Detalhe    = 'Get-AuthenticodeSignature indisponivel neste motor'
+        $Global:CompartDisk.FileTrust[$chave] = $out
+        return $out
+    }
+    try {
+        $sig = Get-AuthenticodeSignature -LiteralPath $Path -ErrorAction Stop
+        $st  = "$($sig.Status)"
+        $temCert = ($null -ne $sig.SignerCertificate)
+        switch ($st) {
+            'Valid'                  { $out.Assinatura = 'Assinado e valido' }
+            'NotSigned'              { $out.Assinatura = 'Nao assinado' }
+            'NotSupportedFileFormat' { $out.Assinatura = 'Nao assinado'; $out.Detalhe = 'Formato sem suporte a assinatura' }
+            default {
+                # HashMismatch, NotTrusted, UnknownError e afins: ha assinatura,
+                # mas ela nao valida. Distinguir isto de "nao assinado" e o
+                # ponto do requisito.
+                if ($temCert) { $out.Assinatura = 'Assinado, invalido' }
+                else          { $out.Assinatura = 'Nao foi possivel verificar' }
+                if (-not $out.Detalhe) { $out.Detalhe = $st }
+            }
+        }
+        if ($temCert) {
+            $nome = ''
+            try { $nome = "$($sig.SignerCertificate.Subject)" } catch { }
+            # Do DN completo interessa so o CN: o resto alongaria a tabela sem
+            # acrescentar nada ao diagnostico.
+            $m = [regex]::Match($nome, 'CN=(?:")?([^",]+)')
+            $out.Editor = $(if ($m.Success) { $m.Groups[1].Value.Trim() } elseif ($nome) { $nome } else { 'N/A' })
+        } else {
+            $out.Editor = 'N/A'
+        }
+    } catch {
+        $msg = $_.Exception.Message
+        $out.Assinatura = $(if ($msg -match 'denied|negad') { 'Acesso negado' } else { 'Nao foi possivel verificar' })
+        if (-not $out.Detalhe) { $out.Detalhe = (Get-CompartDiskTrechoErro $msg) }
+    }
+
+    $Global:CompartDisk.FileTrust[$chave] = $out
+    return $out
+}
+
+function Get-CompartDiskTrechoErro {
+    <# Primeira linha da mensagem, curta: a tabela nao pode virar um log. #>
+    [CmdletBinding()] param([AllowNull()][string]$Texto, [int]$Max = 90)
+    if ([string]::IsNullOrWhiteSpace($Texto)) { return '' }
+    $t = ($Texto -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1)
+    $t = "$t".Trim()
+    if ($t.Length -gt $Max) { $t = $t.Substring(0, $Max - 1) + [char]0x2026 }
+    return $t
+}
+
+function Get-CompartDiskProcessInventory {
+    <# Inventario completo de processos com integridade do executavel.
+
+       PPID, threads, handles e caminho vem de UMA consulta Win32_Process. O
+       usuario vem de UMA chamada a Get-Process -IncludeUserName: consultar o
+       dono processo a processo (GetOwner) custaria centenas de chamadas WMI.
+       Sem privilegio administrativo esse cmdlet recusa, e o campo fica
+       'Acesso negado' em vez de vazio. #>
+    [CmdletBinding()] param([switch]$SemHash, [int]$MaxArquivos = 400)
+
+    $rows = New-Object System.Collections.ArrayList
+    $procs = @(Get-CompartDiskCim -Class Win32_Process)
+    if ($procs.Count -eq 0) {
+        Write-Log DEBUG 'Win32_Process nao retornou processos.' -NoConsole
+        return @($rows)
+    }
+
+    # --- dono do processo, em uma unica passagem ----------------------------
+    $donos = @{}
+    $donoIndisponivel = 'N/A'
+    try {
+        foreach ($p in (Get-Process -IncludeUserName -ErrorAction Stop)) {
+            if ($null -ne $p.UserName) { $donos[[int]$p.Id] = "$($p.UserName)" }
+        }
+    } catch {
+        $donoIndisponivel = $(if (Test-Administrator) { 'Indisponivel' } else { 'Acesso negado' })
+        Write-Log DEBUG ("Get-Process -IncludeUserName: {0}" -f $_.Exception.Message) -NoConsole
+    }
+
+    # --- servicos hospedados, por PID ---------------------------------------
+    $servicosPorPid = @{}
+    foreach ($s in (Get-CompartDiskCim -Class Win32_Service -Filter 'ProcessId > 0')) {
+        $sp = [int]$s.ProcessId
+        if (-not $servicosPorPid.ContainsKey($sp)) { $servicosPorPid[$sp] = New-Object System.Collections.ArrayList }
+        [void]$servicosPorPid[$sp].Add("$($s.Name)")
+    }
+
+    # Limite de arquivos distintos analisados: protege contra uma maquina com
+    # centenas de executaveis diferentes. O que passar do limite e declarado,
+    # nao silenciado.
+    $vistos = @{}
+    $analisados = 0
+
+    foreach ($p in $procs) {
+        $caminho = "$($p.ExecutablePath)"
+        $trust = $null
+
+        if ([string]::IsNullOrWhiteSpace($caminho)) {
+            # Idle (0), System (4) e processos protegidos nao expoem caminho.
+            $trust = [pscustomobject]@{ SHA256 = 'N/A'; Assinatura = 'N/A'; Editor = 'N/A'; Detalhe = 'Executavel nao exposto pelo Windows' }
+        } else {
+            $chave = $caminho.ToLowerInvariant()
+            if (-not $vistos.ContainsKey($chave)) {
+                if ($analisados -ge $MaxArquivos) {
+                    $vistos[$chave] = [pscustomobject]@{ SHA256 = 'Nao calculado'; Assinatura = 'Nao verificado'; Editor = 'N/A'; Detalhe = ("Limite de {0} arquivos distintos atingido" -f $MaxArquivos) }
+                } else {
+                    $vistos[$chave] = Get-CompartDiskFileTrust -Path $caminho -SemHash:$SemHash
+                    $analisados++
+                }
+            }
+            $trust = $vistos[$chave]
+        }
+
+        $mem = 'N/A'
+        try { $mem = ConvertTo-CompartDiskSize ([int64]$p.WorkingSetSize) } catch { }
+
+        $inicio = 'N/A'
+        try { if ($p.CreationDate) { $inicio = ([datetime]$p.CreationDate).ToString('dd/MM HH:mm') } } catch { }
+
+        $pid_ = [int]$p.ProcessId
+        [void]$rows.Add([pscustomobject]@{
+            Processo   = "$($p.Name)"
+            PID        = $pid_
+            PPID       = $(try { [int]$p.ParentProcessId } catch { 'N/A' })
+            Usuario    = $(if ($donos.ContainsKey($pid_)) { $donos[$pid_] } else { $donoIndisponivel })
+            Memoria    = $mem
+            Threads    = $(try { [int]$p.ThreadCount } catch { 'N/A' })
+            Handles    = $(try { [int]$p.HandleCount } catch { 'N/A' })
+            Servicos   = $(if ($servicosPorPid.ContainsKey($pid_)) { ($servicosPorPid[$pid_] -join ', ') } else { '' })
+            Assinatura = $trust.Assinatura
+            Editor     = $trust.Editor
+            SHA256     = $trust.SHA256
+            Caminho    = $(if ($caminho) { $caminho } else { 'N/A' })
+            Inicio     = $inicio
+        })
+    }
+
+    return @($rows | Sort-Object -Property Processo, PID)
+}
+
+function Get-CompartDiskNetworkConnections {
+    <# Conexoes TCP e escutas UDP, associadas ao processo dono.
+
+       Prefere Get-NetTCPConnection/Get-NetUDPEndpoint. Onde os cmdlets nao
+       existem, cai para 'netstat -ano', que devolve o mesmo conjunto essencial
+       (protocolo, enderecos, estado e PID) em qualquer Windows suportado. #>
+    [CmdletBinding()] param([hashtable]$NomePorPid)
+
+    $rows = New-Object System.Collections.ArrayList
+    if (-not $NomePorPid) {
+        $NomePorPid = @{}
+        foreach ($p in (Get-CompartDiskCim -Class Win32_Process)) {
+            $NomePorPid[[int]$p.ProcessId] = "$($p.Name)"
+        }
+    }
+
+    # Servicos por PID, para nomear quem escuta dentro de um svchost.
+    $servicosPorPid = @{}
+    foreach ($s in (Get-CompartDiskCim -Class Win32_Service -Filter 'ProcessId > 0')) {
+        $sp = [int]$s.ProcessId
+        if (-not $servicosPorPid.ContainsKey($sp)) { $servicosPorPid[$sp] = New-Object System.Collections.ArrayList }
+        [void]$servicosPorPid[$sp].Add("$($s.Name)")
+    }
+
+    # IP local -> interface, para o campo 'Interface quando disponivel'.
+    $ifPorIp = @{}
+    if (Test-CompartDiskCommand 'Get-NetIPAddress') {
+        try {
+            foreach ($a in (Get-NetIPAddress -ErrorAction Stop)) {
+                $ifPorIp["$($a.IPAddress)"] = "$($a.InterfaceAlias)"
+            }
+        } catch { Write-Log DEBUG "Get-NetIPAddress: $($_.Exception.Message)" -NoConsole }
+    }
+
+    function Add-Conexao {
+        param([string]$Proto, [string]$LocalIp, $LocalPorta, [string]$RemotoIp, $RemotoPorta, [string]$Estado, $ProcId)
+        $pidNum = -1
+        try { $pidNum = [int]$ProcId } catch { }
+        $nome = $(if ($pidNum -ge 0 -and $NomePorPid.ContainsKey($pidNum)) { $NomePorPid[$pidNum] } else { 'N/A' })
+        $svc  = $(if ($pidNum -ge 0 -and $servicosPorPid.ContainsKey($pidNum)) { ($servicosPorPid[$pidNum] -join ', ') } else { '' })
+        $iface = $(if ($ifPorIp.ContainsKey($LocalIp)) { $ifPorIp[$LocalIp] } else { 'N/A' })
+        [void]$rows.Add([pscustomobject]@{
+            Protocolo     = $Proto
+            EnderecoLocal = $(if ($LocalIp) { $LocalIp } else { 'N/A' })
+            PortaLocal    = $LocalPorta
+            EnderecoRemoto= $(if ($RemotoIp) { $RemotoIp } else { 'N/A' })
+            PortaRemota   = $RemotoPorta
+            Estado        = $Estado
+            Processo      = $nome
+            PID           = $(if ($pidNum -ge 0) { $pidNum } else { 'N/A' })
+            Servico       = $svc
+            Interface     = $iface
+        })
+    }
+
+    $viaCmdlet = $false
+    if (Test-CompartDiskCommand 'Get-NetTCPConnection') {
+        try {
+            foreach ($c in (Get-NetTCPConnection -ErrorAction Stop)) {
+                $est = "$($c.State)"
+                if ($est -eq 'Listen') { $est = 'LISTEN' } elseif ($est -eq 'Established') { $est = 'ESTABLISHED' } else { $est = $est.ToUpperInvariant() }
+                Add-Conexao -Proto 'TCP' -LocalIp "$($c.LocalAddress)" -LocalPorta $c.LocalPort `
+                            -RemotoIp "$($c.RemoteAddress)" -RemotoPorta $c.RemotePort -Estado $est -ProcId $c.OwningProcess
+            }
+            $viaCmdlet = $true
+        } catch { Write-Log DEBUG "Get-NetTCPConnection: $($_.Exception.Message)" -NoConsole }
+    }
+    if ($viaCmdlet -and (Test-CompartDiskCommand 'Get-NetUDPEndpoint')) {
+        try {
+            foreach ($u in (Get-NetUDPEndpoint -ErrorAction Stop)) {
+                # UDP nao tem conexao nem estado: e sempre um ponto de escuta.
+                Add-Conexao -Proto 'UDP' -LocalIp "$($u.LocalAddress)" -LocalPorta $u.LocalPort `
+                            -RemotoIp '' -RemotoPorta 'N/A' -Estado 'LISTEN' -ProcId $u.OwningProcess
+            }
+        } catch { Write-Log DEBUG "Get-NetUDPEndpoint: $($_.Exception.Message)" -NoConsole }
+    }
+
+    if (-not $viaCmdlet) {
+        $netstat = Join-Path $env:SystemRoot 'System32\netstat.exe'
+        $r = Invoke-SafeCommand { Invoke-NativeCommand -FilePath $netstat -Arguments @('-ano') -TimeoutSeconds 60 } -Activity 'netstat -ano' -Silent
+        if ($r.Success -and $r.Value -and $r.Value.StdOut) {
+            foreach ($linha in ($r.Value.StdOut -split "`r?`n")) {
+                $t = $linha.Trim()
+                if ($t -notmatch '^(TCP|UDP)\s') { continue }
+                $c = @($t -split '\s+')
+                if ($c.Count -lt 4) { continue }
+                $proto = $c[0]
+                $lp = Split-CompartDiskEndereco $c[1]
+                $rp = Split-CompartDiskEndereco $c[2]
+                if ($proto -eq 'TCP' -and $c.Count -ge 5) {
+                    Add-Conexao -Proto 'TCP' -LocalIp $lp.Ip -LocalPorta $lp.Porta -RemotoIp $rp.Ip -RemotoPorta $rp.Porta `
+                                -Estado ($c[3].ToUpperInvariant()) -ProcId $c[4]
+                } elseif ($proto -eq 'UDP') {
+                    Add-Conexao -Proto 'UDP' -LocalIp $lp.Ip -LocalPorta $lp.Porta -RemotoIp '' -RemotoPorta 'N/A' `
+                                -Estado 'LISTEN' -ProcId $c[3]
+                }
+            }
+        } else {
+            Write-Log DEBUG 'netstat indisponivel: conexoes de rede nao coletadas.' -NoConsole
+        }
+    }
+
+    return @($rows | Sort-Object -Property Protocolo, @{ Expression = { [int]('0' + "$($_.PortaLocal)") } })
+}
+
+function Split-CompartDiskEndereco {
+    <# Separa "1.2.3.4:445" e "[::1]:445" em IP e porta. #>
+    [CmdletBinding()] param([AllowNull()][string]$Texto)
+    if ([string]::IsNullOrWhiteSpace($Texto)) { return [pscustomobject]@{ Ip = 'N/A'; Porta = 'N/A' } }
+    $t = $Texto.Trim()
+    $i = $t.LastIndexOf(':')
+    if ($i -lt 0) { return [pscustomobject]@{ Ip = $t; Porta = 'N/A' } }
+    $ip = $t.Substring(0, $i).Trim('[', ']')
+    $po = $t.Substring($i + 1)
+    return [pscustomobject]@{ Ip = $(if ($ip) { $ip } else { 'N/A' }); Porta = $(if ($po) { $po } else { 'N/A' }) }
+}
+
+function Get-CompartDiskListeningPorts {
+    <# Portas em escuta, derivadas das conexoes ja coletadas: uma unica origem
+       de verdade, sem repetir a consulta ao sistema. #>
+    [CmdletBinding()] param([object[]]$Conexoes)
+    if (-not $Conexoes) { $Conexoes = Get-CompartDiskNetworkConnections }
+    $rows = New-Object System.Collections.ArrayList
+    foreach ($c in @($Conexoes | Where-Object { $_.Estado -eq 'LISTEN' })) {
+        [void]$rows.Add([pscustomobject]@{
+            Porta            = $c.PortaLocal
+            Protocolo        = $c.Protocolo
+            Processo         = $c.Processo
+            PID              = $c.PID
+            Servico          = $(if ($c.Servico) { $c.Servico } else { 'N/A' })
+            EnderecoDeEscuta = $c.EnderecoLocal
+            Interface        = $c.Interface
+        })
+    }
+    return @($rows | Sort-Object -Property @{ Expression = { [int]('0' + "$($_.Porta)") } }, Protocolo)
+}
+
+function Get-CompartDiskShares {
+    <# Compartilhamentos publicados pela maquina. Somente leitura: nenhum
+       compartilhamento e criado, alterado ou removido. #>
+    [CmdletBinding()] param()
+    $rows = New-Object System.Collections.ArrayList
+    foreach ($s in (Get-CompartDiskCim -Class Win32_Share)) {
+        $tipo = switch ([int64]$s.Type) {
+            0          { 'Disco' }
+            1          { 'Impressora' }
+            2          { 'Dispositivo' }
+            3          { 'IPC' }
+            2147483648 { 'Disco administrativo' }
+            2147483649 { 'Impressora administrativa' }
+            2147483650 { 'Dispositivo administrativo' }
+            2147483651 { 'IPC administrativo' }
+            default    { "Tipo $($s.Type)" }
+        }
+        [void]$rows.Add([pscustomobject]@{
+            Nome        = "$($s.Name)"
+            Caminho     = $(if ($s.Path) { "$($s.Path)" } else { 'N/A' })
+            Tipo        = $tipo
+            Descricao   = $(if ($s.Description) { "$($s.Description)" } else { '' })
+            Administrativo = $(if ([int64]$s.Type -ge 2147483648 -or "$($s.Name)" -match '\$$') { 'Sim' } else { 'Nao' })
+        })
+    }
+    return @($rows | Sort-Object -Property Nome)
 }
