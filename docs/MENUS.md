@@ -42,6 +42,7 @@ Abre o submenu de aplicativos, com duas capacidades independentes.
 |---|---|---|
 | `1` | Atualizar aplicativos (Winget) | 🟡 |
 | `2` | Instalar aplicativos (catálogo de suporte técnico) | 🟡 |
+| `3` | Verificar / preparar WinGet | 🟡 |
 | `0` | Voltar | — |
 
 **`1` Atualizar aplicativos** — atualiza todos os programas instalados que o
@@ -82,6 +83,34 @@ catálogo, com a versão instalada quando o Winget a informa.
 Dois itens do catálogo não são instaláveis por pacote e são exibidos como tal:
 **RDP** é recurso nativo do Windows (`mstsc.exe`) e **RustDesk** não possui pacote no
 catálogo oficial do Winget. O COMPARTDISK não baixa instaladores fora do Winget.
+
+### `3` — Verificar / preparar WinGet 🟡
+
+Diagnostica o ambiente do WinGet e, quando ele não está disponível, tenta prepará-lo
+**por métodos oficiais do Windows**. A tela mostra a ficha do diagnóstico — sistema,
+build, arquitetura, App Installer, versão, fonte, Microsoft Store e política — e o
+estado apurado: *disponível*, *desatualizado*, *não funcional*, *ausente*, *bloqueado
+por política* ou *não suportado*.
+
+O que a preparação faz, nesta ordem:
+
+1. **Reparo local, sem baixar nada** — registra novamente o pacote do App Installer
+   que já está na máquina. Resolve o caso mais comum, em que o `winget` some porque o
+   registro do pacote se perdeu no perfil.
+2. **Microsoft Store** — abre a página oficial do App Installer para você concluir a
+   instalação. Depende da sua ação na janela da Store.
+
+Depois de agir, o resultado é **validado de verdade**: existência do `winget.exe`,
+`--version`, `--info`, fontes e uma consulta de teste. Só então a tela informa que o
+WinGet está pronto e oferece voltar direto para os aplicativos.
+
+Quando o Windows é antigo demais ou uma política corporativa bloqueia o App
+Installer, a opção **não tenta forçar nada**: informa o motivo e encerra sem alterar
+política alguma.
+
+> Sem PowerShell, a rotina Batch equivalente diagnostica e abre a página da Store,
+> mas não consegue registrar o pacote — e diz isso claramente, em vez de fingir que
+> reparou.
 
 ---
 

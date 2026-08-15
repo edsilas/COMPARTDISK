@@ -35,6 +35,7 @@ compartdisk/
 │   ├── Bitlocker.ps1                 Criptografia de disco
 │   ├── Explorer.ps1                  Explorer, ícones e impressão
 │   ├── Apps.ps1                      Catálogo e instalação de aplicativos (Winget)
+│   ├── Winget.ps1                    Diagnóstico e preparação do ambiente WinGet
 │   ├── Audit.ps1                     Auditoria
 │   └── Report.ps1                    Consolidação de relatórios
 │
@@ -98,7 +99,7 @@ dados, sem duplicar consultas.
 
 ### Módulos de domínio
 
-Os outros dezessete arquivos. Cada um cobre uma área e expõe um conjunto fixo de
+Os outros vinte arquivos. Cada um cobre uma área e expõe um conjunto fixo de
 ações. Todos seguem o mesmo esqueleto — veja o [Manual Técnico](MANUAL-TECNICO.md).
 
 ---

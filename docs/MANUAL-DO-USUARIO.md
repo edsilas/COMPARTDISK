@@ -143,6 +143,33 @@ vez, todos os de uma categoria ou todos de uma vez. **O que já está instalado 
 ignorado** — esta opção não atualiza nem remove nada. Se um aplicativo falhar, os
 demais continuam, e no final aparece um resumo. Precisa de internet.
 
+#### `2` › `3` Verificar / preparar WinGet
+
+**O que é:** as duas opções acima dependem do **WinGet**, o gerenciador de pacotes que
+acompanha o Windows. Esta opção verifica se ele está lá e funcionando — e, quando não
+está, tenta prepará-lo.
+
+**Quando usar:** quando aparecer o aviso de que o WinGet está indisponível, ou antes
+de preparar uma máquina, para conferir.
+
+**O que esperar:** primeiro um diagnóstico na tela — versão do Windows, App Installer,
+versão do WinGet, fontes, Microsoft Store e política. Depois, conforme o caso:
+
+| Situação | O que a ferramenta faz |
+|---|---|
+| Já está funcionando | Diz isso e não mexe em nada |
+| Instalado, mas sem funcionar | Registra o pacote de novo, **sem baixar nada** |
+| Ausente | Abre a página oficial do App Installer na Microsoft Store, para você concluir |
+| Desatualizado | Abre a tela de atualizações da Microsoft Store |
+| Bloqueado pela empresa | Informa e para. Nenhuma política é alterada |
+| Windows antigo demais | Informa o requisito e para |
+
+Ao final, a ferramenta **confere de verdade** se o WinGet passou a funcionar, e só
+então oferece voltar para instalar ou atualizar aplicativos.
+
+> Nada é baixado de sites de terceiros, e nenhuma proteção do Windows é desativada
+> para isso funcionar.
+
 ---
 
 ### `3` Rede, Internet e Conectividade

@@ -190,7 +190,7 @@ mas **não remove funcionalidades**.
 |---|---|---|
 | Windows PowerShell 5.1 | Diagnóstico completo e relatórios nos quatro formatos | Rotinas Batch assumem |
 | PowerShell 7 | O mesmo, com melhor desempenho | O PowerShell 5.1 é utilizado |
-| Winget | Atualização de programas instalados e instalação do catálogo de aplicativos | A opção informa indisponibilidade |
+| Winget | Atualização de programas instalados e instalação do catálogo de aplicativos | O menu de aplicativos diagnostica e prepara o App Installer |
 | PnPUtil | Backup e inventário de drivers | A opção informa indisponibilidade |
 
 > [!TIP]
@@ -347,6 +347,7 @@ flowchart LR
     MP --> M9["<b>9</b> · Ambiente de Execução<br/><i>2 opções — somente leitura</i>"]
 
     M2 --> AP["<b>2 › 2</b> · Instalar aplicativos<br/><i>6 categorias — instala só o ausente</i>"]
+    M2 --> WG["<b>2 › 3</b> · Verificar / preparar WinGet<br/><i>diagnóstico e recuperação oficial</i>"]
 
     M4 --> DB["<b>4 › 9</b> · Desbloat do Windows<br/><i>9 opções — 3 níveis, 1 simula</i>"]
     DB --> BK["<b>4 › 9 › 9</b> · Backup e reversão<br/><i>4 opções</i>"]
@@ -355,7 +356,7 @@ flowchart LR
     classDef altera fill:#FFF4CE,stroke:#9D5D00,color:#3B2300
     classDef critico fill:#FDE7E9,stroke:#A4262C,color:#6E0811
     class M8,M9 leitura
-    class M2,M3,M5,AP,DB,BK altera
+    class M2,M3,M5,AP,WG,DB,BK altera
     class M1,M4,M6 critico
     class M7 leitura
 ```

@@ -8,7 +8,7 @@ Para quem vai ler, manter ou estender o código.
 
 ## Esqueleto de um módulo
 
-Todos os dezessete módulos de domínio seguem exatamente esta estrutura:
+Todos os vinte módulos de domínio seguem exatamente esta estrutura:
 
 ```powershell
 <#
@@ -94,6 +94,7 @@ que `Report.ps1` possa agregá-las.
 ### Testes de ambiente
 
 `Test-Administrator`, `Test-PowerShell`, `Test-WindowsVersion`, `Test-Winget`,
+`Test-WingetAvailability` (estado estruturado do ambiente WinGet),
 `Test-WMI`, `Test-CIM`, `Test-TPM`, `Test-SecureBoot`, `Test-BitLocker`,
 `Test-Internet`, `Get-CompartDiskCapabilities`.
 

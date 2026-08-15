@@ -135,6 +135,41 @@ function Write-CompartDiskKeyValue {
 }
 
 # ------------------------------------------------------------------------------
+# Interacao numerica (compartilhada pelos modulos com menu proprio)
+# ------------------------------------------------------------------------------
+function Test-CompartDiskInterativo {
+    <# Ha um operador para responder? Em execucao desassistida (-Quiet ou entrada
+       redirecionada) nenhum modulo pode parar esperando tecla. #>
+    [CmdletBinding()] param([switch]$Quiet)
+    if ($Quiet) { return $false }
+    try { if ([Console]::IsInputRedirected) { return $false } } catch { }
+    return $true
+}
+
+function Read-CompartDiskOpcao {
+    <# Le uma opcao NUMERICA entre 0 e $Maximo. Letras sao recusadas: os menus da
+       ferramenta sao operados so por numeros. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$Maximo, [string]$Rotulo = '  Escolha')
+    while ($true) {
+        $entrada = Read-Host $Rotulo
+        if ($null -eq $entrada) { return 0 }
+        $entrada = $entrada.Trim()
+        if ($entrada -eq '') { continue }
+        if ($entrada.Length -gt 3 -or $entrada -notmatch '^\d+$') {
+            Write-Color '  Use apenas numeros.' -Color Yellow
+            continue
+        }
+        $n = [int]$entrada
+        if ($n -gt $Maximo) {
+            Write-Color ("  Opcao invalida. Informe um numero de 0 a {0}." -f $Maximo) -Color Yellow
+            continue
+        }
+        return $n
+    }
+}
+
+# ------------------------------------------------------------------------------
 # Write-Log : motor central de logs (arquivo + console)
 # ------------------------------------------------------------------------------
 function Write-Log {
@@ -533,6 +568,193 @@ function Test-Winget {
     } catch { return [pscustomobject]@{ Available = $false; Version = $null; Path = $null } }
 }
 
+function Test-WingetAvailability {
+    <# Estado ESTRUTURADO do ambiente WinGet - dono unico da decisao.
+       O modulo de aplicativos, o de preparacao e o Launcher leem daqui, para que
+       nao existam tres diagnosticos diferentes discordando entre si.
+
+       State: Available | Outdated | Broken | Missing | Blocked | Unsupported | Unknown
+
+       "winget.exe nao encontrado" NAO e prova de que o App Installer nao existe:
+       o executavel e um alias de execucao que some quando o pacote perde o
+       registro no perfil, com o pacote ainda instalado. Por isso o pacote AppX e
+       consultado antes de qualquer conclusao.
+
+       Nunca lanca: um diagnostico que derruba o modulo nao serve para nada. #>
+    [CmdletBinding()]
+    param([switch]$Refresh, [switch]$Completo, [switch]$TestarConectividade)
+
+    if ($Global:CompartDisk.WingetState -and -not $Refresh) { return $Global:CompartDisk.WingetState }
+
+    $r = [pscustomobject]@{
+        State               = 'Unknown'
+        Reason              = ''
+        Executable          = $null
+        Version             = $null
+        VersionText         = $null
+        AppInstaller        = 'Nao verificado'
+        AppInstallerVersion = $null
+        PackageStatus       = $null
+        Registered          = $false
+        Provisioned         = $false
+        StoreAvailable      = $null
+        PolicyBlocked       = $false
+        PolicyDetail        = ''
+        SourcesOk           = $null
+        Online              = $null
+        Supported           = $true
+        Admin               = $false
+        Windows             = $null
+        StoreProductId      = '9NBLGGH4NNS1'
+        PackageFamily       = 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe'
+        PackageName         = 'Microsoft.DesktopAppInstaller'
+        MinBuild            = 17763
+        Detail              = @()
+    }
+    $notas = New-Object System.Collections.ArrayList
+    $anota = { param($t) [void]$notas.Add($t) }
+
+    try { $r.Admin = Test-Administrator } catch { }
+
+    # --- 1. sistema operacional --------------------------------------------
+    try { $r.Windows = Test-WindowsVersion } catch { }
+    if ($r.Windows -and $r.Windows.Build -gt 0 -and $r.Windows.Build -lt $r.MinBuild) {
+        $r.Supported = $false
+        $r.State     = 'Unsupported'
+        $r.Reason    = ('O App Installer exige Windows 10 versao 1809 (build {0}) ou superior; esta maquina esta na build {1}.' -f $r.MinBuild, $r.Windows.Build)
+        & $anota $r.Reason
+        $r.Detail = @($notas)
+        $Global:CompartDisk.WingetState = $r
+        return $r
+    }
+
+    # --- 2. politica --------------------------------------------------------
+    # Somente leitura. O COMPARTDISK nunca altera politica para habilitar o WinGet.
+    $polApp = Get-CompartDiskRegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppInstaller' 'EnableAppInstaller'
+    $polCli = Get-CompartDiskRegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppInstaller' 'EnableWindowsPackageManagerCommandLineInterfaces'
+    if ($null -ne $polApp -and [int]$polApp -eq 0) {
+        $r.PolicyBlocked = $true
+        $r.PolicyDetail  = 'Politica "Enable App Installer" desativada (EnableAppInstaller=0).'
+    } elseif ($null -ne $polCli -and [int]$polCli -eq 0) {
+        $r.PolicyBlocked = $true
+        $r.PolicyDetail  = 'Politica "Enable App Installer Command Line Interfaces" desativada.'
+    }
+    if ($r.PolicyBlocked) { & $anota $r.PolicyDetail }
+
+    # --- 3. pacote AppX do App Installer ------------------------------------
+    if (Test-CompartDiskCommand 'Get-AppxPackage') { $null = $true } else { $null = Import-CompartDiskModule 'Appx' }
+    if (Test-CompartDiskCommand 'Get-AppxPackage') {
+        try {
+            $pkg = Get-AppxPackage -Name $r.PackageName -ErrorAction Stop | Select-Object -First 1
+            if ($pkg) {
+                $r.Registered          = $true
+                $r.AppInstaller        = 'Presente'
+                $r.AppInstallerVersion = [string]$pkg.Version
+                try { $r.PackageStatus = [string]$pkg.Status } catch { }
+                & $anota ('App Installer registrado no perfil (versao {0}).' -f $r.AppInstallerVersion)
+            } else {
+                $r.AppInstaller = 'Ausente'
+                & $anota 'App Installer nao esta registrado para este usuario.'
+            }
+        } catch {
+            $r.AppInstaller = 'Nao verificavel'
+            & $anota ('Consulta ao pacote AppX falhou: {0}' -f $_.Exception.Message)
+        }
+    } else {
+        $r.AppInstaller = 'Nao verificavel'
+        & $anota 'Cmdlets AppX indisponiveis neste motor: o estado do pacote nao pode ser afirmado.'
+    }
+
+    # Provisionamento na imagem (exige privilegio) - permite reparo sem download.
+    if ($Completo -and $r.Admin -and (Test-CompartDiskCommand 'Get-AppxProvisionedPackage')) {
+        try {
+            $prov = Get-AppxProvisionedPackage -Online -ErrorAction Stop |
+                    Where-Object { $_.DisplayName -eq $r.PackageName } | Select-Object -First 1
+            if ($prov) { $r.Provisioned = $true; & $anota 'Pacote provisionado na imagem do Windows.' }
+        } catch { & $anota ('Consulta de pacotes provisionados falhou: {0}' -f $_.Exception.Message) }
+    }
+
+    # --- 4. Microsoft Store -------------------------------------------------
+    $lojaRemovida = Get-CompartDiskRegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore' 'RemoveWindowsStore'
+    if ($null -ne $lojaRemovida -and [int]$lojaRemovida -eq 1) {
+        $r.StoreAvailable = $false
+        & $anota 'Microsoft Store removida por politica (RemoveWindowsStore=1).'
+    } elseif (Test-CompartDiskCommand 'Get-AppxPackage') {
+        try { $r.StoreAvailable = [bool](Get-AppxPackage -Name 'Microsoft.WindowsStore' -ErrorAction Stop) } catch { $r.StoreAvailable = $null }
+    }
+
+    # --- 5. executavel ------------------------------------------------------
+    $w = Test-Winget          # reaproveita a deteccao ja existente, sem duplica-la
+    if ($w.Path) { $r.Executable = $w.Path }
+    if (-not $r.Executable -and -not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        # Alias de execucao do App Installer. E o caminho que some quando o
+        # registro do pacote se perde, com o pacote ainda instalado.
+        try {
+            $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winget.exe'
+            if (Test-Path -LiteralPath $alias) { $r.Executable = $alias }
+        } catch { }
+    }
+    if ($w.Available) {
+        $r.VersionText = $w.Version
+        $m = [regex]::Match([string]$w.Version, '(\d+)\.(\d+)(\.\d+)*')
+        if ($m.Success) { try { $r.Version = [version]$m.Value } catch { } }
+    }
+
+    # --- 6. conclusao -------------------------------------------------------
+    if ($w.Available) {
+        # Executou "--version" com sucesso. Confirma com "--info", que exercita
+        # a inicializacao completa do gerenciador.
+        $infoOk = $true
+        try {
+            $info = Invoke-NativeCommand -FilePath $r.Executable -Arguments @('--info') -TimeoutSeconds 60
+            $infoOk = ($info.ExitCode -eq 0)
+            if (-not $infoOk) { & $anota ('"winget --info" retornou codigo {0}.' -f $info.ExitCode) }
+        } catch { $infoOk = $false; & $anota ('"winget --info" falhou: {0}' -f $_.Exception.Message) }
+
+        if (-not $infoOk) {
+            $r.State  = 'Broken'
+            $r.Reason = 'O winget responde a --version mas falha ao inicializar (--info).'
+        } elseif ($r.Version -and $r.Version -lt [version]'1.4') {
+            $r.State  = 'Outdated'
+            $r.Reason = ('Versao {0} e anterior a 1.4: parte dos parametros usados pelo COMPARTDISK nao existe nela.' -f $r.VersionText)
+        } else {
+            $r.State  = 'Available'
+            $r.Reason = 'WinGet disponivel e funcional.'
+        }
+    } elseif ($r.PolicyBlocked) {
+        $r.State  = 'Blocked'
+        $r.Reason = $r.PolicyDetail
+    } elseif ($r.Registered) {
+        $r.State  = 'Broken'
+        $r.Reason = 'O App Installer esta instalado, mas o winget nao executa. O registro do pacote no perfil pode ter se perdido.'
+    } elseif ($r.AppInstaller -eq 'Nao verificavel' -and -not $r.Executable) {
+        $r.State  = 'Unknown'
+        $r.Reason = 'Nao foi possivel confirmar o estado do App Installer neste ambiente.'
+    } else {
+        $r.State  = 'Missing'
+        $r.Reason = 'O App Installer (que fornece o WinGet) nao esta disponivel para este usuario.'
+    }
+
+    # --- 7. fontes e conectividade -----------------------------------------
+    if ($Completo -and ($r.State -eq 'Available' -or $r.State -eq 'Outdated')) {
+        try {
+            $src = Invoke-NativeCommand -FilePath $r.Executable -Arguments @('source', 'list', '--accept-source-agreements') -TimeoutSeconds 60
+            $r.SourcesOk = ($src.ExitCode -eq 0 -and $src.StdOut -match '(?im)^\s*winget\s')
+            if (-not $r.SourcesOk) { & $anota 'A fonte oficial "winget" nao respondeu a consulta local de fontes.' }
+        } catch { $r.SourcesOk = $false; & $anota ('Consulta de fontes falhou: {0}' -f $_.Exception.Message) }
+    }
+    if ($TestarConectividade) {
+        try { $r.Online = (Test-Internet).Online } catch { $r.Online = $null }
+    }
+
+    if (-not $r.Reason) { $r.Reason = 'Estado indeterminado.' }
+    & $anota ('Resultado: {0} - {1}' -f $r.State, $r.Reason)
+    $r.Detail = @($notas)
+
+    $Global:CompartDisk.WingetState = $r
+    return $r
+}
+
 function Test-WMI {
     [CmdletBinding()] param()
     try {
@@ -782,6 +1004,10 @@ function Get-CompartDiskCapabilities {
     $c.CIM        = Test-CIM
     $c.WMI        = Test-WMI
     $c.Winget     = Test-Winget
+    # Estado estruturado do ambiente WinGet (Available/Broken/Missing/...). O campo
+    # acima permanece como estava: quem so precisa saber "existe ou nao" continua
+    # lendo $c.Winget.Available.
+    $c.WingetEnv  = Test-WingetAvailability
     $c.Defender   = (Test-CompartDiskCommand 'Get-MpComputerStatus') -or (Import-CompartDiskModule 'Defender')
     $c.BitLocker  = (Import-CompartDiskModule 'BitLocker')
     $c.Storage    = (Test-CompartDiskCommand 'Get-PhysicalDisk')

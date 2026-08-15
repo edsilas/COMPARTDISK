@@ -28,6 +28,7 @@ veja o [Manual do Usuário](MANUAL-DO-USUARIO.md).
 | `Bitlocker.ps1` | `Status` `Report` `Keys` |
 | `Explorer.ps1` | `Restart` `ClearCache` `Spooler` `ResetView` |
 | `Apps.ps1` | `Menu` `Install` `InstallCategory` `InstallAll` `List` |
+| `Winget.ps1` | `Menu` `Status` `Prepare` `Repair` |
 | `Audit.ps1` | `Full` `Quick` `Events` `Software` `License` |
 | `Report.ps1` | `Build` `Consolidate` `Open` |
 
@@ -259,6 +260,38 @@ Em automação, `-Action Install -Id <id>`, `-Action InstallCategory -Category <
 `-Action InstallAll` e `-Action List` operam sem prompt. O alvo precisa existir no
 catálogo interno: identificadores arbitrários são recusados antes de qualquer chamada
 ao Winget.
+
+### Quando o WinGet não está disponível
+
+`Test-WingetAvailability`, no `Core.ps1`, é o **dono único** do diagnóstico: devolve um
+estado estruturado — `Available`, `Outdated`, `Broken`, `Missing`, `Blocked`,
+`Unsupported` ou `Unknown` — junto com sistema, build, arquitetura, estado do pacote
+App Installer, versão, fonte, Microsoft Store, política e privilégio. Ausência de
+`winget.exe` **não** é tratada como prova de que o App Installer não existe: o pacote
+AppX é consultado antes de qualquer conclusão, porque o executável é um alias de
+execução que some quando o registro do pacote se perde.
+
+`Winget.ps1` age sobre esse estado, usando **apenas mecanismos oficiais**:
+
+| Situação | O que é feito |
+|---|---|
+| Instalado, mas sem `winget` | Registra novamente o pacote local (`Add-AppxPackage -Register`). Sem download |
+| Ausente | Encaminha para a página oficial do App Installer na Microsoft Store |
+| Desatualizado | Encaminha para a tela oficial de atualizações da Store |
+| Bloqueado por política | Informa e para. Nenhuma política é alterada |
+| Windows incompatível | Informa o requisito e para, sem tentar instalar |
+
+Nada é baixado por fora do Windows, não há instalador próprio do WinGet e nenhuma
+proteção do sistema é desativada para viabilizar a instalação.
+
+Depois de agir, `Test-WingetHealth` valida o resultado em seis etapas — pacote,
+executável, versão, `--info`, fontes e uma consulta de teste. Sucesso só é declarado
+quando todas passam.
+
+Em automação, `-Action Status` diagnostica, `-Action Repair` tenta apenas o reparo
+local e `-Action Prepare` faz o ciclo completo. Em execução desassistida o módulo
+**não abre a Microsoft Store** — uma janela esperando o operador não serve para nada
+em máquina sem operador; nesse caso a limitação é declarada e nada é alterado.
 
 ---
 

@@ -19,6 +19,9 @@ Sem alterações pendentes.
 existia — mais a manutenção acumulada desde a 1.3.1. Publicação em
 [Releases](https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.0).
 
+A mesma versão traz ainda o **diagnóstico e a preparação do WinGet**, para o caso de
+o gerenciador não estar disponível na máquina.
+
 Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1`, `Debloat.ps1`,
 `Repair.ps1`, `Smart.ps1`, `Network.ps1`, `Users.ps1`, `Hardware.ps1`,
 `Collectors.ps1`, `Report.ps1`, `Core.ps1`, `Cleanup.ps1`, `Defender.ps1` e
@@ -57,6 +60,8 @@ listas de proteção permanecem exatamente como estavam.
 
 ### Corrigido
 
+- **`docs/ESTRUTURA.md` e `docs/MANUAL-TECNICO.md` diziam "dezessete módulos de
+  domínio".** A contagem estava defasada mesmo antes desta entrega; são vinte.
 - **`Network.ps1` dava a camada de endereço IPv4 como saudável quando todos os
   endereços eram APIPA.** A regra era `$ips.Count -gt 0 -and -not ($ips.Count -eq 1
   -and $apipa)`, que só reconhecia APIPA quando havia **exatamente um** endereço no
@@ -619,6 +624,45 @@ sendo aceitos.
 > registro/serviço. Nenhuma exclusão é removida e nenhuma política é alterada.
 
 ### Adicionado
+
+#### Diagnóstico e preparação do WinGet (novo módulo `Winget.ps1`)
+
+Quando o WinGet não está disponível, a ferramenta deixa de apenas informar o erro e
+passa a oferecer diagnóstico e recuperação — **por mecanismos oficiais do Windows**.
+
+- **Nova opção `[3] Verificar / preparar WinGet`** no menu Aplicativos, ao lado de
+  atualizar e instalar. As duas opções existentes não mudaram de tecla nem de
+  comportamento.
+- **`Test-WingetAvailability` no `Core.ps1`** passa a ser o dono único do diagnóstico,
+  devolvendo estado estruturado — `Available`, `Outdated`, `Broken`, `Missing`,
+  `Blocked`, `Unsupported` ou `Unknown` — em vez de um `$true/$false`. O `Test-Winget`
+  existente permanece intacto, com o mesmo contrato.
+- **Ausência de `winget.exe` deixou de ser tratada como prova de que o App Installer
+  não existe.** O pacote AppX é consultado antes de qualquer conclusão: o executável é
+  um alias de execução que some quando o registro do pacote se perde no perfil, com o
+  pacote ainda instalado. É justamente o caso que a opção resolve sem baixar nada.
+- **Recuperação em duas vias oficiais:** primeiro o reparo local, registrando de novo
+  o pacote existente (`Add-AppxPackage -Register`), sem download; e, se não bastar, a
+  página oficial do App Installer na Microsoft Store
+  (`ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1`).
+- **Validação real depois de agir:** `Test-WingetHealth` confere pacote, executável,
+  versão, `--info`, fontes e uma consulta de teste. Sucesso só é declarado quando as
+  seis etapas passam — terminar sem erro não é aceito como prova.
+- **Reintegração ao fluxo:** com o WinGet pronto, a tela oferece voltar direto para
+  aplicativos, e o Launcher reavalia o ambiente na mesma sessão, de modo que `[1]` e
+  `[2]` deixam de recusar o WinGet sem exigir reinício da ferramenta.
+- **Política e compatibilidade são respeitadas, não contornadas.** Windows anterior à
+  build 17763, `EnableAppInstaller=0`, `EnableWindowsPackageManagerCommandLineInterfaces=0`
+  e Store removida por política são detectados, informados e **encerram a operação**.
+  Nenhuma política, nem o Defender, o SmartScreen ou o firewall são alterados.
+- **Determinismo em execução desassistida:** em modo silencioso o módulo não abre a
+  Microsoft Store — uma janela esperando operador não serve para máquina sem operador.
+  Tenta apenas o reparo local, declara a limitação e não altera mais nada.
+- **Fallback Batch `:FB_WINGET_*`** diagnostica o que é possível em Batch e abre a
+  página da Store, mas **declara** que registrar o pacote depende do PowerShell, em vez
+  de fingir que reparou.
+- `Read-CompartDiskOpcao` e `Test-CompartDiskInterativo` passam ao `Core.ps1`: os menus
+  numéricos de `Apps.ps1` e `Winget.ps1` usam a mesma implementação, sem duplicação.
 
 #### Instalação de aplicativos (novo módulo `Apps.ps1`)
 

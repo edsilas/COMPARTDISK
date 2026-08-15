@@ -758,32 +758,9 @@ function Add-AppsRelatorio {
 # ------------------------------------------------------------------------------
 # INTERFACE - somente numerica
 # ------------------------------------------------------------------------------
-function Test-ModoInterativo {
-    if ($Quiet) { return $false }
-    try { if ([Console]::IsInputRedirected) { return $false } } catch { }
-    return $true
-}
-
-function Read-OpcaoNumerica {
-    <# Le uma opcao NUMERICA entre 0 e $Maximo. Letras sao recusadas. #>
-    [CmdletBinding()] param([Parameter(Mandatory)][int]$Maximo)
-    while ($true) {
-        $entrada = Read-Host '  Escolha'
-        if ($null -eq $entrada) { return 0 }
-        $entrada = $entrada.Trim()
-        if ($entrada -eq '') { continue }
-        if ($entrada.Length -gt 3 -or $entrada -notmatch '^\d+$') {
-            Write-Color '  Use apenas numeros.' -Color Yellow
-            continue
-        }
-        $n = [int]$entrada
-        if ($n -gt $Maximo) {
-            Write-Color ("  Opcao invalida. Informe um numero de 0 a {0}." -f $Maximo) -Color Yellow
-            continue
-        }
-        return $n
-    }
-}
+# Entrada numerica e deteccao de modo interativo vivem no Core.ps1: os menus
+# deste modulo e os de Winget.ps1 usam exatamente a mesma implementacao.
+function Test-ModoInterativo { return (Test-CompartDiskInterativo -Quiet:$Quiet) }
 
 function Write-AppsCabecalho {
     param([string]$Titulo)
@@ -794,17 +771,27 @@ function Write-AppsCabecalho {
 }
 
 function Show-WingetIndisponivel {
+    <# O estado detalhado vem do Core (Test-WingetAvailability), o mesmo que a
+       area de preparacao usa: as duas telas nunca discordam sobre o diagnostico. #>
+    $amb = $null
+    try { $amb = Test-WingetAvailability } catch { }
+
     Write-AppsCabecalho 'WINGET INDISPONIVEL'
     Write-Color '  O Windows nao possui o WinGet disponivel neste ambiente.' -Color Yellow
     Write-Color '  A instalacao de aplicativos nao pode continuar.' -Color Yellow
+    if ($amb -and $amb.Reason) {
+        Write-Color ''
+        Write-Color ("  Estado detectado: {0}" -f $amb.State) -Color DarkGray
+        Write-Color ("  {0}" -f $amb.Reason) -Color DarkGray
+    }
     Write-Color ''
-    Write-Color '  O COMPARTDISK nao instala o WinGet automaticamente.' -Color DarkGray
-    Write-Color '  Ele acompanha o App Installer da Microsoft Store no Windows 10 1809+ e no Windows 11.' -Color DarkGray
+    Write-Color '  No menu Aplicativos, a opcao [3] Verificar / preparar WinGet diagnostica o' -Color Gray
+    Write-Color '  ambiente e prepara o App Installer por metodos oficiais do Windows.' -Color Gray
     Write-Color ''
     Write-Color '  [1] Voltar' -Color Cyan
     Write-Color '  [0] Menu principal de aplicativos' -Color DarkGray
     Write-Color ''
-    if (Test-ModoInterativo) { [void](Read-OpcaoNumerica -Maximo 1) }
+    if (Test-ModoInterativo) { [void](Read-CompartDiskOpcao -Maximo 1) }
 }
 
 function Show-AppsAposLote {
@@ -814,7 +801,7 @@ function Show-AppsAposLote {
     Write-Color '  [0] Menu principal de aplicativos' -Color DarkGray
     Write-Color ''
     if (-not (Test-ModoInterativo)) { return 0 }
-    return (Read-OpcaoNumerica -Maximo 1)
+    return (Read-CompartDiskOpcao -Maximo 1)
 }
 
 function Show-DetalheApp {
@@ -840,7 +827,7 @@ function Show-MenuCategoria {
             Write-Color '  [0] Voltar' -Color DarkGray
             Write-Color ''
             if (-not (Test-ModoInterativo)) { return }
-            [void](Read-OpcaoNumerica -Maximo 0)
+            [void](Read-CompartDiskOpcao -Maximo 0)
             return
         }
 
@@ -853,7 +840,7 @@ function Show-MenuCategoria {
         Write-Color ''
 
         if (-not (Test-ModoInterativo)) { return }
-        $opc = Read-OpcaoNumerica -Maximo ($apps.Count + 1)
+        $opc = Read-CompartDiskOpcao -Maximo ($apps.Count + 1)
         if ($opc -eq 0) { return }
 
         if ($opc -eq ($apps.Count + 1)) {
@@ -931,7 +918,7 @@ function Invoke-LoteCategoria {
         Write-Color ''
         Write-Color '  [0] Voltar' -Color DarkGray
         Write-Color ''
-        if (Test-ModoInterativo) { [void](Read-OpcaoNumerica -Maximo 0) }
+        if (Test-ModoInterativo) { [void](Read-CompartDiskOpcao -Maximo 0) }
         return 1
     }
 
@@ -942,7 +929,7 @@ function Invoke-LoteCategoria {
     Write-Color ''
 
     if (Test-ModoInterativo) {
-        $opc = Read-OpcaoNumerica -Maximo 1
+        $opc = Read-CompartDiskOpcao -Maximo 1
         if ($opc -ne 1) {
             Write-Log INFO 'Instalacao em lote cancelada pelo operador. Nada foi alterado.'
             return 1
@@ -1015,7 +1002,7 @@ function Show-MenuInstalar {
         Write-Color ''
 
         if (-not (Test-ModoInterativo)) { return }
-        $opc = Read-OpcaoNumerica -Maximo $nVer
+        $opc = Read-CompartDiskOpcao -Maximo $nVer
         if ($opc -eq 0) { return }
         if ($opc -eq $nTodos) { Invoke-InstalarTodos; continue }
         if ($opc -eq $nVer)   { Show-AppsInstalados; continue }
@@ -1049,7 +1036,7 @@ function Invoke-InstalarTodos {
     Write-Color ''
 
     if (Test-ModoInterativo) {
-        $opc = Read-OpcaoNumerica -Maximo 1
+        $opc = Read-CompartDiskOpcao -Maximo 1
         if ($opc -ne 1) {
             Write-Log INFO 'Instalacao completa cancelada pelo operador. Nada foi alterado.'
             return
@@ -1109,7 +1096,7 @@ function Show-AppsInstalados {
     Write-Color ''
     Write-Color '  [0] Voltar' -Color DarkGray
     Write-Color ''
-    if (Test-ModoInterativo) { [void](Read-OpcaoNumerica -Maximo 0) }
+    if (Test-ModoInterativo) { [void](Read-CompartDiskOpcao -Maximo 0) }
 }
 
 function Set-ResultadoModulo {
@@ -1133,8 +1120,17 @@ try {
 
     $ctx = Get-WingetContexto
     if (-not $ctx.Available) {
-        Write-Log ERR 'Winget ausente ou indisponivel neste sistema. A instalacao de aplicativos nao pode continuar.'
-        Add-CompartDiskFinding -Severity WARN -Area 'Aplicativos' -Message 'Winget indisponivel: instalacao de aplicativos nao executada.' -Recommendation 'Instalar o App Installer da Microsoft Store (Windows 10 1809 ou superior).'
+        # Diagnostico estruturado do Core: distingue ausente, quebrado, bloqueado
+        # por politica e Windows incompativel - o log deixa de dizer so "ausente".
+        $amb = $null
+        try { $amb = Test-WingetAvailability } catch { }
+        if ($amb) {
+            Write-Log ERR ('Winget indisponivel ({0}). {1}' -f $amb.State, $amb.Reason)
+        } else {
+            Write-Log ERR 'Winget ausente ou indisponivel neste sistema. A instalacao de aplicativos nao pode continuar.'
+        }
+        Write-Log WARN 'Use a opcao [3] Verificar / preparar WinGet, no menu Aplicativos.'
+        Add-CompartDiskFinding -Severity WARN -Area 'Aplicativos' -Message ('Winget indisponivel ({0}): instalacao de aplicativos nao executada.' -f $(if ($amb) { $amb.State } else { 'desconhecido' })) -Recommendation 'Usar a opcao [3] Verificar / preparar WinGet no menu de aplicativos.'
         if (Test-ModoInterativo) { Show-WingetIndisponivel }
         $codigo = Stop-CompartDiskModule -Result 'UNSUPPORTED' -Message 'Winget indisponivel' -Quiet:$Quiet
         exit $codigo

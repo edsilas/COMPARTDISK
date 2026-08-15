@@ -479,16 +479,18 @@ echo %C_CINZA%  ----------------------------------------------------------------
 echo.
 echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Atualizar aplicativos (Winget)%C_RESET%
 echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Instalar aplicativos (catalogo de suporte tecnico)%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Verificar / preparar WinGet%C_RESET%
 echo.
 echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
 echo.
 echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
-if "%HAS_WINGET%"=="0" echo   %C_AMARELO%Winget indisponivel neste sistema: as duas opcoes informarao a indisponibilidade.%C_RESET%
+if "%HAS_WINGET%"=="0" echo   %C_AMARELO%Winget indisponivel neste sistema: use a opcao [3] para diagnosticar e preparar.%C_RESET%
 echo   %C_CINZA%[1] atualiza o que ja esta instalado. [2] instala somente o que estiver ausente.%C_RESET%
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
-choice /c 120 /n /m "  Opcao: "
-if errorlevel 3 goto MENU_PRINCIPAL
+choice /c 1230 /n /m "  Opcao: "
+if errorlevel 4 goto MENU_PRINCIPAL
+if errorlevel 3 goto MOD_WINGET_PREP_MENU
 if errorlevel 2 goto MOD_APPS_MENU
 if errorlevel 1 goto MOD_WINGET_MENU
 :: Rede de seguranca: CHOICE interrompido (Ctrl+C) retorna 0
@@ -955,6 +957,7 @@ pause & goto MENU_APLICATIVOS
 :MOD_WINGET
 if "%HAS_WINGET%"=="0" (
     call :LOG_MSG "ERR" "Winget ausente ou corrompido neste sistema."
+    call :LOG_MSG "WARN" "Use a opcao [3] Verificar / preparar WinGet para diagnosticar e preparar o ambiente."
     goto :EOF
 )
 call :LOG_MSG "INFO" "Testando fontes e conectividade com repositorios Winget..."
@@ -983,6 +986,37 @@ pause & goto MENU_APLICATIVOS
 set "PS_ARGS=-Action Menu"
 call :RUN_PS "Apps.ps1"
 if errorlevel 9000 goto FB_APPS_MENU
+goto :EOF
+
+:: ------------------------------------------------------------------------------
+:: PREPARACAO DO WINGET (diagnostico e recuperacao por meios oficiais)
+:: O modulo usa cmdlets AppX e a Microsoft Store. Sem PowerShell, o fallback
+:: Batch faz o que e possivel em Batch e diz claramente o que nao e.
+:: ------------------------------------------------------------------------------
+:MOD_WINGET_PREP_MENU
+cls
+call :MOD_WINGET_PREP
+pause & goto MENU_APLICATIVOS
+
+:MOD_WINGET_PREP
+set "PS_ARGS=-Action Menu"
+call :RUN_PS "Winget.ps1"
+if errorlevel 9000 goto FB_WINGET_PREP
+:: Depois de preparar, a deteccao de ambiente do arranque fica desatualizada:
+:: reavalia para que [1] e [2] deixem de recusar o Winget na mesma sessao.
+call :REDETECTAR_WINGET
+goto :EOF
+
+:REDETECTAR_WINGET
+:: Mesma verificacao do pre-flight (estagio 11), reaplicada sob demanda.
+set "HAS_WINGET=0"
+where winget >nul 2>&1
+if errorlevel 1 goto REDETECTAR_WINGET_FIM
+winget --info >nul 2>&1
+if not errorlevel 1 set "HAS_WINGET=1"
+:REDETECTAR_WINGET_FIM
+if "%HAS_WINGET%"=="1" call :LOG_MSG "OK" "Winget disponivel nesta sessao."
+if "%HAS_WINGET%"=="0" call :LOG_MSG "WARN" "Winget continua indisponivel nesta sessao."
 goto :EOF
 
 :: ------------------------------------------------------------------------------
@@ -2509,6 +2543,93 @@ echo   %C_CINZA%Ja instalados   %C_RESET%%C_TEXTO%%FB_APPS_JA%%C_RESET%
 echo   %C_CINZA%Nao disponiveis %C_RESET%%C_TEXTO%%FB_APPS_ND%%C_RESET%
 echo   %C_CINZA%Falhas          %C_RESET%%C_TEXTO%%FB_APPS_ERR%%C_RESET%
 call :LOG_MSG "INFO" "[Batch] Instalados: %FB_APPS_OK% | Ja instalados: %FB_APPS_JA% | Nao disponiveis: %FB_APPS_ND% | Falhas: %FB_APPS_ERR%"
+goto :EOF
+
+:: ------------------------------------------------------------------------------
+:: FALLBACK BATCH DA PREPARACAO DO WINGET
+::
+:: O que o Batch consegue fazer aqui: diagnosticar (presenca do executavel, do
+:: alias de execucao, resposta do proprio winget e politica de Store) e abrir a
+:: pagina oficial do App Installer na Microsoft Store.
+::
+:: O que ele NAO consegue: registrar de novo o pacote AppX. Isso depende dos
+:: cmdlets Appx do PowerShell, e dizer o contrario seria mentira. Nesse caso a
+:: rotina informa a limitacao em vez de fingir que reparou.
+:: ------------------------------------------------------------------------------
+:FB_WINGET_PREP
+call :LOG_MSG "INFO" "[Batch] Diagnostico do ambiente WinGet pela rotina de contingencia."
+
+:FB_WINGET_LOOP
+cls
+echo.
+echo   %C_TITULO%Verificar / Preparar WinGet%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION% - rotina Batch%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+
+set "FB_WG_EXE=0"
+where winget >nul 2>&1
+if not errorlevel 1 set "FB_WG_EXE=1"
+set "FB_WG_ALIAS=0"
+if exist "%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe" set "FB_WG_ALIAS=1"
+set "FB_WG_OK=0"
+if "%FB_WG_EXE%"=="1" winget --info >nul 2>&1
+if "%FB_WG_EXE%"=="1" if not errorlevel 1 set "FB_WG_OK=1"
+set "FB_WG_LOJA=1"
+reg query "HKLM\SOFTWARE\Policies\Microsoft\WindowsStore" /v RemoveWindowsStore 2>nul | find "0x1" >nul 2>&1
+if not errorlevel 1 set "FB_WG_LOJA=0"
+
+echo   %C_CINZA%winget.exe        %C_RESET%%C_TEXTO%%FB_WG_EXE%%C_RESET%   %C_CINZA%1=encontrado 0=ausente%C_RESET%
+echo   %C_CINZA%Alias de execucao %C_RESET%%C_TEXTO%%FB_WG_ALIAS%%C_RESET%   %C_CINZA%(WindowsApps)%C_RESET%
+echo   %C_CINZA%winget --info     %C_RESET%%C_TEXTO%%FB_WG_OK%%C_RESET%   %C_CINZA%1=responde 0=nao responde%C_RESET%
+echo   %C_CINZA%Microsoft Store   %C_RESET%%C_TEXTO%%FB_WG_LOJA%%C_RESET%   %C_CINZA%0=removida por politica%C_RESET%
+echo.
+if "%FB_WG_OK%"=="1" goto FB_WINGET_PRONTO
+if "%FB_WG_LOJA%"=="0" goto FB_WINGET_BLOQUEADO
+
+echo   %C_AMARELO%WinGet nao esta funcional neste ambiente.%C_RESET%
+echo.
+echo   %C_TEXTO%Sem PowerShell, esta rotina nao pode registrar novamente o pacote do%C_RESET%
+echo   %C_TEXTO%App Installer: essa operacao depende dos cmdlets Appx.%C_RESET%
+echo   %C_TEXTO%O caminho disponivel aqui e a pagina oficial na Microsoft Store.%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Abrir o App Installer na Microsoft Store%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Verificar novamente%C_RESET%
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+choice /c 120 /n /m "  Opcao: "
+if errorlevel 3 goto :EOF
+if errorlevel 2 goto FB_WINGET_LOOP
+call :LOG_MSG "INFO" "Abrindo a pagina oficial do App Installer na Microsoft Store..."
+start "" "ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1"
+echo.
+echo   %C_TEXTO%Conclua a instalacao na janela da Microsoft Store e escolha%C_RESET%
+echo   %C_TEXTO%"Verificar novamente" nesta tela.%C_RESET%
+echo.
+pause
+goto FB_WINGET_LOOP
+
+:FB_WINGET_PRONTO
+call :LOG_MSG "OK" "WinGet disponivel e respondendo neste sistema."
+set "HAS_WINGET=1"
+echo.
+echo   %C_TEXTO%As opcoes [1] Atualizar e [2] Instalar aplicativos ja podem ser usadas.%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+choice /c 0 /n /m "  Opcao: "
+goto :EOF
+
+:FB_WINGET_BLOQUEADO
+call :LOG_MSG "WARN" "Microsoft Store removida por politica: a preparacao do WinGet nao pode continuar por esta via."
+echo.
+echo   %C_AMARELO%A politica deste computador removeu a Microsoft Store.%C_RESET%
+echo   %C_TEXTO%Contate o administrador responsavel. Nenhuma politica foi alterada.%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+choice /c 0 /n /m "  Opcao: "
 goto :EOF
 
 :: --- catalogo do fallback (uma linha por aplicativo, uma rotina por categoria)
