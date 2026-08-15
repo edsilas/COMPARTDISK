@@ -2377,6 +2377,8 @@ echo   %C_TEXTO%Acesso Remoto%C_RESET%
 call :FB_APPS_WALK4 FB_APPS_ITEM_SIMPLES
 echo   %C_TEXTO%Produtividade%C_RESET%
 call :FB_APPS_WALK5 FB_APPS_ITEM_SIMPLES
+echo   %C_TEXTO%Utilitarios%C_RESET%
+call :FB_APPS_WALK6 FB_APPS_ITEM_SIMPLES
 echo.
 echo   %C_CINZA%Aplicativos ja instalados sao ignorados automaticamente.%C_RESET%
 echo.
@@ -2423,6 +2425,8 @@ echo   %C_TEXTO%Acesso Remoto%C_RESET%
 call :FB_APPS_WALK4 FB_APPS_ITEM_ESTADO
 echo   %C_TEXTO%Produtividade%C_RESET%
 call :FB_APPS_WALK5 FB_APPS_ITEM_ESTADO
+echo   %C_TEXTO%Utilitarios%C_RESET%
+call :FB_APPS_WALK6 FB_APPS_ITEM_ESTADO
 echo.
 pause
 goto FB_APPS_MENU_LOOP
