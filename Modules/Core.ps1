@@ -146,13 +146,95 @@ function Test-CompartDiskInterativo {
     return $true
 }
 
+function Test-CompartDiskTecladoDireto {
+    <# O console aceita leitura tecla a tecla? Entrada redirecionada, host sem
+       RawUI e ambiente sem console de verdade nao aceitam - e nesses casos a
+       leitura por linha e o caminho correto, nao uma falha. #>
+    [CmdletBinding()] param()
+    try {
+        if ([Console]::IsInputRedirected) { return $false }
+        if (-not $Host.UI.RawUI) { return $false }
+        # Consulta que so responde onde existe console real.
+        $null = [Console]::KeyAvailable
+        return $true
+    } catch { return $false }
+}
+
+function Read-CompartDiskEntradaOpcao {
+    <# Devolve o texto digitado para um menu de 0 a $Maximo. A escolha vale assim
+       que o numero digitado nao pode mais crescer para outra opcao valida, sem
+       exigir Enter: e o mesmo comportamento do CHOICE que atende os menus do
+       Launcher.bat.
+
+       Menu de ate 10 opcoes (0 a 9): a primeira tecla ja decide. Onde existe
+       opcao de dois digitos, apenas o prefixo realmente ambiguo (o "1" de um
+       menu que vai ate 10, por exemplo) espera a tecla seguinte - e Enter fecha
+       a escolha nesse prefixo. Backspace corrige e Esc equivale a [0].
+
+       Sem console (entrada redirecionada, host sem RawUI) a leitura por linha
+       continua valendo: nenhum ambiente fica sem menu. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$Maximo, [string]$Rotulo = '  Escolha')
+
+    if (-not (Test-CompartDiskTecladoDireto)) { return (Read-Host $Rotulo) }
+
+    Write-Color ("{0}: " -f $Rotulo) -NoNewLine
+
+    $buffer = ''
+    while ($true) {
+        $tecla = $null
+        try { $tecla = [Console]::ReadKey($true) }
+        catch {
+            # Console perdido durante a leitura: voltar a leitura por linha em
+            # vez de deixar o menu sem resposta.
+            Write-Color ''
+            return (Read-Host $Rotulo)
+        }
+
+        if ($tecla.Key -eq [ConsoleKey]::Enter)  { Write-Color ''; return $buffer }
+        if ($tecla.Key -eq [ConsoleKey]::Escape) { Write-Color '0'; return '0' }
+        if ($tecla.Key -eq [ConsoleKey]::Backspace) {
+            if ($buffer.Length -gt 0) {
+                $buffer = $buffer.Substring(0, $buffer.Length - 1)
+                Write-Color "`b `b" -NoNewLine
+            }
+            continue
+        }
+
+        # Tecla sem caractere util (setas, funcao, controle): ignorada, como no CHOICE.
+        if ([char]::IsControl($tecla.KeyChar)) { continue }
+        $ch = [string]$tecla.KeyChar
+
+        # Nao numerica: devolvida como esta, para a recusa de sempre.
+        if ($ch -notmatch '^\d$') {
+            Write-Color $ch -NoNewLine
+            Write-Color ''
+            return ($buffer + $ch)
+        }
+
+        Write-Color $ch -NoNewLine
+        $novo = $buffer + $ch
+
+        # [0] nunca cresce: nenhuma opcao valida comeca por zero.
+        if ($novo -eq '0') { Write-Color ''; return '0' }
+
+        # Ja passou do maximo, ou nenhum digito adicional caberia: decide agora.
+        $n = [int]$novo
+        if ($n -gt $Maximo -or ($n * 10) -gt $Maximo) { Write-Color ''; return $novo }
+
+        # Prefixo ambiguo: aguarda a proxima tecla (ou o Enter).
+        $buffer = $novo
+    }
+}
+
 function Read-CompartDiskOpcao {
     <# Le uma opcao NUMERICA entre 0 e $Maximo. Letras sao recusadas: os menus da
-       ferramenta sao operados so por numeros. #>
+       ferramenta sao operados so por numeros. A leitura da tecla fica em
+       Read-CompartDiskEntradaOpcao; a validacao e as mensagens sao estas. #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][int]$Maximo, [string]$Rotulo = '  Escolha')
     while ($true) {
-        $entrada = Read-Host $Rotulo
+        $entrada = Read-CompartDiskEntradaOpcao -Maximo $Maximo -Rotulo $Rotulo
         if ($null -eq $entrada) { return 0 }
         $entrada = $entrada.Trim()
         if ($entrada -eq '') { continue }

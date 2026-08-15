@@ -72,6 +72,10 @@ Dentro de uma categoria, cada aplicativo recebe um número; o número seguinte a
 último aplicativo é **Instalar todos**, e `0` volta. Depois de instalar um item, o
 menu da categoria reaparece, o que permite instalar vários itens em sequência.
 
+Como em todas as telas, a tecla executa direto, sem Enter. A única exceção é a
+categoria **Windows / Sistema**, onde existe a opção `10`: ali o `1` espera a tecla
+seguinte, porque ainda pode virar `10`. Apertar Enter confirma o `1` sozinho.
+
 **Instalar todos** (da categoria ou global) mostra a lista antes de agir e só executa
 após a confirmação `[1]`; `[0]` cancela sem alterar nada. Uma falha individual não
 interrompe o lote, e ao final é exibido o resumo com instalados, já instalados, não
