@@ -1,6 +1,6 @@
 # Guia de Execução Remota
 
-**COMPARTDISK 1.4.2** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.3** · Desenvolvido por Edsilas
 
 Executa a versão estável mais recente com um único comando, sem download manual e
 sem verificar atualizações.

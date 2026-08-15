@@ -13,6 +13,68 @@ Sem alterações pendentes.
 
 ---
 
+## [1.4.3] — 2026-08-15
+
+**Diagnóstico Avançado e Relatórios** passa a entregar um retrato técnico completo:
+processos com integridade do executável, atividade de rede, exposição de portas e
+compartilhamentos. Publicação em
+[Releases](https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.3).
+
+> **Nada foi removido nem substituído.** Nenhuma tecla de menu, ação, `ValidateSet`,
+> argumento de linha de comando, código de saída ou campo de relatório existente foi
+> alterado. As coletas novas rodam apenas na auditoria **Full**; `Quick`, `/audit` e
+> os demais fluxos seguem idênticos. Os dois coletores tocados receberam campos
+> **acrescentados**, e quem lê apenas os campos antigos não percebe diferença.
+
+### Adicionado
+
+- **Diagnóstico Avançado: inventário de processos com integridade do executável.**
+  Nova seção **Processos** com nome, PID, PPID, usuário, memória, threads, handles,
+  serviços hospedados, assinatura digital, editor, **SHA-256 do executável real** e
+  caminho. O hash é calculado com `Get-FileHash` sobre o arquivo do processo e
+  aparece completo, sem truncamento.
+- **Nova seção Assinaturas digitais**, distinguindo `Assinado e válido`,
+  `Assinado, inválido`, `Não assinado`, `Acesso negado` e `Não foi possível
+  verificar`. Lista **um item por executável**, não por processo, e omite os
+  binários já válidos — o que interessa ao diagnóstico é o que destoa.
+- **Novas seções Conexões de rede, Portas em escuta e Compartilhamentos.** As
+  conexões trazem protocolo, endereços e portas local/remota, estado, processo
+  responsável, PID, serviço e interface. As portas em escuta derivam da mesma
+  coleta, sem repetir a consulta ao sistema.
+- **Interfaces de rede passam a informar DHCP e MTU**, e os perfis de firewall
+  passam a informar **qual perfil está ativo** — campo que o `Audit.ps1` já
+  consultava (`PerfilAtivo`) sem que nenhum coletor o fornecesse.
+
+### Alterado
+
+- **Relatório HTML: tabelas ordenáveis, filtro por linha e células de hash.**
+  Clique no cabeçalho ordena a coluna (numérica quando os valores são números),
+  o campo de busca passa a filtrar **linha a linha** além de seções, um clique na
+  célula do hash seleciona e copia os 64 caracteres, e `LISTEN`, `ESTABLISHED`,
+  `N/A` e `Acesso negado` ganham marcação visual. Tudo é decidido pelo **conteúdo
+  da célula**, não pelo nome da seção: qualquer tabela do relatório, presente ou
+  futura, recebe o mesmo tratamento.
+- **Rolagem lateral das tabelas passa a ser contida no próprio contêiner.** Antes a
+  tabela era o elemento rolável; agora existe uma caixa dedicada, e a página nunca
+  rola de lado por causa de uma tabela larga.
+
+> **Sem regressão.** Nenhum coletor existente mudou de forma: `DHCP`, `MTU` e
+> `PerfilAtivo` são campos **acrescentados**, e quem lê apenas os campos antigos não
+> percebe diferença. A seção `Processos (top memória)` continua como estava — ela
+> responde "quem consome memória agora", enquanto o inventário responde "o que está
+> em execução e o binário confere".
+
+### Versão
+
+A numeração passa de `1.4.2` para `1.4.3` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
+`README.md`, no cabeçalho de todos os módulos e de todos os documentos.
+
+`remote.ps1` passa a apontar para a tag `v1.4.3`. O SHA-256 fixado no script fica
+vazio até a release ser publicada e o pacote conferido; enquanto isso a integridade é
+validada pelo hash publicado nas notas da release.
+
+---
+
 ## [1.4.2] — 2026-08-15
 
 Correção de codificação nos três módulos que divergiam do padrão do projeto.
@@ -1261,6 +1323,7 @@ Primeira versão da arquitetura modular.
 
 ---
 
+[1.4.3]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.3
 [1.4.2]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.2
 [1.4.1]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.1
 [1.4.0]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.0

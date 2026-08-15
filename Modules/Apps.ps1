@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.2 - Apps.ps1
+ COMPARTDISK 1.4.3 - Apps.ps1
  Desenvolvido por Edsilas
  Instalacao de aplicativos de suporte tecnico pelo gerenciador de pacotes do
  Windows (winget), a partir de um catalogo declarativo.

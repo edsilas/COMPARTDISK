@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.2 - Hardware.ps1
+ COMPARTDISK 1.4.3 - Hardware.ps1
  Desenvolvido por Edsilas
  Acoes: Info | Full | Gpu | Memory | Devices | Temperature
 #>

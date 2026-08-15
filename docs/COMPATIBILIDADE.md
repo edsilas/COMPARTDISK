@@ -1,6 +1,6 @@
 # Compatibilidade
 
-**COMPARTDISK 1.4.2** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.3** · Desenvolvido por Edsilas
 
 ---
 

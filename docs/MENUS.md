@@ -1,6 +1,6 @@
 # Descrição dos Menus
 
-**COMPARTDISK 1.4.2** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.3** · Desenvolvido por Edsilas
 
 Mapa completo de todas as telas. Cada opção indica se **altera** o computador ou se
 apenas **lê** informações.
