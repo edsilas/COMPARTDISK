@@ -1,4 +1,4 @@
-<#
+﻿<#
  COMPARTDISK 1.4.1 - Debloat.ps1
  Desenvolvido por Edsilas
  Acoes: Analyze | Apps | Services | Tasks | Privacy | Tweaks | Components | Full

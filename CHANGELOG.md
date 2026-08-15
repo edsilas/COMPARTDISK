@@ -9,7 +9,20 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-Sem alterações pendentes.
+### Corrigido
+
+- **BOM UTF-8 restaurado em `Audit.ps1`, `Debloat.ps1` e `Performance.ps1`.** Eram os
+  três únicos módulos dos 22 sem a marca de ordem de byte, divergindo do padrão de
+  codificação do projeto. Sem o BOM, o Windows PowerShell 5.1 lê o arquivo na página
+  de código ANSI do sistema em vez de UTF-8; o efeito visível estava no comentário da
+  linha 1686 do `Debloat.ps1`, cujo `ê` apareceria corrompido. Nenhum dos três tinha
+  caractere não-ASCII fora de comentário, então não havia efeito em execução — a
+  correção é preventiva e alinha os 22 módulos ao mesmo padrão.
+
+  A alteração é de **três bytes no início de cada arquivo**: o conteúdo após o BOM é
+  byte a byte idêntico ao anterior, a contagem de CRLF não mudou, e a comparação de
+  tokens do analisador do PowerShell acusa zero divergências nos três arquivos. Ações,
+  `ValidateSet`, lógica e comportamento permanecem exatamente como estavam.
 
 ---
 

@@ -1,4 +1,4 @@
-<#
+﻿<#
  COMPARTDISK 1.4.1 - Audit.ps1  (revisao cirurgica)
  Desenvolvido por Edsilas
  Acoes: Full | Quick | Events | Software | License
