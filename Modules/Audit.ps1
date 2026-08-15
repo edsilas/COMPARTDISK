@@ -1716,6 +1716,161 @@ function Add-AuditIntegrity {
     Update-AuditArea 'Integridade' $(if ($niveis -contains 'INFO') { 'Parcial' } else { 'Verificado' }) ''
 }
 
+function Add-AuditProcessInventory {
+    <#
+      Inventario completo de processos com integridade do executavel.
+
+      COMPLEMENTA, sem substituir, a secao 'Processos (top memoria)': aquela
+      responde "quem esta consumindo memoria agora" e continua com CPU e
+      responsividade; esta responde "o que esta em execucao, sob qual usuario, e
+      o binario confere". Por isso as duas convivem sem repetir a pergunta.
+    #>
+    $c = Invoke-AuditCollect -Name 'ProcessInventory' -Requires 'Get-CompartDiskProcessInventory' -Cache `
+         -Script { Get-CompartDiskProcessInventory }
+
+    if ($c.State -ne 'Ok') {
+        Add-AuditNotCollected -Collect $c -Title 'Inventario de processos' -Area 'Processos' `
+            -Impact 'processos nao inventariados com PPID, usuario e integridade do executavel.' -Severity 'INFO'
+        Update-AuditArea 'Integridade de executaveis' 'Nao verificado' 'inventario de processos indisponivel'
+        return
+    }
+
+    $itens = @($c.Items)
+    Add-AuditSection -Title 'Processos' -Status 'INFO' -Rows $itens -Summary (
+        "{0} processo(s) em execucao, com PPID, usuario, memoria, threads, handles, assinatura digital e SHA-256 do executavel." -f $itens.Count)
+    Write-AuditTable $itens @('Processo', 'PID', 'PPID', 'Usuario', 'Memoria', 'Threads', 'Handles') 160 12
+    Update-AuditArea 'Processos' 'Verificado' ''
+
+    # ---- assinaturas digitais ---------------------------------------------
+    # A tabela completa ja esta acima. Aqui entra so o que NAO esta validado:
+    # repetir as centenas de linhas assinadas nao acrescenta diagnostico.
+    $porEstado = @{}
+    foreach ($p in $itens) {
+        $e = Get-AuditText $p.Assinatura 'N/A'
+        if (-not $porEstado.ContainsKey($e)) { $porEstado[$e] = 0 }
+        $porEstado[$e]++
+    }
+    $pares = [ordered]@{}
+    foreach ($k in @('Assinado e valido', 'Assinado, invalido', 'Nao assinado', 'Nao foi possivel verificar', 'Acesso negado', 'Nao verificado', 'N/A')) {
+        if ($porEstado.ContainsKey($k)) { $pares[$k] = $porEstado[$k] }
+    }
+    foreach ($k in $porEstado.Keys) { if (-not $pares.Contains($k)) { $pares[$k] = $porEstado[$k] } }
+
+    $invalidos   = @($itens | Where-Object { $_.Assinatura -eq 'Assinado, invalido' })
+    $naoAssinados= @($itens | Where-Object { $_.Assinatura -eq 'Nao assinado' })
+    $indefinidos = @($itens | Where-Object { $_.Assinatura -eq 'Nao foi possivel verificar' -or $_.Assinatura -eq 'Acesso negado' })
+
+    # Uma linha por EXECUTAVEL, nao por processo: dez copias de um mesmo binario
+    # sao o mesmo arquivo e a mesma conclusao.
+    $atencao = @($invalidos + $naoAssinados + $indefinidos |
+        Group-Object -Property Caminho |
+        ForEach-Object {
+            $r = $_.Group[0]
+            [pscustomobject]@{
+                Executavel = $r.Processo
+                Assinatura = $r.Assinatura
+                Editor     = $r.Editor
+                Processos  = $_.Count
+                SHA256     = $r.SHA256
+                Caminho    = $r.Caminho
+            }
+        } | Sort-Object -Property Assinatura, Executavel)
+
+    $statusSec = 'OK'
+    if ($indefinidos.Count -gt 0) { $statusSec = 'INFO' }
+    if ($invalidos.Count -gt 0)   { $statusSec = 'WARN' }
+
+    Add-AuditSection -Title 'Assinaturas digitais' -Status $statusSec -Pairs $pares -Rows $atencao -Summary (
+        "{0} executavel(is) distinto(s) sem assinatura valida. Executaveis com assinatura valida nao sao repetidos aqui." -f $atencao.Count)
+    Write-AuditPairs $pares 30
+
+    if ($invalidos.Count -gt 0) {
+        $nomes = (@($invalidos | Select-Object -ExpandProperty Processo -Unique | Select-Object -First 6) -join ', ')
+        Add-AuditFinding -Severity 'WARN' -Area 'Integridade de executaveis' `
+            -Message ("{0} processo(s) com assinatura digital presente porem invalida: {1}." -f $invalidos.Count, $nomes) `
+            -Recommendation 'Assinatura invalida indica binario alterado apos a assinatura, certificado nao confiavel ou cadeia incompleta. Conferir a origem do arquivo pelo SHA-256 antes de concluir.'
+    }
+    if ($naoAssinados.Count -gt 0) {
+        Add-AuditFinding -Severity 'INFO' -Area 'Integridade de executaveis' `
+            -Message ("{0} processo(s) com executavel sem assinatura digital." -f $naoAssinados.Count) `
+            -Recommendation 'Ausencia de assinatura e comum em ferramentas legitimas e nao caracteriza problema por si so.'
+    }
+    if ($indefinidos.Count -gt 0) {
+        Add-AuditFinding -Severity 'INFO' -Area 'Integridade de executaveis' `
+            -Message ("{0} processo(s) cuja assinatura nao pode ser verificada (executavel protegido ou acesso negado)." -f $indefinidos.Count) `
+            -Recommendation 'Processos protegidos do Windows nao expoem o binario nem para leitura administrativa.'
+    }
+
+    $estadoArea = 'Verificado'
+    if ($indefinidos.Count -gt 0) { $estadoArea = 'Parcial' }
+    Update-AuditArea 'Integridade de executaveis' $estadoArea $(
+        if ($indefinidos.Count -gt 0) { "{0} executavel(is) sem verificacao possivel" -f $indefinidos.Count } else { '' })
+}
+
+function Add-AuditNetworkSurface {
+    <#
+      Superficie de rede: com quem a maquina fala, o que ela expoe e o que ela
+      compartilha. As interfaces ja saem em 'Rede' (Add-AuditNetwork) e os
+      perfis em 'Firewall' (Add-AuditSecurity) - nenhuma das duas e repetida.
+    #>
+    $c = Invoke-AuditCollect -Name 'NetConnections' -Requires 'Get-CompartDiskNetworkConnections' -Cache `
+         -Script { Get-CompartDiskNetworkConnections }
+
+    if ($c.State -ne 'Ok') {
+        Add-AuditNotCollected -Collect $c -Title 'Conexoes de rede' -Area 'Conexoes' `
+            -Impact 'conexoes e portas em escuta nao inventariadas.' -Severity 'INFO'
+        Update-AuditArea 'Portas em escuta' 'Nao verificado' 'coleta de conexoes indisponivel'
+    } else {
+        $conex = @($c.Items)
+        $estab = @($conex | Where-Object { $_.Estado -eq 'ESTABLISHED' })
+        $lista = @($conex | Where-Object { $_.Estado -eq 'LISTEN' })
+        $semDono = @($conex | Where-Object { $_.Processo -eq 'N/A' })
+
+        Add-AuditSection -Title 'Conexoes de rede' -Status 'INFO' -Rows $conex -Summary (
+            "{0} conexao(oes): {1} estabelecida(s), {2} em escuta. Processo responsavel associado pelo PID dono do socket." -f `
+            $conex.Count, $estab.Count, $lista.Count)
+        Write-AuditTable $conex @('Protocolo', 'EnderecoLocal', 'PortaLocal', 'EnderecoRemoto', 'PortaRemota', 'Estado', 'Processo', 'PID') 170 12
+        Update-AuditArea 'Conexoes' $(if ($semDono.Count -gt 0) { 'Parcial' } else { 'Verificado' }) $(
+            if ($semDono.Count -gt 0) { "{0} socket(s) sem processo identificado" -f $semDono.Count } else { '' })
+
+        # ---- portas em escuta, derivadas da mesma coleta -------------------
+        $portas = @(Get-CompartDiskListeningPorts -Conexoes $conex)
+        $externas = @($portas | Where-Object { $_.EnderecoDeEscuta -notmatch '^(127\.|::1$|N/A$)' })
+        Add-AuditSection -Title 'Portas em escuta' -Status 'INFO' -Rows $portas -Summary (
+            "{0} porta(s) em escuta; {1} aceitando conexao fora do proprio computador." -f $portas.Count, $externas.Count)
+        Write-AuditTable $portas @('Porta', 'Protocolo', 'Processo', 'PID', 'Servico', 'EnderecoDeEscuta') 160 12
+        Update-AuditArea 'Portas em escuta' 'Verificado' ''
+
+        if ($externas.Count -gt 0) {
+            Add-AuditFinding -Severity 'INFO' -Area 'Portas em escuta' `
+                -Message ("{0} porta(s) em escuta alcancavel(is) pela rede." -f $externas.Count) `
+                -Recommendation 'Conferir na tabela quais servicos expoem porta e se cada um e esperado nesta maquina.'
+        }
+    }
+
+    # ---- compartilhamentos -------------------------------------------------
+    $s = Invoke-AuditCollect -Name 'Shares' -Requires 'Get-CompartDiskShares' -Cache -Script { Get-CompartDiskShares }
+    if ($s.State -ne 'Ok') {
+        Add-AuditNotCollected -Collect $s -Title 'Compartilhamentos' -Area 'Compartilhamentos' `
+            -Impact 'recursos compartilhados nao inventariados.' -Severity 'INFO'
+        return
+    }
+    $shares = @($s.Items)
+    $comuns = @($shares | Where-Object { $_.Administrativo -eq 'Nao' })
+    Add-AuditSection -Title 'Compartilhamentos' -Status 'INFO' -Rows $shares -Summary (
+        "{0} compartilhamento(s): {1} administrativo(s) do Windows e {2} criado(s) na maquina." -f `
+        $shares.Count, ($shares.Count - $comuns.Count), $comuns.Count)
+    Write-AuditTable $shares @('Nome', 'Caminho', 'Tipo', 'Administrativo') 150 12
+    Update-AuditArea 'Compartilhamentos' 'Verificado' ''
+
+    if ($comuns.Count -gt 0) {
+        Add-AuditFinding -Severity 'INFO' -Area 'Compartilhamentos' `
+            -Message ("{0} compartilhamento(s) nao administrativo(s) publicado(s): {1}." -f `
+                $comuns.Count, ((@($comuns | Select-Object -ExpandProperty Nome -First 6)) -join ', ')) `
+            -Recommendation 'Conferir se cada pasta compartilhada ainda precisa estar acessivel pela rede.'
+    }
+}
+
 # ============================================================================
 # 9. ORQUESTRACAO
 # ============================================================================
@@ -1743,6 +1898,8 @@ function Invoke-FullAudit {
     Invoke-Etapa 'Drivers'                   { Add-AuditDrivers }     -Areas @('Drivers')
     Invoke-Etapa 'Contas e grupos'           { Add-AuditLocalUsers }  -Areas @('Contas')
     Invoke-Etapa 'Servicos e processos'      { Add-AuditServices }    -Areas @('Servicos', 'Processos', 'Inicializacao')
+    Invoke-Etapa 'Inventario de processos e integridade' { Add-AuditProcessInventory } -Areas @('Processos', 'Integridade de executaveis')
+    Invoke-Etapa 'Superficie de rede'        { Add-AuditNetworkSurface } -Areas @('Conexoes', 'Portas em escuta', 'Compartilhamentos')
     Invoke-Etapa 'Energia e desempenho'      { Add-AuditPower }       -Areas @('Energia')
     Invoke-Etapa 'Licenciamento'             { Add-AuditLicense }     -Areas @('Licenciamento')
     Invoke-Etapa 'Aplicativos instalados'    { Add-AuditSoftware -MaxLinhas 200 } -Areas @('Software')
