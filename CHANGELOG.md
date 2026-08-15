@@ -69,9 +69,15 @@ compartilhamentos. Publicação em
 A numeração passa de `1.4.2` para `1.4.3` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
 `README.md`, no cabeçalho de todos os módulos e de todos os documentos.
 
-`remote.ps1` passa a apontar para a tag `v1.4.3`. O SHA-256 fixado no script fica
-vazio até a release ser publicada e o pacote conferido; enquanto isso a integridade é
-validada pelo hash publicado nas notas da release.
+`remote.ps1` passa a apontar para a tag `v1.4.3`, com o SHA-256 do pacote publicado
+fixado no próprio script. O valor foi conferido em três fontes independentes que
+coincidem: o asset baixado da release, o pacote regerado a partir da tag e o hash
+declarado nas notas da publicação.
+
+```text
+COMPARTDISK-1.4.3.zip
+SHA-256: 8ce4462a9728b45122b6d2734507a7ae646ff1f38d3e128e870c558899e42360
+```
 
 ---
 
