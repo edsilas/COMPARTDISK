@@ -40,11 +40,16 @@ $ProgressPreference    = 'SilentlyContinue'   # acelera muito o Invoke-WebReques
 # interno ou versao fixada.
 # ==============================================================================
 $Repo     = if ($env:COMPARTDISK_REPO)  { $env:COMPARTDISK_REPO }  else { 'edsilas/compartdisk' }
-$TagFixa  = if ($env:COMPARTDISK_TAG)   { $env:COMPARTDISK_TAG }   else { 'v1.4.1' }
-# Hash do pacote COMPARTDISK-1.4.1.zip anexado a tag acima. Fixa-lo aqui e mais forte
+$TagFixa  = if ($env:COMPARTDISK_TAG)   { $env:COMPARTDISK_TAG }   else { 'v1.4.2' }
+# Hash do pacote COMPARTDISK-1.4.2.zip anexado a tag acima. Fixa-lo aqui e mais forte
 # do que depender das notas da release: o valor passa a viajar com o proprio script.
 # Se ficar vazio, o script recorre ao SHA-256 publicado nas notas (Get-HashPublicado).
-$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { 'b4945cda199a52ce1c4813735da5f48bd21f0ff6e09774eebb4b413b6b1d40ee' }
+#
+# ESTADO DE TRANSICAO: vazio ate a release v1.4.2 ser publicada e o pacote conferido.
+# Enquanto isso a integridade e validada pelo hash das notas da release; nao havendo
+# hash publicado, Test-Integridade declara a limitacao em vez de aceitar o pacote em
+# silencio. Manter aqui o hash da 1.4.1 faria a validacao recusar o pacote correto.
+$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { '' }
 $Origem   = "https://github.com/$Repo"
 $ApiBase  = "https://api.github.com/repos/$Repo"
 

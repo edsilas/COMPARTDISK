@@ -5,7 +5,7 @@
     <img src="https://img.shields.io/badge/License-Apache%202.0-0078D4?style=flat-square&logo=apache&logoColor=white" alt="License">
   </a>
   <a href="https://github.com/edsilas/COMPARTDISK/releases">
-    <img src="https://img.shields.io/badge/Release-v1.4.1-107C10?style=flat-square&logo=github&logoColor=white" alt="Release">
+    <img src="https://img.shields.io/badge/Release-v1.4.2-107C10?style=flat-square&logo=github&logoColor=white" alt="Release">
   </a>
   <a href="CHANGELOG.md">
     <img src="https://img.shields.io/badge/Changelog-hist%C3%B3rico-6E6E6E?style=flat-square&logo=markdown&logoColor=white" alt="Changelog">
@@ -28,7 +28,7 @@ Compatível atualmente com Windows 10 e Windows 11.
 > Desenvolvido por Edsilas
 
 > [!IMPORTANT]
-> **Versão atual: 1.4.1.** Baixe o pacote e leia as notas de lançamento em
+> **Versão atual: 1.4.2.** Baixe o pacote e leia as notas de lançamento em
 > **[Releases](https://github.com/edsilas/COMPARTDISK/releases)** —
 > https://github.com/edsilas/COMPARTDISK/releases
 
@@ -298,7 +298,7 @@ Instruções detalhadas em [Guia de Instalação](docs/INSTALACAO.md).
 ## 6. Interface
 
 ```text
-  COMPARTDISK  1.4.1
+  COMPARTDISK  1.4.2
   Assistente de Reparo
 
   --------------------------------------------------------------------------
@@ -592,7 +592,7 @@ patrocinado ou endossado pela Microsoft.
 
 <div align="center">
 
-**COMPARTDISK 1.4.1** — Desenvolvido por Edsilas
+**COMPARTDISK 1.4.2** — Desenvolvido por Edsilas
 
 https://github.com/edsilas/COMPARTDISK
 

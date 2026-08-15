@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.1 - Repair.ps1
+ COMPARTDISK 1.4.2 - Repair.ps1
  Desenvolvido por Edsilas
  Acoes: Full | Sfc | Dism | Scan | Chkdsk | Component
 #>

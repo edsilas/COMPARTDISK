@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.1 - Update.ps1
+ COMPARTDISK 1.4.2 - Update.ps1
  Desenvolvido por Edsilas
  Acoes: Status | History | Reset | Cache | Services | Search
 

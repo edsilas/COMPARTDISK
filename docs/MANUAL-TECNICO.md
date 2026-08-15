@@ -1,6 +1,6 @@
 # Manual Técnico
 
-**COMPARTDISK 1.4.1** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.2** · Desenvolvido por Edsilas
 
 Para quem vai ler, manter ou estender o código.
 
@@ -12,7 +12,7 @@ Todos os vinte módulos de domínio seguem exatamente esta estrutura:
 
 ```powershell
 <#
- COMPARTDISK 1.4.1 - Exemplo.ps1
+ COMPARTDISK 1.4.2 - Exemplo.ps1
  Desenvolvido por Edsilas
  Acoes: Acao1 | Acao2
 #>

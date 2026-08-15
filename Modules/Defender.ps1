@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.1 - Defender.ps1
+ COMPARTDISK 1.4.2 - Defender.ps1
  Desenvolvido por Edsilas
  Acoes: Status | Update | QuickScan | FullScan | CustomScan | Exclusions | History
 #>

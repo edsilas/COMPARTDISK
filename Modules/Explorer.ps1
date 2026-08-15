@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.1 - Explorer.ps1
+ COMPARTDISK 1.4.2 - Explorer.ps1
  Desenvolvido por Edsilas
  Acoes: Restart | ClearCache | Spooler | ResetView
 #>

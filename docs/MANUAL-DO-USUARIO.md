@@ -1,6 +1,6 @@
 # Manual do Usuário
 
-**COMPARTDISK 1.4.1** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.2** · Desenvolvido por Edsilas
 
 Manual escrito para quem **não é técnico**. Cada recurso é explicado em linguagem
 simples: o que faz, quando usar e o que esperar.
@@ -55,7 +55,7 @@ Uma janela preta e azul se abre com o menu. É por ali que você trabalha.
 ## Entendendo a tela
 
 ```
-  COMPARTDISK  1.4.1
+  COMPARTDISK  1.4.2
   Assistente de Reparo
 
   --------------------------------------------------------------------------

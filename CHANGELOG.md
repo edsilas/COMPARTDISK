@@ -9,6 +9,20 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+Sem alterações pendentes.
+
+---
+
+## [1.4.2] — 2026-08-15
+
+Correção de codificação nos três módulos que divergiam do padrão do projeto.
+Publicação em
+[Releases](https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.2).
+
+Sem mudança de comportamento: nenhuma tecla de menu, ação, `ValidateSet`, argumento
+de linha de comando, código de saída ou campo de relatório foi alterado. A versão
+anterior continua funcionando exatamente igual.
+
 ### Corrigido
 
 - **BOM UTF-8 restaurado em `Audit.ps1`, `Debloat.ps1` e `Performance.ps1`.** Eram os
@@ -23,6 +37,25 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
   byte a byte idêntico ao anterior, a contagem de CRLF não mudou, e a comparação de
   tokens do analisador do PowerShell acusa zero divergências nos três arquivos. Ações,
   `ValidateSet`, lógica e comportamento permanecem exatamente como estavam.
+
+### Validado
+
+- **Seleção por tecla conferida no console real do Windows.** A correção publicada na
+  1.4.1 havia sido validada apenas fora do Windows. Foi reexecutada em **Windows 11
+  Pro (build 22631)** com **Windows PowerShell 5.1** (`5.1.22621.6133`,
+  `powershell.exe`) no **console tradicional** (`ConsoleHost`, entrada não
+  redirecionada), sobre o `Core.ps1` de produção: a tecla executa direto em todas as
+  faixas de menu, sem Enter, incluindo a opção de dois dígitos, `Esc`, `Backspace` e
+  as duas mensagens de recusa.
+
+### Versão
+
+A numeração passa de `1.4.1` para `1.4.2` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
+`README.md`, no cabeçalho de todos os módulos e de todos os documentos.
+
+`remote.ps1` passa a apontar para a tag `v1.4.2`. O SHA-256 fixado no script fica
+vazio até a release ser publicada e o pacote conferido; enquanto isso a integridade é
+validada pelo hash publicado nas notas da release.
 
 ---
 
@@ -1222,6 +1255,7 @@ Primeira versão da arquitetura modular.
 
 ---
 
+[1.4.2]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.2
 [1.4.1]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.1
 [1.4.0]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.0
 [1.3.1]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.3.1

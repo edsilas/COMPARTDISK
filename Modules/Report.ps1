@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.1 - Report.ps1
+ COMPARTDISK 1.4.2 - Report.ps1
  Desenvolvido por Edsilas
  Acoes: Build | Consolidate | Open
  Gera relatorios TXT/CSV/JSON/HTML a partir da sessao atual ou dos estados
