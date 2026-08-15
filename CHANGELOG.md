@@ -53,9 +53,15 @@ anterior continua funcionando exatamente igual.
 A numeração passa de `1.4.1` para `1.4.2` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
 `README.md`, no cabeçalho de todos os módulos e de todos os documentos.
 
-`remote.ps1` passa a apontar para a tag `v1.4.2`. O SHA-256 fixado no script fica
-vazio até a release ser publicada e o pacote conferido; enquanto isso a integridade é
-validada pelo hash publicado nas notas da release.
+`remote.ps1` passa a apontar para a tag `v1.4.2`, com o SHA-256 do pacote publicado
+fixado no próprio script. O valor foi conferido em três fontes independentes que
+coincidem: o asset baixado da release, o pacote regerado a partir da tag e o hash
+declarado nas notas da publicação.
+
+```text
+COMPARTDISK-1.4.2.zip
+SHA-256: 028bb8fdcc0c00b5148b26464038c3b1b6d5ee0ba7c7fefb575228837c1374c4
+```
 
 ---
 
