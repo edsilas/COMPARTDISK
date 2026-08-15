@@ -232,9 +232,9 @@ acrescentar uma entrada.
 | Hardware | HWiNFO, CPU-Z, GPU-Z, CrystalDiskInfo, CrystalDiskMark, OCCT |
 | Windows / Sistema | Sysinternals Suite, Process Explorer, Process Monitor, Autoruns, TCPView, RAMMap, WizTree, Everything, Notepad++ |
 | Rede | Wireshark, Nmap, Advanced IP Scanner, iperf3, PuTTY, WinSCP |
-| Acesso Remoto | RustDesk, AnyDesk, RDP |
+| Acesso Remoto | TeamViewer, AnyDesk |
 | Produtividade | ONLYOFFICE Desktop Editors, Google Chrome |
-| Utilitários | ponto de extensão, sem itens |
+| Utilitários | 7-Zip, Rufus |
 
 Antes de cada instalação o módulo verifica, nesta ordem: presença do Winget,
 disponibilidade da fonte oficial, cobertura pela Sysinternals Suite, presença do
@@ -248,10 +248,11 @@ Cada item recebe um resultado do vocabulário `INSTALADO`, `JA INSTALADO`,
 `RECURSO NATIVO`, traduzido do código de retorno real do Winget. Uma falha individual
 não interrompe o lote.
 
-Dois itens não são instaláveis por pacote e são declarados como tal: **RDP** é recurso
-nativo (`mstsc.exe`) — nenhum identificador é inventado e o Remote Desktop não é
-habilitado — e **RustDesk** não possui pacote na fonte oficial do Winget. Nenhum
-download fora do Winget é realizado.
+Todo item do catálogo possui pacote na fonte oficial do Winget. Os campos `Native` e
+`Available` continuam disponíveis para declarar item **não instalável** — recurso
+nativo do Windows ou sem pacote oficial —, e o módulo o reporta como `RECURSO NATIVO`
+ou `NAO DISPONIVEL` sem inventar identificador. Nenhum download fora do Winget é
+realizado.
 
 As cinco ferramentas Sysinternals individuais declaram a suíte que já as contém:
 se a Sysinternals Suite estiver instalada, elas não são baixadas de novo.

@@ -14,6 +14,11 @@
  indice oficial da fonte "winget" (cdn.winget.microsoft.com/cache/source2.msix)
  e contra os manifestos publicados em microsoft/winget-pkgs. Nenhum ID foi
  inferido, e nenhum aplicativo sem pacote oficial recebeu URL substituta.
+ Os identificadores de TeamViewer, 7-Zip e Rufus foram conferidos em 15/08/2026
+ contra os manifestos publicados em microsoft/winget-pkgs.
+
+ Antes de instalar, Get-WingetPackage confirma o ID na fonte oficial: um ID que
+ nao exista mais e reportado como NAO ENCONTRADO, nunca substituido por outro.
 
  Toda a interacao deste modulo e NUMERICA. Nenhuma tecla de letra e aceita para
  escolher, confirmar, cancelar ou voltar.
@@ -172,23 +177,16 @@ $script:Catalogo = @(
         Scope = 'machine'; Architecture = 'x86'; SuiteId = $null; Note = '' }
 
     # --- Acesso Remoto ----------------------------------------------------
-    [pscustomobject]@{ Name = 'RustDesk'; Id = ''; Category = 'Acesso Remoto'
-        Description = 'Acesso remoto de codigo aberto'
-        Native = $false; Available = $false; Publisher = 'n/d'; PackageType = 'n/d'
-        Scope = ''; Architecture = ''; SuiteId = $null
-        Note = 'Nao disponivel via WinGet: nenhum pacote correspondente na fonte oficial (indice conferido em 14/08/2026). O COMPARTDISK nao baixa instalador fora do winget.' }
+    [pscustomobject]@{ Name = 'TeamViewer'; Id = 'TeamViewer.TeamViewer'; Category = 'Acesso Remoto'
+        Description = 'Acesso remoto e suporte tecnico a distancia'
+        Native = $false; Available = $true; Publisher = 'TeamViewer'; PackageType = 'nullsoft'
+        Scope = 'machine'; Architecture = 'x64, x86'; SuiteId = $null; Note = '' }
 
     [pscustomobject]@{ Name = 'AnyDesk'; Id = 'AnyDesk.AnyDesk'; Category = 'Acesso Remoto'
         Description = 'Acesso remoto assistido'
         Native = $false; Available = $true; Publisher = 'AnyDesk'; PackageType = 'exe'
         Scope = 'machine'; Architecture = 'x86'; SuiteId = $null
         Note = 'O instalador exige elevacao (ElevationRequirement: elevationRequired no manifesto oficial).' }
-
-    [pscustomobject]@{ Name = 'RDP'; Id = ''; Category = 'Acesso Remoto'
-        Description = 'Cliente de Area de Trabalho Remota do Windows (mstsc.exe)'
-        Native = $true; Available = $false; Publisher = 'Microsoft'; PackageType = 'componente do Windows'
-        Scope = ''; Architecture = ''; SuiteId = $null
-        Note = 'Recurso nativo do Windows: o cliente mstsc.exe ja acompanha o sistema. Habilitar o servidor de Area de Trabalho Remota e outra operacao, nao executada por esta area.' }
 
     # --- Produtividade ----------------------------------------------------
     [pscustomobject]@{ Name = 'ONLYOFFICE Desktop Editors'; Id = 'ONLYOFFICE.DesktopEditors'; Category = 'Produtividade'
@@ -202,8 +200,17 @@ $script:Catalogo = @(
         Scope = 'machine'; Architecture = 'x64, x86, arm64'; SuiteId = $null; Note = '' }
 
     # --- Utilitarios ------------------------------------------------------
-    # Categoria criada como ponto de extensao. Nenhum aplicativo foi movido das
-    # categorias acima para ca: mover mudaria a posicao de opcoes ja conhecidas.
+    # Nenhum aplicativo foi movido das categorias acima para ca: mover mudaria a
+    # posicao de opcoes ja conhecidas.
+    [pscustomobject]@{ Name = '7-Zip'; Id = '7zip.7zip'; Category = 'Utilitarios'
+        Description = 'Compactacao e extracao de arquivos 7z, zip, rar e outros'
+        Native = $false; Available = $true; Publisher = '7zip'; PackageType = 'exe, wix'
+        Scope = 'machine'; Architecture = 'x64, x86, arm64, arm'; SuiteId = $null; Note = '' }
+
+    [pscustomobject]@{ Name = 'Rufus'; Id = 'Rufus.Rufus'; Category = 'Utilitarios'
+        Description = 'Criacao de midia USB inicializavel a partir de imagem ISO'
+        Native = $false; Available = $true; Publisher = 'Rufus'; PackageType = 'portable'
+        Scope = 'user'; Architecture = 'x64, x86, arm64'; SuiteId = $null; Note = '' }
 )
 
 # ------------------------------------------------------------------------------

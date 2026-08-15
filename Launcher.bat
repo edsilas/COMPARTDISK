@@ -2665,9 +2665,8 @@ call :%~1 "WinSCP" "WinSCP.WinSCP"
 goto :EOF
 
 :FB_APPS_WALK4
-call :%~1 "RustDesk" "" "Status: nao disponivel via WinGet"
+call :%~1 "TeamViewer" "TeamViewer.TeamViewer"
 call :%~1 "AnyDesk" "AnyDesk.AnyDesk"
-call :%~1 "RDP" "" "Recurso nativo do Windows"
 goto :EOF
 
 :FB_APPS_WALK5
@@ -2676,7 +2675,8 @@ call :%~1 "Google Chrome" "Google.Chrome"
 goto :EOF
 
 :FB_APPS_WALK6
-:: Utilitarios: ponto de extensao, sem aplicativos cadastrados.
+call :%~1 "7-Zip" "7zip.7zip"
+call :%~1 "Rufus" "Rufus.Rufus"
 goto :EOF
 
 :: ==============================================================================

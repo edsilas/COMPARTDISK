@@ -61,9 +61,9 @@ reinstalado ou removido por esta opção. Toda a navegação é numérica.
 | `1` | Hardware (6 aplicativos) | 🟡 |
 | `2` | Windows / Sistema (9 aplicativos) | 🟡 |
 | `3` | Rede (6 aplicativos) | 🟡 |
-| `4` | Acesso Remoto (3 itens) | 🟡 |
+| `4` | Acesso Remoto (2 aplicativos) | 🟡 |
 | `5` | Produtividade (2 aplicativos) | 🟡 |
-| `6` | Utilitários (ponto de extensão, vazio) | 🟡 |
+| `6` | Utilitários (2 aplicativos) | 🟡 |
 | `7` | Instalar todos os aplicativos | 🟡 |
 | `8` | Ver aplicativos instalados | 🔵 |
 | `0` | Voltar | — |
@@ -84,9 +84,10 @@ disponíveis e falhas.
 **`8` Ver aplicativos instalados** apenas consulta: mostra o estado de cada item do
 catálogo, com a versão instalada quando o Winget a informa.
 
-Dois itens do catálogo não são instaláveis por pacote e são exibidos como tal:
-**RDP** é recurso nativo do Windows (`mstsc.exe`) e **RustDesk** não possui pacote no
-catálogo oficial do Winget. O COMPARTDISK não baixa instaladores fora do Winget.
+Todos os itens do catálogo possuem pacote na fonte oficial do Winget. O catálogo
+continua sabendo declarar item **não instalável** — recurso nativo do Windows ou sem
+pacote oficial —, e o menu o exibe como tal quando existir: nenhum identificador é
+inventado e o COMPARTDISK não baixa instaladores fora do Winget.
 
 ### `3` — Verificar / preparar WinGet 🟡
 
