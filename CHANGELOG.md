@@ -92,11 +92,15 @@ recebeu as mesmas linhas nas rotinas `:FB_APPS_WALKn` do fallback Batch.
 A numeração passa de `1.4.0` para `1.4.1` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
 `README.md`, no cabeçalho de todos os módulos e de todos os documentos.
 
-`remote.ps1` passa a apontar para a tag `v1.4.1`. O SHA-256 fixado no script fica
-**vazio até a release ser publicada e o pacote conferido**: enquanto isso a integridade
-é validada pelo hash publicado nas notas da release, mecanismo que o próprio script já
-implementa. Não havendo hash publicado, `Test-Integridade` declara a limitação em vez
-de aceitar o pacote em silêncio — a validação nunca é ignorada.
+`remote.ps1` passa a apontar para a tag `v1.4.1`, com o SHA-256 do pacote publicado
+fixado no próprio script — o valor viaja com o script, sem depender das notas da
+release. O hash foi conferido contra o asset efetivamente publicado, que corresponde
+bit a bit ao pacote gerado a partir da tag `v1.4.1`:
+
+```text
+COMPARTDISK-1.4.1.zip
+SHA-256: b4945cda199a52ce1c4813735da5f48bd21f0ff6e09774eebb4b413b6b1d40ee
+```
 
 ---
 
