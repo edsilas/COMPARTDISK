@@ -1594,6 +1594,30 @@ tbody tr:hover td{background:var(--panel-2)}
 .finding .area{font-family:var(--mono);font-size:11.5px;color:var(--ink-dim)}
 .finding .rec{display:block;color:var(--ink-dim);font-size:12px;margin-top:4px;padding-left:11px;border-left:2px solid var(--rule)}
 .empty{padding:16px;color:var(--ink-dim);font-family:var(--mono);font-size:12px}
+/* Tabelas longas: cabecalho fixo, ordenacao por coluna e rolagem contida na
+   propria caixa - o corpo da pagina nunca rola de lado. */
+.tw{overflow-x:auto;margin-top:14px}
+.tw table{margin-top:0}
+th.so{cursor:pointer;user-select:none;position:sticky;top:0;background:var(--panel);z-index:1}
+th.so:hover{color:var(--ink-bright)}
+th.so::after{content:"";opacity:.35;margin-left:6px;font-size:9px}
+th.so[data-dir="asc"]::after{content:"\25B2";opacity:1}
+th.so[data-dir="desc"]::after{content:"\25BC";opacity:1}
+th.so:focus-visible{outline:2px solid var(--info);outline-offset:-2px}
+/* Hash: valor inteiro, sem corte, quebrando onde couber. Um clique na celula
+   seleciona e copia os 64 caracteres. */
+td.hash{font-family:var(--mono);font-size:11px;line-height:1.45;word-break:break-all;cursor:pointer;max-width:34ch}
+td.hash:hover{color:var(--ink-bright);background:var(--panel-2)}
+td.hash.copied{color:var(--ok)}
+td.hash::after{content:"clique para copiar";display:block;font-size:9.5px;letter-spacing:.06em;color:var(--ink-dim);opacity:0;transition:opacity .12s}
+td.hash:hover::after{opacity:1}
+td.hash.copied::after{content:"copiado";opacity:1;color:var(--ok)}
+/* Estados de socket: LISTEN e ESTABLISHED precisam saltar aos olhos. */
+.st{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:2px 7px;border:1px solid var(--rule);border-radius:2px;white-space:nowrap}
+.st-listen{color:var(--warn);border-color:var(--warn)}
+.st-estab{color:var(--ok);border-color:var(--ok)}
+.st-na{color:var(--ink-dim)}
+.rowhide{display:none}
 .brand{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:6px}
 footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--rule);color:var(--ink-dim);font-family:var(--mono);font-size:11px;letter-spacing:.05em}
 .hidden{display:none}
@@ -1601,7 +1625,11 @@ footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--rule);color:v
   dl{grid-template-columns:1fr}
   .finding{grid-template-columns:1fr;gap:4px}
   .sm{margin-left:0;text-align:left;width:100%}
-  table{display:block;overflow-x:auto}
+  /* A rolagem lateral da tabela e responsabilidade exclusiva de .tw. Deixar
+     tambem a propria table como bloco rolavel criava dois contentores
+     aninhados, e quem acabava rolando de lado era a pagina. */
+  th.so{position:static}
+  td.hash{max-width:none;font-size:10.5px}
 }
 @media print{body{background:#fff;color:#000}.card,dt,dd{background:#fff}header{position:static}.toolbar{display:none}details{display:block}details>.body{display:block!important}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
@@ -1621,6 +1649,69 @@ footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--rule);color:v
   var ex=document.getElementById("expand"), co=document.getElementById("collapse");
   if(ex){ex.addEventListener("click",function(){document.querySelectorAll("details").forEach(function(d){d.open=true;});});}
   if(co){co.addEventListener("click",function(){document.querySelectorAll("details").forEach(function(d){d.open=false;});});}
+
+  /* Filtro linha a linha. O filtro geral acima esconde o cartao inteiro; em
+     tabela longa isso nao ajuda, porque o que interessa e a linha. */
+  if(q){q.addEventListener("input",function(){
+    var t=q.value.toLowerCase();
+    document.querySelectorAll("table tbody").forEach(function(tb){
+      var n=0;
+      Array.prototype.forEach.call(tb.rows,function(tr){
+        var hit = t==="" || tr.textContent.toLowerCase().indexOf(t)>-1;
+        tr.classList.toggle("rowhide",!hit);
+        if(hit){n++;}
+      });
+      var cap=tb.parentNode.getAttribute("data-cont");
+      if(cap){var el=document.getElementById(cap); if(el){el.textContent = (t==="") ? "" : (n+" linha(s) apos o filtro");}}
+    });
+  });}
+
+  /* Ordenacao por coluna. Numero ordena como numero; o resto, como texto. */
+  function valor(tr,i){
+    var c=tr.cells[i]; if(!c){return "";}
+    return (c.getAttribute("data-sort") || c.textContent || "").trim();
+  }
+  document.querySelectorAll("table thead th.so").forEach(function(th){
+    th.setAttribute("tabindex","0");
+    th.setAttribute("role","button");
+    function ordenar(){
+      var tab=th.closest("table"), tb=tab.tBodies[0];
+      if(!tb){return;}
+      var i=Array.prototype.indexOf.call(th.parentNode.cells,th);
+      var dir = th.getAttribute("data-dir")==="asc" ? "desc" : "asc";
+      Array.prototype.forEach.call(tab.querySelectorAll("th.so"),function(o){o.removeAttribute("data-dir");});
+      th.setAttribute("data-dir",dir);
+      var linhas=Array.prototype.slice.call(tb.rows);
+      linhas.sort(function(a,b){
+        var x=valor(a,i), y=valor(b,i);
+        var nx=parseFloat(x.replace(",",".")), ny=parseFloat(y.replace(",","."));
+        var num = !isNaN(nx) && !isNaN(ny) && /^[\d.,\s]+$/.test(x) && /^[\d.,\s]+$/.test(y);
+        var r = num ? (nx-ny) : x.localeCompare(y,"pt-BR",{numeric:true,sensitivity:"base"});
+        return dir==="asc" ? r : -r;
+      });
+      linhas.forEach(function(tr){tb.appendChild(tr);});
+    }
+    th.addEventListener("click",ordenar);
+    th.addEventListener("keydown",function(e){
+      if(e.key==="Enter"||e.key===" "){e.preventDefault();ordenar();}
+    });
+  });
+
+  /* Hash: um clique seleciona os 64 caracteres e copia. A selecao acontece
+     mesmo quando a area de transferencia esta indisponivel (file:// sem
+     contexto seguro), entao o valor nunca fica inacessivel. */
+  document.addEventListener("click",function(e){
+    var td=e.target.closest?e.target.closest("td.hash"):null;
+    if(!td){return;}
+    var txt=(td.getAttribute("data-hash")||td.textContent||"").trim();
+    if(window.getSelection&&document.createRange){
+      var sel=window.getSelection(), r=document.createRange();
+      r.selectNodeContents(td); sel.removeAllRanges(); sel.addRange(r);
+    }
+    var ok=function(){td.classList.add("copied");setTimeout(function(){td.classList.remove("copied");},1600);};
+    if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(txt).then(ok,function(){});}
+    else{try{if(document.execCommand("copy")){ok();}}catch(x){}}
+  });
 })();
 '@
 
@@ -1709,15 +1800,30 @@ footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--rule);color:v
             if ($rows.Count -gt 0) {
                 $cols = @()
                 foreach ($r in $rows) { foreach ($p in $r.PSObject.Properties) { if ($cols -notcontains $p.Name) { $cols += $p.Name } } }
-                & $a '<table><thead><tr>'
-                foreach ($c in $cols) { & $a ('<th>{0}</th>' -f (ConvertTo-CompartDiskHtmlEncoded $c)) }
+                & $a '<div class="tw"><table><thead><tr>'
+                foreach ($c in $cols) { & $a ('<th class="so" title="Ordenar por esta coluna">{0}</th>' -f (ConvertTo-CompartDiskHtmlEncoded $c)) }
                 & $a '</tr></thead><tbody>'
                 foreach ($r in $rows) {
                     & $a '<tr>'
-                    foreach ($c in $cols) { & $a ('<td>{0}</td>' -f (ConvertTo-CompartDiskHtmlEncoded $r.$c)) }
+                    foreach ($c in $cols) {
+                        $v = $r.$c
+                        $txt = ConvertTo-CompartDiskHtmlEncoded $v
+                        # A celula e classificada pelo CONTEUDO, nunca pelo nome
+                        # da secao: qualquer tabela que traga um SHA-256 ou um
+                        # estado de socket ganha o mesmo tratamento.
+                        if ("$v" -match '^[0-9a-fA-F]{64}$') {
+                            & $a ('<td class="hash" data-hash="{0}" title="Clique para selecionar e copiar">{0}</td>' -f $txt)
+                        }
+                        elseif ("$v" -eq 'LISTEN')      { & $a '<td><span class="st st-listen">LISTEN</span></td>' }
+                        elseif ("$v" -eq 'ESTABLISHED') { & $a '<td><span class="st st-estab">ESTABLISHED</span></td>' }
+                        elseif ("$v" -eq 'N/A' -or "$v" -eq 'Indisponivel' -or "$v" -eq 'Acesso negado') {
+                            & $a ('<td><span class="st st-na">{0}</span></td>' -f $txt)
+                        }
+                        else { & $a ('<td>{0}</td>' -f $txt) }
+                    }
                     & $a '</tr>'
                 }
-                & $a '</tbody></table>'
+                & $a '</tbody></table></div>'
             }
             if (-not $s.Pairs -and $rows.Count -eq 0) { & $a '<div class="empty">Sem dados coletados para esta secao.</div>' }
             & $a '</div></details>'
