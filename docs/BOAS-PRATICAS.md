@@ -1,6 +1,6 @@
 # Boas Práticas de Utilização
 
-**COMPARTDISK 1.3.1** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.0** · Desenvolvido por Edsilas
 
 Como usar a ferramenta com segurança e obter o melhor resultado.
 

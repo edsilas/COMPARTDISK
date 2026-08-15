@@ -1,6 +1,6 @@
 # Manual Técnico
 
-**COMPARTDISK 1.3.1** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.0** · Desenvolvido por Edsilas
 
 Para quem vai ler, manter ou estender o código.
 
@@ -12,7 +12,7 @@ Todos os dezessete módulos de domínio seguem exatamente esta estrutura:
 
 ```powershell
 <#
- COMPARTDISK 1.3.1 - Exemplo.ps1
+ COMPARTDISK 1.4.0 - Exemplo.ps1
  Desenvolvido por Edsilas
  Acoes: Acao1 | Acao2
 #>
@@ -212,7 +212,7 @@ Dentro de um bloco `( ... )`, um `)` não escapado encerra o bloco. Em `echo`, e
 
 | Item | Regra |
 |---|---|
-| Código-fonte | ASCII puro, sem acentuação |
+| Código-fonte | ASCII puro, sem acentuação. Exceção única: o travessão do título oficial da janela, em `Launcher.bat`, que só é decodificado corretamente porque `chcp 65001` executa antes — há variante ASCII automática se a troca de página de código falhar |
 | `.ps1` | Marca de ordem de bytes UTF-8, fim de linha CRLF |
 | `remote.ps1` | **Sem** marca de ordem de bytes, fim de linha CRLF. É baixado e avaliado por `iex`, e o BOM chega como `U+FEFF` no início da cadeia, impedindo o parser de reconhecer a abertura de comentário da linha 1 |
 | `.bat` | **Sem** marca de ordem de bytes, fim de linha CRLF |
@@ -225,9 +225,9 @@ Dentro de um bloco `( ... )`, um `)` não escapado encerra o bloco. Em `echo`, e
 
 ## Estendendo o catálogo do Debloat
 
-O `Debloat.ps1` é o único módulo com catálogo declarativo. Adicionar um item não exige
-tocar em lógica alguma: basta acrescentar uma entrada na lista correspondente dentro de
-`Get-DebloatCatalogo`.
+`Debloat.ps1` e `Apps.ps1` são os módulos com catálogo declarativo. Adicionar um item
+não exige tocar em lógica alguma: basta acrescentar uma entrada na lista correspondente
+dentro de `Get-DebloatCatalogo`.
 
 ```powershell
 $servicos = @(
@@ -259,6 +259,40 @@ da causa. Com chaves nomeadas o problema não existe.
 ```powershell
 . .\Modules\Debloat.ps1 -Action Analyze -Level Aggressive
 ```
+
+---
+
+## Estendendo o catálogo de aplicativos
+
+`Apps.ps1` mantém o catálogo de instalação em `$script:Catalogo`. Menus, numeração,
+lote, instalação global e verificação são derivados dele — incluir uma ferramenta é
+acrescentar uma entrada, sem tocar em lógica de menu.
+
+```powershell
+[pscustomobject]@{ Name = 'HWiNFO'; Id = 'REALiX.HWiNFO'; Category = 'Hardware'
+    Description = 'Diagnostico e inventario detalhado de hardware'
+    Native = $false; Available = $true; Publisher = 'REALiX'; PackageType = 'inno'
+    Scope = 'machine'; Architecture = 'x64, arm64'; SuiteId = $null; Note = '' }
+```
+
+| Campo | Significado |
+|---|---|
+| `Name` `Id` `Category` `Description` | Obrigatórios. `Id` é o identificador exato do Winget |
+| `Native` | `$true` quando o recurso já acompanha o Windows — nada é instalado |
+| `Available` | `$false` quando não existe pacote na fonte oficial. Nesse caso `Id` fica vazio |
+| `Publisher` `PackageType` `Scope` `Architecture` | Metadados conferidos no manifesto oficial |
+| `SuiteId` | Pacote que já contém a ferramenta; evita download redundante |
+| `Note` | Texto exibido quando o item não é instalável |
+
+**O identificador precisa ser conferido no catálogo oficial antes de entrar aqui.**
+Nunca deduza um `Id`: confirme-o na fonte `winget` e registre o editor, o tipo de
+instalador e a arquitetura como publicados no manifesto. Item sem pacote válido entra
+com `Available = $false` e `Note` explicando — nunca com URL substituta.
+
+A rotina Batch de contingência (`:FB_APPS_WALK1` a `:FB_APPS_WALK6`, em
+`Launcher.bat`) espelha esse catálogo com os mesmos identificadores e a mesma ordem.
+Ao acrescentar um aplicativo, acrescente a linha equivalente na categoria
+correspondente, sob pena de o caminho sem PowerShell ficar defasado.
 
 Um item protegido nunca aparece na simulação, por desenho.
 

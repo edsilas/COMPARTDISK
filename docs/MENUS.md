@@ -1,6 +1,6 @@
 # Descrição dos Menus
 
-**COMPARTDISK 1.3.1** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.0** · Desenvolvido por Edsilas
 
 Mapa completo de todas as telas. Cada opção indica se **altera** o computador ou se
 apenas **lê** informações.
@@ -14,7 +14,7 @@ Legenda: 🔵 **Leitura** (não muda nada) · 🟡 **Altera** o sistema · 🔴 
 | Tecla | Opção | Leva para |
 |---|---|---|
 | `1` | Reparo Geral Automático (One-Click Fix) | Executa direto |
-| `2` | Atualizar Programas (Winget) | Executa direto |
+| `2` | Aplicativos: Atualizar e Instalar (Winget) | Submenu Aplicativos |
 | `3` | Rede, Internet e Conectividade | Submenu Rede |
 | `4` | Otimização, Limpeza Profunda e Privacidade | Submenu Otimização |
 | `5` | Reparo do Sistema, Windows Update e Explorer | Submenu Reparo |
@@ -30,10 +30,58 @@ Executa em sequência, sem perguntar nada: limpeza profunda, reset de rede, repa
 Windows Update, fila de impressão, reinício do Explorer, reparo profundo do sistema e
 relatório final. De 20 a 60 minutos. **Reinicie ao terminar.**
 
-### `2` — Atualizar Programas (Winget) 🟡
+### `2` — Aplicativos 🟡
 
-Atualiza todos os programas instalados que o gerenciador de pacotes do Windows
-conhece. Requer internet. Programas em uso podem falhar — feche o que puder antes.
+Abre o submenu de aplicativos, com duas capacidades independentes.
+
+---
+
+## Menu Aplicativos
+
+| Tecla | Opção | Tipo |
+|---|---|---|
+| `1` | Atualizar aplicativos (Winget) | 🟡 |
+| `2` | Instalar aplicativos (catálogo de suporte técnico) | 🟡 |
+| `0` | Voltar | — |
+
+**`1` Atualizar aplicativos** — atualiza todos os programas instalados que o
+gerenciador de pacotes do Windows conhece. É exatamente a rotina que antes ficava na
+tecla `2` do menu principal, sem qualquer alteração de comportamento. Requer
+internet. Programas em uso podem falhar — feche o que puder antes.
+
+**`2` Instalar aplicativos** — instala ferramentas de suporte técnico a partir de um
+catálogo interno. **Instala apenas o que estiver ausente**: nada é atualizado,
+reinstalado ou removido por esta opção. Toda a navegação é numérica.
+
+### Menu Instalar Aplicativos
+
+| Tecla | Opção | Tipo |
+|---|---|---|
+| `1` | Hardware (6 aplicativos) | 🟡 |
+| `2` | Windows / Sistema (9 aplicativos) | 🟡 |
+| `3` | Rede (6 aplicativos) | 🟡 |
+| `4` | Acesso Remoto (3 itens) | 🟡 |
+| `5` | Produtividade (2 aplicativos) | 🟡 |
+| `6` | Utilitários (ponto de extensão, vazio) | 🟡 |
+| `7` | Instalar todos os aplicativos | 🟡 |
+| `8` | Ver aplicativos instalados | 🔵 |
+| `0` | Voltar | — |
+
+Dentro de uma categoria, cada aplicativo recebe um número; o número seguinte ao
+último aplicativo é **Instalar todos**, e `0` volta. Depois de instalar um item, o
+menu da categoria reaparece, o que permite instalar vários itens em sequência.
+
+**Instalar todos** (da categoria ou global) mostra a lista antes de agir e só executa
+após a confirmação `[1]`; `[0]` cancela sem alterar nada. Uma falha individual não
+interrompe o lote, e ao final é exibido o resumo com instalados, já instalados, não
+disponíveis e falhas.
+
+**`8` Ver aplicativos instalados** apenas consulta: mostra o estado de cada item do
+catálogo, com a versão instalada quando o Winget a informa.
+
+Dois itens do catálogo não são instaláveis por pacote e são exibidos como tal:
+**RDP** é recurso nativo do Windows (`mstsc.exe`) e **RustDesk** não possui pacote no
+catálogo oficial do Winget. O COMPARTDISK não baixa instaladores fora do Winget.
 
 ---
 

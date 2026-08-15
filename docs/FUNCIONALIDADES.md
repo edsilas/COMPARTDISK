@@ -1,6 +1,6 @@
 # Descrição das Funcionalidades
 
-**COMPARTDISK 1.3.1** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.0** · Desenvolvido por Edsilas
 
 Descrição técnica do que cada recurso faz. Para a explicação em linguagem simples,
 veja o [Manual do Usuário](MANUAL-DO-USUARIO.md).
@@ -27,6 +27,7 @@ veja o [Manual do Usuário](MANUAL-DO-USUARIO.md).
 | `Battery.ps1` | `Info` `Report` `Sleep` |
 | `Bitlocker.ps1` | `Status` `Report` `Keys` |
 | `Explorer.ps1` | `Restart` `ClearCache` `Spooler` `ResetView` |
+| `Apps.ps1` | `Menu` `Install` `InstallCategory` `InstallAll` `List` |
 | `Audit.ps1` | `Full` `Quick` `Events` `Software` `License` |
 | `Report.ps1` | `Build` `Consolidate` `Open` |
 
@@ -206,6 +207,58 @@ SHA-256 para transporte manual, e nenhum envio é tentado ou simulado.
 
 **BitLocker** é somente leitura. Chaves de recuperação podem ser exibidas na tela, mas
 **nunca são gravadas em arquivo**.
+
+---
+
+## Aplicativos
+
+Duas capacidades independentes, sob a opção `2` do menu principal.
+
+**Atualizar aplicativos** permanece a rotina Batch `:MOD_WINGET`: `winget upgrade
+--all --include-unknown`, precedida de teste da fonte. Nada nela foi alterado.
+
+**Instalar aplicativos** é o módulo `Apps.ps1`, que instala **apenas o que estiver
+ausente**. Não atualiza, não reinstala e não remove — atualizar continua sendo
+responsabilidade da outra opção.
+
+O catálogo é declarativo: nome, identificador Winget, categoria, descrição, editor,
+tipo de instalador, escopo, arquitetura e observações. Menus, numeração, lote,
+instalação global e verificação são **derivados** dele; incluir uma ferramenta é
+acrescentar uma entrada.
+
+| Categoria | Itens |
+|---|---|
+| Hardware | HWiNFO, CPU-Z, GPU-Z, CrystalDiskInfo, CrystalDiskMark, OCCT |
+| Windows / Sistema | Sysinternals Suite, Process Explorer, Process Monitor, Autoruns, TCPView, RAMMap, WizTree, Everything, Notepad++ |
+| Rede | Wireshark, Nmap, Advanced IP Scanner, iperf3, PuTTY, WinSCP |
+| Acesso Remoto | RustDesk, AnyDesk, RDP |
+| Produtividade | ONLYOFFICE Desktop Editors, Google Chrome |
+| Utilitários | ponto de extensão, sem itens |
+
+Antes de cada instalação o módulo verifica, nesta ordem: presença do Winget,
+disponibilidade da fonte oficial, cobertura pela Sysinternals Suite, presença do
+pacote no sistema e existência do identificador na fonte. Só então instala, e
+**confirma o estado final** consultando o sistema — código de saída zero não é tratado
+como prova de instalação.
+
+Cada item recebe um resultado do vocabulário `INSTALADO`, `JA INSTALADO`,
+`NAO ENCONTRADO`, `NAO DISPONIVEL`, `ERRO`, `CANCELADO`, `SEM INTERNET`,
+`FONTE INDISPONIVEL`, `ACESSO NEGADO`, `REINICIALIZACAO NECESSARIA` ou
+`RECURSO NATIVO`, traduzido do código de retorno real do Winget. Uma falha individual
+não interrompe o lote.
+
+Dois itens não são instaláveis por pacote e são declarados como tal: **RDP** é recurso
+nativo (`mstsc.exe`) — nenhum identificador é inventado e o Remote Desktop não é
+habilitado — e **RustDesk** não possui pacote na fonte oficial do Winget. Nenhum
+download fora do Winget é realizado.
+
+As cinco ferramentas Sysinternals individuais declaram a suíte que já as contém:
+se a Sysinternals Suite estiver instalada, elas não são baixadas de novo.
+
+Em automação, `-Action Install -Id <id>`, `-Action InstallCategory -Category <nome>`,
+`-Action InstallAll` e `-Action List` operam sem prompt. O alvo precisa existir no
+catálogo interno: identificadores arbitrários são recusados antes de qualquer chamada
+ao Winget.
 
 ---
 

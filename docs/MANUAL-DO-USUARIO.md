@@ -1,6 +1,6 @@
 # Manual do Usuário
 
-**COMPARTDISK 1.3.1** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.0** · Desenvolvido por Edsilas
 
 Manual escrito para quem **não é técnico**. Cada recurso é explicado em linguagem
 simples: o que faz, quando usar e o que esperar.
@@ -55,13 +55,13 @@ Uma janela preta e azul se abre com o menu. É por ali que você trabalha.
 ## Entendendo a tela
 
 ```
-  COMPARTDISK  1.3.1
+  COMPARTDISK  1.4.0
   Assistente de Reparo
 
   --------------------------------------------------------------------------
 
    [1]  Reparo Geral Automatico (One-Click Fix)
-   [2]  Atualizar Programas (Winget)
+   [2]  Aplicativos: Atualizar e Instalar (Winget)
    [3]  Rede, Internet e Conectividade
    [4]  Otimizacao, Limpeza Profunda e Privacidade
    [5]  Reparo do Sistema, Windows Update e Explorer
@@ -117,7 +117,11 @@ onde começar.
 
 ---
 
-### `2` Atualizar Programas
+### `2` Aplicativos
+
+Abre uma tela com duas opções: `1` atualizar e `2` instalar. A tecla `0` volta.
+
+#### `2` › `1` Atualizar aplicativos
 
 **O que é:** atualiza os programas instalados para as versões mais novas.
 
@@ -125,6 +129,19 @@ onde começar.
 
 **O que esperar:** precisa de internet. Programas abertos podem falhar ao atualizar —
 feche o que puder antes. É comum aparecerem alguns avisos amarelos.
+
+#### `2` › `2` Instalar aplicativos
+
+**O que é:** instala ferramentas de suporte técnico (diagnóstico de hardware, rede,
+acesso remoto e produtividade) escolhidas em uma lista pronta.
+
+**Quando usar:** ao preparar um computador de trabalho ou ao precisar de uma
+ferramenta específica em um atendimento.
+
+**O que esperar:** tudo é escolhido por números. Você pode instalar um aplicativo por
+vez, todos os de uma categoria ou todos de uma vez. **O que já está instalado é
+ignorado** — esta opção não atualiza nem remove nada. Se um aplicativo falhar, os
+demais continuam, e no final aparece um resumo. Precisa de internet.
 
 ---
 
@@ -376,7 +393,8 @@ Não. As limpezas mexem em arquivos temporários e caches. Seus documentos, foto
 senhas e favoritos não são tocados.
 
 **Funciona sem internet?**
-Sim, exceto a opção `2` (atualizar programas) e a busca por atualizações do Windows.
+Sim, exceto a opção `2` (atualizar e instalar aplicativos) e a busca por atualizações
+do Windows.
 
 Mais perguntas em [FAQ](FAQ.md). Problemas em
 [Solução de Problemas](SOLUCAO-DE-PROBLEMAS.md).

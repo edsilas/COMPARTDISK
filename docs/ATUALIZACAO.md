@@ -1,12 +1,13 @@
 # Política de Atualização
 
-**COMPARTDISK 1.3.1** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.0** · Desenvolvido por Edsilas
 
 ---
 
 ## Como atualizar
 
-1. Baixe a versão nova em https://github.com/edsilas/compartdisk
+1. Baixe a versão nova na página oficial de *Releases*:
+   **https://github.com/edsilas/COMPARTDISK/releases**
 2. Extraia em uma pasta nova
 3. Copie seus relatórios antigos, se quiser guardá-los
 4. Apague a pasta antiga
@@ -42,8 +43,13 @@ O projeto segue [Versionamento Semântico](https://semver.org/lang/pt-BR/), no f
 | **MENOR** | Novas funcionalidades são adicionadas, mantendo tudo que existia |
 | **CORREÇÃO** | Apenas correções de falhas |
 
-Exemplo: da versão **1.1.0** para **1.2.0**, funcionalidades foram acrescentadas e
-nada foi removido.
+Exemplo: da versão **1.3.1** para **1.4.0**, a instalação de aplicativos foi
+acrescentada e nada foi removido — a atualização de programas que já existia continua
+funcionando exatamente como antes.
+
+O histórico completo, versão por versão, está no
+[Changelog](../CHANGELOG.md) e nas notas de cada publicação em
+[Releases](https://github.com/edsilas/COMPARTDISK/releases).
 
 ---
 

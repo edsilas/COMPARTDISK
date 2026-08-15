@@ -40,8 +40,12 @@ $ProgressPreference    = 'SilentlyContinue'   # acelera muito o Invoke-WebReques
 # interno ou versao fixada.
 # ==============================================================================
 $Repo     = if ($env:COMPARTDISK_REPO)  { $env:COMPARTDISK_REPO }  else { 'edsilas/compartdisk' }
-$TagFixa  = if ($env:COMPARTDISK_TAG)   { $env:COMPARTDISK_TAG }   else { 'v1.3.1' }
-$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { '28da0fa9af06ed679f06ae81684af8e6f8ab36a6673a353245fcced33e0fc4f6' }
+$TagFixa  = if ($env:COMPARTDISK_TAG)   { $env:COMPARTDISK_TAG }   else { 'v1.4.0' }
+# Hash fixado do pacote da tag acima. Enquanto estiver vazio, o script usa o SHA-256
+# publicado nas notas da release (Get-HashPublicado) - a validacao de integridade
+# continua acontecendo, com o valor vindo da propria publicacao. Ao fixar aqui, use
+# obrigatoriamente o hash do arquivo .zip anexado aquela tag.
+$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { '' }
 $Origem   = "https://github.com/$Repo"
 $ApiBase  = "https://api.github.com/repos/$Repo"
 

@@ -1,6 +1,6 @@
 # Requisitos do Sistema
 
-**COMPARTDISK 1.3.1** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.0** · Desenvolvido por Edsilas
 
 ---
 
@@ -20,7 +20,7 @@
 - Instalador ou pacote de redistribuição
 - .NET Framework em versão específica
 - Módulos do PowerShell Gallery
-- Conexão com a internet (exceto para atualizar programas)
+- Conexão com a internet (exceto para atualizar e instalar aplicativos)
 - Ferramentas de terceiros
 
 A ferramenta usa exclusivamente componentes que já acompanham o Windows.
@@ -36,7 +36,7 @@ profundidade do diagnóstico — **nenhuma funcionalidade deixa de existir**.
 |---|---|---|
 | **PowerShell 5.1** | Diagnóstico completo e relatórios nos quatro formatos | Rotinas Batch equivalentes assumem |
 | **PowerShell 7** | Mesmo que acima, com melhor desempenho | PowerShell 5.1 é usado |
-| **Winget** | Atualização de programas instalados | Opção informa indisponibilidade |
+| **Winget** | Atualização de programas e instalação do catálogo de aplicativos | Opção informa indisponibilidade |
 | **WMIC** | Consultas de hardware no modo Batch | Consultas alternativas são usadas |
 | **PnPUtil** | Backup e inventário de drivers | Opção informa indisponibilidade |
 | **manage-bde** | Consulta ao BitLocker no modo Batch | Opção informa indisponibilidade |

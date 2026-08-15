@@ -4,8 +4,11 @@
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/License-Apache%202.0-0078D4?style=flat-square&logo=apache&logoColor=white" alt="License">
   </a>
+  <a href="https://github.com/edsilas/COMPARTDISK/releases">
+    <img src="https://img.shields.io/badge/Release-v1.4.0-107C10?style=flat-square&logo=github&logoColor=white" alt="Release">
+  </a>
   <a href="CHANGELOG.md">
-    <img src="https://img.shields.io/badge/Release-v1.3.1-107C10?style=flat-square&logo=github&logoColor=white" alt="Release">
+    <img src="https://img.shields.io/badge/Changelog-hist%C3%B3rico-6E6E6E?style=flat-square&logo=markdown&logoColor=white" alt="Changelog">
   </a>
   <a href="#3-pré-requisitos">
     <img src="https://img.shields.io/badge/Platform-Windows-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Platform">
@@ -23,6 +26,11 @@ componentes nativos do sistema operacional, sem instalação e sem dependências
 Compatível atualmente com Windows 10 e Windows 11.
 
 > Desenvolvido por Edsilas
+
+> [!IMPORTANT]
+> **Versão atual: 1.4.0.** Baixe o pacote e leia as notas de lançamento em
+> **[Releases](https://github.com/edsilas/COMPARTDISK/releases)** —
+> https://github.com/edsilas/COMPARTDISK/releases
 
 ---
 
@@ -182,7 +190,7 @@ mas **não remove funcionalidades**.
 |---|---|---|
 | Windows PowerShell 5.1 | Diagnóstico completo e relatórios nos quatro formatos | Rotinas Batch assumem |
 | PowerShell 7 | O mesmo, com melhor desempenho | O PowerShell 5.1 é utilizado |
-| Winget | Atualização de programas instalados | A opção informa indisponibilidade |
+| Winget | Atualização de programas instalados e instalação do catálogo de aplicativos | A opção informa indisponibilidade |
 | PnPUtil | Backup e inventário de drivers | A opção informa indisponibilidade |
 
 > [!TIP]
@@ -290,13 +298,13 @@ Instruções detalhadas em [Guia de Instalação](docs/INSTALACAO.md).
 ## 6. Interface
 
 ```text
-  COMPARTDISK  1.3.1
+  COMPARTDISK  1.4.0
   Assistente de Reparo
 
   --------------------------------------------------------------------------
 
    [1]  Reparo Geral Automatico (One-Click Fix)
-   [2]  Atualizar Programas (Winget)
+   [2]  Aplicativos: Atualizar e Instalar (Winget)
    [3]  Rede, Internet e Conectividade
    [4]  Otimizacao, Limpeza Profunda e Privacidade
    [5]  Reparo do Sistema, Windows Update e Explorer
@@ -321,7 +329,7 @@ registro está sendo gravado.
 
 ### Mapa dos menus
 
-Duas opções executam direto; as demais abrem submenus. O número entre parênteses é a
+Uma opção executa direto; as demais abrem submenus. O número entre parênteses é a
 quantidade de opções de cada tela.
 
 ```mermaid
@@ -329,7 +337,7 @@ flowchart LR
     MP(["<b>Menu principal</b>"])
 
     MP --> M1["<b>1</b> · Reparo Geral Automático<br/><i>executa direto — 20 a 60 min</i>"]
-    MP --> M2["<b>2</b> · Atualizar Programas<br/><i>executa direto — Winget</i>"]
+    MP --> M2["<b>2</b> · Aplicativos<br/><i>2 opções — atualizar e instalar (Winget)</i>"]
     MP --> M3["<b>3</b> · Rede, Internet e Conectividade<br/><i>7 opções — 4 leem, 3 alteram</i>"]
     MP --> M4["<b>4</b> · Otimização, Limpeza e Privacidade<br/><i>9 opções — 2 leem, 2 irreversíveis</i>"]
     MP --> M5["<b>5</b> · Reparo do Sistema e Update<br/><i>9 opções — 2 leem, 7 alteram</i>"]
@@ -338,6 +346,8 @@ flowchart LR
     MP --> M8["<b>8</b> · Diagnóstico e Relatórios<br/><i>9 opções — todas somente leitura</i>"]
     MP --> M9["<b>9</b> · Ambiente de Execução<br/><i>2 opções — somente leitura</i>"]
 
+    M2 --> AP["<b>2 › 2</b> · Instalar aplicativos<br/><i>6 categorias — instala só o ausente</i>"]
+
     M4 --> DB["<b>4 › 9</b> · Desbloat do Windows<br/><i>9 opções — 3 níveis, 1 simula</i>"]
     DB --> BK["<b>4 › 9 › 9</b> · Backup e reversão<br/><i>4 opções</i>"]
 
@@ -345,7 +355,7 @@ flowchart LR
     classDef altera fill:#FFF4CE,stroke:#9D5D00,color:#3B2300
     classDef critico fill:#FDE7E9,stroke:#A4262C,color:#6E0811
     class M8,M9 leitura
-    class M2,M3,M5,DB,BK altera
+    class M2,M3,M5,AP,DB,BK altera
     class M1,M4,M6 critico
     class M7 leitura
 ```
@@ -581,8 +591,11 @@ patrocinado ou endossado pela Microsoft.
 
 <div align="center">
 
-**COMPARTDISK 1.3.1** — Desenvolvido por Edsilas
+**COMPARTDISK 1.4.0** — Desenvolvido por Edsilas
 
-https://github.com/edsilas/compartdisk
+https://github.com/edsilas/COMPARTDISK
+
+[Releases](https://github.com/edsilas/COMPARTDISK/releases) ·
+[Changelog](CHANGELOG.md) · [Documentação](docs/)
 
 </div>

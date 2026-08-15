@@ -1,6 +1,6 @@
 @echo off
 :: ==============================================================================
-:: COMPARTDISK 1.3.1 - ASSISTENTE DE REPARO PARA WINDOWS 10 E WINDOWS 11
+:: COMPARTDISK 1.4.0 - ASSISTENTE DE REPARO PARA WINDOWS 10 E WINDOWS 11
 :: DESENVOLVIDO POR EDSILAS
 ::
 :: Arquitetura hibrida: Batch como interface, navegacao, controle de fluxo,
@@ -45,6 +45,10 @@
 setlocal EnableExtensions DisableDelayedExpansion
 if errorlevel 1 goto SEM_EXTENSOES
 chcp 65001 >nul 2>&1
+:: O resultado da troca de pagina de codigo decide como o titulo da janela e
+:: montado mais adiante: o travessao do titulo oficial e um caractere UTF-8.
+set "SEM_UTF8="
+if errorlevel 1 set "SEM_UTF8=1"
 
 :: ==============================================================================
 :: 0. TRACE DE BOOTSTRAP
@@ -52,7 +56,7 @@ chcp 65001 >nul 2>&1
 :: Se o processo morrer de forma abrupta, a ultima linha deste arquivo aponta
 :: exatamente o estagio em que a falha ocorreu.
 :: ==============================================================================
-set "COMPARTDISK_VERSION=1.3.1"
+set "COMPARTDISK_VERSION=1.4.0"
 set "COMPARTDISK_ROOT=%~dp0"
 set "COMPARTDISK_MODULES=%~dp0Modules"
 set "COMPARTDISK_SELF=%~f0"
@@ -78,7 +82,14 @@ call :TRACE "ESTAGIO 01 - shell inicializado, extensoes ativas"
 :: ==============================================================================
 :: 1. INICIALIZACAO DA INTERFACE
 :: ==============================================================================
-title COMPARTDISK %COMPARTDISK_VERSION% - Assistente de Reparo - DESENVOLVIDO POR EDSILAS
+:: Titulo oficial da janela, em caixa alta. O travessao e o unico caractere nao
+:: ASCII do arquivo e so e lido corretamente porque "chcp 65001" ja executou: o
+:: cmd decodifica cada linha na pagina de codigo vigente no momento da execucao.
+:: Se a troca de pagina falhou, cai para hifen - melhor um hifen correto do que
+:: bytes corrompidos na barra de titulo.
+set "COMPARTDISK_TITULO=COMPARTDISK %COMPARTDISK_VERSION% — ASSISTENTE DE REPARO WINDOWS"
+if defined SEM_UTF8 set "COMPARTDISK_TITULO=COMPARTDISK %COMPARTDISK_VERSION% - ASSISTENTE DE REPARO WINDOWS"
+title %COMPARTDISK_TITULO%
 reg add "HKCU\Console" /v VirtualTerminalLevel /t REG_DWORD /d 1 /f >nul 2>&1
 
 set "ESC="
@@ -400,6 +411,9 @@ echo    %C_CIANO%/clean%C_RESET%     %C_TEXTO%Executa a limpeza profunda%C_RESET
 echo    %C_CIANO%/?%C_RESET%         %C_TEXTO%Exibe esta ajuda%C_RESET%
 echo.
 echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%Versoes e notas de lancamento%C_RESET%
+echo   %C_TEXTO%https://github.com/edsilas/COMPARTDISK/releases%C_RESET%
+echo.
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
 pause
@@ -417,7 +431,7 @@ echo.
 echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
 echo.
 echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Reparo Geral Automatico (One-Click Fix)%C_RESET%
-echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Atualizar Programas (Winget)%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Aplicativos: Atualizar e Instalar (Winget)%C_RESET%
 echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Rede, Internet e Conectividade%C_RESET%
 echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Otimizacao, Limpeza Profunda e Privacidade%C_RESET%
 echo    %C_CIANO%[5]%C_RESET%  %C_TEXTO%Reparo do Sistema, Windows Update e Explorer%C_RESET%
@@ -443,7 +457,7 @@ if errorlevel 6 goto MENU_SEGURANCA
 if errorlevel 5 goto MENU_REPARO
 if errorlevel 4 goto MENU_OTIMIZACAO
 if errorlevel 3 goto MENU_REDE
-if errorlevel 2 goto MOD_WINGET_MENU
+if errorlevel 2 goto MENU_APLICATIVOS
 if errorlevel 1 goto MOD_AUTO_FIX
 :: Rede de seguranca: CHOICE interrompido (Ctrl+C) retorna 0 e nao deve cair no submenu seguinte
 goto MENU_PRINCIPAL
@@ -451,6 +465,35 @@ goto MENU_PRINCIPAL
 :: ==============================================================================
 :: SUBMENUS
 :: ==============================================================================
+:MENU_APLICATIVOS
+:: A opcao [2] do menu principal continua sendo a area de aplicativos. O que era
+:: execucao direta da atualizacao passa a ser [1] deste submenu, com o MESMO
+:: comportamento e a MESMA rotina (:MOD_WINGET). A instalacao foi ACRESCENTADA
+:: em [2]; nada da atualizacao foi movido, reescrito ou substituido.
+cls
+echo.
+echo   %C_TITULO%Aplicativos%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Atualizar aplicativos (Winget)%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Instalar aplicativos (catalogo de suporte tecnico)%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+if "%HAS_WINGET%"=="0" echo   %C_AMARELO%Winget indisponivel neste sistema: as duas opcoes informarao a indisponibilidade.%C_RESET%
+echo   %C_CINZA%[1] atualiza o que ja esta instalado. [2] instala somente o que estiver ausente.%C_RESET%
+echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
+echo.
+choice /c 120 /n /m "  Opcao: "
+if errorlevel 3 goto MENU_PRINCIPAL
+if errorlevel 2 goto MOD_APPS_MENU
+if errorlevel 1 goto MOD_WINGET_MENU
+:: Rede de seguranca: CHOICE interrompido (Ctrl+C) retorna 0
+goto MENU_APLICATIVOS
+
 :MENU_REDE
 cls
 echo.
@@ -907,7 +950,7 @@ goto :EOF
 :MOD_WINGET_MENU
 cls
 call :MOD_WINGET
-pause & goto MENU_PRINCIPAL
+pause & goto MENU_APLICATIVOS
 
 :MOD_WINGET
 if "%HAS_WINGET%"=="0" (
@@ -924,6 +967,22 @@ if errorlevel 1 (
 ) else (
     call :LOG_MSG "OK" "Processo de atualizacao Winget concluido."
 )
+goto :EOF
+
+:: ------------------------------------------------------------------------------
+:: INSTALACAO DE APLICATIVOS (catalogo declarativo em Modules\Apps.ps1)
+:: Sem PowerShell ou sem o modulo, o Launcher aplica a rotina Batch :FB_APPS_MENU,
+:: que oferece o mesmo catalogo e os mesmos controles numericos.
+:: ------------------------------------------------------------------------------
+:MOD_APPS_MENU
+cls
+call :MOD_APPS_INSTALAR
+pause & goto MENU_APLICATIVOS
+
+:MOD_APPS_INSTALAR
+set "PS_ARGS=-Action Menu"
+call :RUN_PS "Apps.ps1"
+if errorlevel 9000 goto FB_APPS_MENU
 goto :EOF
 
 :: ------------------------------------------------------------------------------
@@ -2123,6 +2182,382 @@ echo.
 echo   Relatorio de texto: %LOGFILE%
 goto :EOF
 
+:: ------------------------------------------------------------------------------
+:: FALLBACK BATCH DA INSTALACAO DE APLICATIVOS
+::
+:: Equivalente a Modules\Apps.ps1 quando o PowerShell esta ausente ou bloqueado.
+:: Mesmo catalogo, mesmos identificadores, mesma regra (instala apenas o que
+:: estiver ausente) e mesmos controles - todos numericos.
+::
+:: O catalogo aparece UMA unica vez por categoria, nas rotinas :FB_APPS_WALKn.
+:: Menu, selecao, lote e verificacao percorrem essas listas aplicando um "verbo"
+:: (o rotulo passado em %~1), entao acrescentar um aplicativo aqui e acrescentar
+:: uma linha - a mesma propriedade do catalogo declarativo do modulo.
+::
+:: Codigo de saida do winget NAO e testado com "if errorlevel": o winget devolve
+:: HRESULT, que chega negativo, e "if errorlevel 1" e falso para negativos - um
+:: erro seria lido como sucesso. A comparacao e sempre textual com "0".
+:: ------------------------------------------------------------------------------
+:FB_APPS_MENU
+if "%HAS_WINGET%"=="0" goto FB_APPS_SEM_WINGET
+call :LOG_MSG "INFO" "[Batch] Instalacao de aplicativos pela rotina de contingencia."
+call :FB_APPS_ZERAR
+
+:FB_APPS_MENU_LOOP
+cls
+echo.
+echo   %C_TITULO%Instalar Aplicativos%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION% - rotina Batch%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Hardware%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Windows / Sistema%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Rede%C_RESET%
+echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Acesso Remoto%C_RESET%
+echo    %C_CIANO%[5]%C_RESET%  %C_TEXTO%Produtividade%C_RESET%
+echo    %C_CIANO%[6]%C_RESET%  %C_TEXTO%Utilitarios%C_RESET%
+echo    %C_CIANO%[7]%C_RESET%  %C_TEXTO%Instalar todos os aplicativos%C_RESET%
+echo    %C_CIANO%[8]%C_RESET%  %C_TEXTO%Ver aplicativos instalados%C_RESET%
+echo.
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_CINZA%Instala somente o que estiver ausente. Nao atualiza o que ja existe.%C_RESET%
+echo.
+choice /c 123456780 /n /m "  Opcao: "
+if errorlevel 9 goto :EOF
+if errorlevel 8 goto FB_APPS_VER
+if errorlevel 7 goto FB_APPS_TODOS
+if errorlevel 6 goto FB_APPS_CAT6
+if errorlevel 5 goto FB_APPS_CAT5
+if errorlevel 4 goto FB_APPS_CAT4
+if errorlevel 3 goto FB_APPS_CAT3
+if errorlevel 2 goto FB_APPS_CAT2
+if errorlevel 1 goto FB_APPS_CAT1
+goto FB_APPS_MENU_LOOP
+
+:FB_APPS_CAT1
+set "FB_CAT=1" & set "FB_CAT_NOME=Hardware"
+goto FB_APPS_CATEGORIA
+:FB_APPS_CAT2
+set "FB_CAT=2" & set "FB_CAT_NOME=Windows / Sistema"
+goto FB_APPS_CATEGORIA
+:FB_APPS_CAT3
+set "FB_CAT=3" & set "FB_CAT_NOME=Rede"
+goto FB_APPS_CATEGORIA
+:FB_APPS_CAT4
+set "FB_CAT=4" & set "FB_CAT_NOME=Acesso Remoto"
+goto FB_APPS_CATEGORIA
+:FB_APPS_CAT5
+set "FB_CAT=5" & set "FB_CAT_NOME=Produtividade"
+goto FB_APPS_CATEGORIA
+:FB_APPS_CAT6
+set "FB_CAT=6" & set "FB_CAT_NOME=Utilitarios"
+goto FB_APPS_CATEGORIA
+
+:FB_APPS_CATEGORIA
+cls
+echo.
+echo   %C_TITULO%%FB_CAT_NOME%%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION% - rotina Batch%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+set "FB_N=0"
+call :FB_APPS_WALK%FB_CAT% FB_APPS_ITEM_MENU
+if "%FB_N%"=="0" goto FB_APPS_CATEGORIA_VAZIA
+set /a FB_TODOS=FB_N+1
+echo.
+echo    %C_CIANO%[%FB_TODOS%]%C_RESET%  %C_TEXTO%Instalar todos%C_RESET%
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+set "FB_SEL="
+set /p "FB_SEL=  Escolha: "
+if not defined FB_SEL goto FB_APPS_CATEGORIA
+:: Aspa solta quebraria a comparacao abaixo. Numero nunca contem aspas.
+set "FB_SEL=%FB_SEL:"=%"
+if not defined FB_SEL goto FB_APPS_CATEGORIA
+if "%FB_SEL%"=="0" goto FB_APPS_MENU_LOOP
+if "%FB_SEL%"=="%FB_TODOS%" goto FB_APPS_CAT_LOTE
+set "FB_VALIDO="
+set "FB_N=0"
+call :FB_APPS_WALK%FB_CAT% FB_APPS_ITEM_SELECAO
+if not defined FB_VALIDO call :LOG_MSG "WARN" "Opcao invalida. Informe apenas numeros de 0 a %FB_TODOS%."
+echo.
+pause
+goto FB_APPS_CATEGORIA
+
+:FB_APPS_CATEGORIA_VAZIA
+echo   %C_CINZA%Nenhum aplicativo cadastrado nesta categoria.%C_RESET%
+echo   %C_CINZA%A categoria existe como ponto de extensao do catalogo.%C_RESET%
+echo.
+pause
+goto FB_APPS_MENU_LOOP
+
+:FB_APPS_CAT_LOTE
+cls
+echo.
+echo   %C_TITULO%Instalacao em Lote%C_RESET%
+echo   %C_CINZA%%FB_CAT_NOME%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+set "FB_N=0"
+call :FB_APPS_WALK%FB_CAT% FB_APPS_ITEM_LISTA
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Confirmar instalacao%C_RESET%
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Cancelar%C_RESET%
+echo.
+choice /c 10 /n /m "  Opcao: "
+if errorlevel 2 goto FB_APPS_LOTE_CANCELADO
+echo.
+call :FB_APPS_ZERAR
+call :FB_APPS_WALK%FB_CAT% FB_APPS_INSTALAR
+call :FB_APPS_RESUMO
+echo.
+pause
+goto FB_APPS_CATEGORIA
+
+:FB_APPS_LOTE_CANCELADO
+call :LOG_MSG "INFO" "Instalacao em lote cancelada pelo operador. Nada foi alterado."
+echo.
+pause
+goto FB_APPS_CATEGORIA
+
+:FB_APPS_TODOS
+cls
+echo.
+echo   %C_TITULO%Instalar Todos os Aplicativos%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION% - rotina Batch%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo   %C_TEXTO%Hardware%C_RESET%
+call :FB_APPS_WALK1 FB_APPS_ITEM_SIMPLES
+echo   %C_TEXTO%Windows / Sistema%C_RESET%
+call :FB_APPS_WALK2 FB_APPS_ITEM_SIMPLES
+echo   %C_TEXTO%Rede%C_RESET%
+call :FB_APPS_WALK3 FB_APPS_ITEM_SIMPLES
+echo   %C_TEXTO%Acesso Remoto%C_RESET%
+call :FB_APPS_WALK4 FB_APPS_ITEM_SIMPLES
+echo   %C_TEXTO%Produtividade%C_RESET%
+call :FB_APPS_WALK5 FB_APPS_ITEM_SIMPLES
+echo.
+echo   %C_CINZA%Aplicativos ja instalados sao ignorados automaticamente.%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Confirmar instalacao completa%C_RESET%
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Cancelar%C_RESET%
+echo.
+choice /c 10 /n /m "  Opcao: "
+if errorlevel 2 goto FB_APPS_TODOS_CANCELADO
+echo.
+call :FB_APPS_ZERAR
+call :FB_APPS_WALK1 FB_APPS_INSTALAR
+call :FB_APPS_WALK2 FB_APPS_INSTALAR
+call :FB_APPS_WALK3 FB_APPS_INSTALAR
+call :FB_APPS_WALK4 FB_APPS_INSTALAR
+call :FB_APPS_WALK5 FB_APPS_INSTALAR
+call :FB_APPS_WALK6 FB_APPS_INSTALAR
+call :FB_APPS_RESUMO
+echo.
+pause
+goto FB_APPS_MENU_LOOP
+
+:FB_APPS_TODOS_CANCELADO
+call :LOG_MSG "INFO" "Instalacao completa cancelada pelo operador. Nada foi alterado."
+echo.
+pause
+goto FB_APPS_MENU_LOOP
+
+:FB_APPS_VER
+cls
+echo.
+echo   %C_TITULO%Aplicativos Instalados%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION% - rotina Batch%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+set "FB_N=0"
+echo   %C_TEXTO%Hardware%C_RESET%
+call :FB_APPS_WALK1 FB_APPS_ITEM_ESTADO
+echo   %C_TEXTO%Windows / Sistema%C_RESET%
+call :FB_APPS_WALK2 FB_APPS_ITEM_ESTADO
+echo   %C_TEXTO%Rede%C_RESET%
+call :FB_APPS_WALK3 FB_APPS_ITEM_ESTADO
+echo   %C_TEXTO%Acesso Remoto%C_RESET%
+call :FB_APPS_WALK4 FB_APPS_ITEM_ESTADO
+echo   %C_TEXTO%Produtividade%C_RESET%
+call :FB_APPS_WALK5 FB_APPS_ITEM_ESTADO
+echo.
+pause
+goto FB_APPS_MENU_LOOP
+
+:FB_APPS_SEM_WINGET
+cls
+echo.
+echo   %C_TITULO%Winget Indisponivel%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo   %C_AMARELO%O Windows nao possui o WinGet disponivel neste ambiente.%C_RESET%
+echo   %C_AMARELO%A instalacao de aplicativos nao pode continuar.%C_RESET%
+echo.
+echo   %C_CINZA%O COMPARTDISK nao instala o WinGet automaticamente.%C_RESET%
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Menu principal de aplicativos%C_RESET%
+echo.
+choice /c 10 /n /m "  Opcao: "
+call :LOG_MSG "ERR" "Winget ausente ou corrompido neste sistema."
+goto :EOF
+
+:: --- verbos aplicados a cada item do catalogo --------------------------------
+:FB_APPS_ITEM_MENU
+:: %~1 = nome   %~2 = identificador ('' quando nao instalavel)   %~3 = observacao
+set /a FB_N+=1
+echo    %C_CIANO%[%FB_N%]%C_RESET%  %C_TEXTO%%~1%C_RESET%
+if "%~2"=="" echo         %C_AMARELO%%~3%C_RESET%
+goto :EOF
+
+:FB_APPS_ITEM_SELECAO
+set /a FB_N+=1
+if not "%FB_N%"=="%FB_SEL%" goto :EOF
+set "FB_VALIDO=1"
+echo.
+call :FB_APPS_INSTALAR "%~1" "%~2" "%~3"
+goto :EOF
+
+:FB_APPS_ITEM_LISTA
+set /a FB_N+=1
+echo    %C_CINZA%%FB_N%.%C_RESET% %C_TEXTO%%~1%C_RESET%
+goto :EOF
+
+:FB_APPS_ITEM_SIMPLES
+echo   %C_CINZA%- %~1%C_RESET%
+goto :EOF
+
+:FB_APPS_ITEM_ESTADO
+set /a FB_N+=1
+if "%~2"=="" goto FB_APPS_ITEM_ESTADO_NAO
+winget list --id %~2 --exact --accept-source-agreements >nul 2>&1
+set "FB_RC=%errorlevel%"
+if "%FB_RC%"=="0" goto FB_APPS_ITEM_ESTADO_SIM
+echo    %C_CIANO%[%FB_N%]%C_RESET% %C_TEXTO%%~1%C_RESET%  %C_CINZA%Nao instalado%C_RESET%
+goto :EOF
+:FB_APPS_ITEM_ESTADO_SIM
+echo    %C_CIANO%[%FB_N%]%C_RESET% %C_TEXTO%%~1%C_RESET%  %C_VERDE%Instalado%C_RESET%
+goto :EOF
+:FB_APPS_ITEM_ESTADO_NAO
+echo    %C_CIANO%[%FB_N%]%C_RESET% %C_TEXTO%%~1%C_RESET%  %C_AMARELO%%~3%C_RESET%
+goto :EOF
+
+:FB_APPS_INSTALAR
+:: %~1 = nome   %~2 = identificador   %~3 = observacao quando nao instalavel
+if "%~2"=="" goto FB_APPS_NAO_INSTALAVEL
+winget list --id %~2 --exact --accept-source-agreements >nul 2>&1
+set "FB_RC=%errorlevel%"
+if "%FB_RC%"=="0" goto FB_APPS_JA_PRESENTE
+call :LOG_MSG "INFO" "Instalando %~1 ..."
+winget install --id %~2 --exact --source winget --silent --accept-package-agreements --accept-source-agreements
+set "FB_RC=%errorlevel%"
+if not "%FB_RC%"=="0" goto FB_APPS_FALHA
+:: Codigo 0 nao e prova: confirma o estado final consultando o sistema.
+winget list --id %~2 --exact --accept-source-agreements >nul 2>&1
+set "FB_RC=%errorlevel%"
+if not "%FB_RC%"=="0" goto FB_APPS_NAO_CONFIRMADO
+set /a FB_APPS_OK+=1
+call :LOG_MSG "OK" "%~1 instalado com sucesso."
+goto :EOF
+
+:FB_APPS_JA_PRESENTE
+set /a FB_APPS_JA+=1
+call :LOG_MSG "OK" "%~1 - ja instalado - ignorado."
+goto :EOF
+
+:FB_APPS_NAO_INSTALAVEL
+set /a FB_APPS_ND+=1
+call :LOG_MSG "WARN" "%~1 - %~3"
+goto :EOF
+
+:FB_APPS_FALHA
+:: Uma falha individual nao interrompe o lote: apenas registra e segue.
+set /a FB_APPS_ERR+=1
+call :LOG_MSG "ERR" "%~1 - falha na instalacao (codigo do winget: %FB_RC%)."
+goto :EOF
+
+:FB_APPS_NAO_CONFIRMADO
+set /a FB_APPS_ERR+=1
+call :LOG_MSG "WARN" "%~1 - o winget informou conclusao, mas o pacote nao aparece instalado."
+goto :EOF
+
+:FB_APPS_ZERAR
+set "FB_APPS_OK=0"
+set "FB_APPS_JA=0"
+set "FB_APPS_ND=0"
+set "FB_APPS_ERR=0"
+goto :EOF
+
+:FB_APPS_RESUMO
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo   %C_TITULO%Resumo da Instalacao%C_RESET%
+echo.
+echo   %C_CINZA%Instalados      %C_RESET%%C_TEXTO%%FB_APPS_OK%%C_RESET%
+echo   %C_CINZA%Ja instalados   %C_RESET%%C_TEXTO%%FB_APPS_JA%%C_RESET%
+echo   %C_CINZA%Nao disponiveis %C_RESET%%C_TEXTO%%FB_APPS_ND%%C_RESET%
+echo   %C_CINZA%Falhas          %C_RESET%%C_TEXTO%%FB_APPS_ERR%%C_RESET%
+call :LOG_MSG "INFO" "[Batch] Instalados: %FB_APPS_OK% | Ja instalados: %FB_APPS_JA% | Nao disponiveis: %FB_APPS_ND% | Falhas: %FB_APPS_ERR%"
+goto :EOF
+
+:: --- catalogo do fallback (uma linha por aplicativo, uma rotina por categoria)
+:: Os identificadores sao os MESMOS conferidos no catalogo de Modules\Apps.ps1.
+:FB_APPS_WALK1
+call :%~1 "HWiNFO" "REALiX.HWiNFO"
+call :%~1 "CPU-Z" "CPUID.CPU-Z"
+call :%~1 "GPU-Z" "TechPowerUp.GPU-Z"
+call :%~1 "CrystalDiskInfo" "CrystalDewWorld.CrystalDiskInfo"
+call :%~1 "CrystalDiskMark" "CrystalDewWorld.CrystalDiskMark"
+call :%~1 "OCCT" "OCBase.OCCT.Personal"
+goto :EOF
+
+:FB_APPS_WALK2
+call :%~1 "Sysinternals Suite" "Microsoft.Sysinternals.Suite"
+call :%~1 "Process Explorer" "Microsoft.Sysinternals.ProcessExplorer"
+call :%~1 "Process Monitor" "Microsoft.Sysinternals.ProcessMonitor"
+call :%~1 "Autoruns" "Microsoft.Sysinternals.Autoruns"
+call :%~1 "TCPView" "Microsoft.Sysinternals.TCPView"
+call :%~1 "RAMMap" "Microsoft.Sysinternals.RAMMap"
+call :%~1 "WizTree" "AntibodySoftware.WizTree"
+call :%~1 "Everything" "voidtools.Everything"
+call :%~1 "Notepad++" "Notepad++.Notepad++"
+goto :EOF
+
+:FB_APPS_WALK3
+call :%~1 "Wireshark" "WiresharkFoundation.Wireshark"
+call :%~1 "Nmap" "Insecure.Nmap"
+call :%~1 "Advanced IP Scanner" "Famatech.AdvancedIPScanner"
+call :%~1 "iperf3" "ar51an.iPerf3"
+call :%~1 "PuTTY" "PuTTY.PuTTY"
+call :%~1 "WinSCP" "WinSCP.WinSCP"
+goto :EOF
+
+:FB_APPS_WALK4
+call :%~1 "RustDesk" "" "Status: nao disponivel via WinGet"
+call :%~1 "AnyDesk" "AnyDesk.AnyDesk"
+call :%~1 "RDP" "" "Recurso nativo do Windows"
+goto :EOF
+
+:FB_APPS_WALK5
+call :%~1 "ONLYOFFICE Desktop Editors" "ONLYOFFICE.DesktopEditors"
+call :%~1 "Google Chrome" "Google.Chrome"
+goto :EOF
+
+:FB_APPS_WALK6
+:: Utilitarios: ponto de extensao, sem aplicativos cadastrados.
+goto :EOF
+
 :: ==============================================================================
 :: 6. MOTOR CENTRAL DE LOGS, DIAGNOSTICO E SAIDA
 :: ==============================================================================
@@ -2204,6 +2639,9 @@ if "%HAS_PS%"=="1" (
     echo   %C_TEXTO%%LOGDIR%COMPARTDISK_Relatorios\%COMPARTDISK_SESSION%%C_RESET%
     echo.
 )
+echo   %C_CINZA%Versoes e notas de lancamento%C_RESET%
+echo   %C_TEXTO%https://github.com/edsilas/COMPARTDISK/releases%C_RESET%
+echo.
 echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.

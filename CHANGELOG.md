@@ -9,22 +9,51 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+Sem alterações pendentes.
+
+---
+
+## [1.4.0] — 2026-08-14
+
+**Instalação de aplicativos via WinGet**, acrescentada ao lado da atualização que já
+existia — mais a manutenção acumulada desde a 1.3.1. Publicação em
+[Releases](https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.0).
+
 Manutenção do `Launcher.bat` e dos módulos `Drivers.ps1`, `Debloat.ps1`,
 `Repair.ps1`, `Smart.ps1`, `Network.ps1`, `Users.ps1`, `Hardware.ps1`,
 `Collectors.ps1`, `Report.ps1`, `Core.ps1`, `Cleanup.ps1`, `Defender.ps1` e
-`Battery.ps1`, e
-correção de ordenação nos relatórios de todos os módulos.
+`Battery.ps1`, correção de ordenação nos relatórios de todos os módulos, e o novo
+módulo `Apps.ps1`, que **acrescenta** a instalação de aplicativos à área de
+aplicativos já existente.
 
-**Nenhuma tecla de menu mudou, nenhum rótulo existente foi removido ou renomeado, e
-nenhum caminho de fallback Batch foi alterado.** As cinco ações existentes do módulo de drivers
+**Nenhuma tecla de menu mudou de posição ou de destino, e nenhum caminho de fallback
+Batch existente foi alterado.** A única mudança de rótulo é a da tecla `2` do menu
+principal, que passa de `Atualizar Programas (Winget)` para `Aplicativos: Atualizar e
+Instalar (Winget)`: a tecla continua abrindo a mesma área, e a atualização passa a ser
+a opção `[1]` dela, com a mesma rotina e o mesmo comportamento. As cinco ações existentes do módulo de drivers
 (`List` `Problems` `Backup` `Unsigned` `Export`) continuam válidas com o mesmo
 significado, e as novas são acessíveis por `-Action` sem aparecer no menu. No módulo
 de debloat, os três níveis, a precedência de seleção, o vocabulário de resultado e as
 listas de proteção permanecem exatamente como estavam.
 
-> A definição do número de versão desta entrega é decisão do mantenedor: o número
-> `1.3.1` aparece em `Core.ps1`, `Launcher.bat`, `README.md` e no cabeçalho de todos
-> os documentos, e não foi alterado por este trabalho.
+> **Versão.** A entrega acrescenta funcionalidade sem remover nem alterar o que
+> existia, o que caracteriza uma versão **menor** em Versionamento Semântico: a
+> numeração passa de `1.3.1` para `1.4.0` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
+> `README.md`, no cabeçalho de todos os módulos e de todos os documentos.
+
+### Alterado
+
+- **Título da janela** passa a ser `COMPARTDISK 1.4.0 — ASSISTENTE DE REPARO WINDOWS`,
+  em caixa alta. O travessão é o único caractere não ASCII do `Launcher.bat` e depende
+  do `chcp 65001` que já executava na inicialização; se a troca de página de código
+  falhar, o título cai automaticamente para a variante com hífen, em vez de exibir
+  caracteres corrompidos.
+- **Link oficial de *Releases*** passa a aparecer na tela de encerramento e na ajuda de
+  linha de comando (`/?`), além do `README.md` e dos guias de instalação e atualização:
+  https://github.com/edsilas/COMPARTDISK/releases
+- **`remote.ps1` passa a apontar para a tag `v1.4.0`.** O SHA-256 do pacote publicado
+  é lido das notas da release, mecanismo que o próprio script já implementava; a
+  validação de integridade continua obrigatória antes da execução.
 
 ### Corrigido
 
@@ -591,6 +620,65 @@ sendo aceitos.
 
 ### Adicionado
 
+#### Instalação de aplicativos (novo módulo `Apps.ps1`)
+
+Nova área de **instalação** de aplicativos de suporte técnico, ao lado da atualização
+que já existia. As duas capacidades são independentes.
+
+> **A atualização existente não foi alterada.** A rotina `:MOD_WINGET` do
+> `Launcher.bat` — `winget source update` seguido de `winget upgrade --all
+> --include-unknown --accept-package-agreements --accept-source-agreements`, com o
+> mesmo tratamento de retorno e as mesmas mensagens — permanece byte a byte como
+> estava. O que mudou foi apenas o destino de retorno do seu invólucro
+> `:MOD_WINGET_MENU`, que agora volta ao submenu de aplicativos em vez do menu
+> principal. Nenhum outro módulo, rotina de fallback, código de saída, variável de
+> ambiente ou parâmetro de linha de comando foi tocado.
+
+- **A tecla `2` do menu principal continua sendo a área de aplicativos**, agora como
+  submenu: `[1] Atualizar aplicativos` (a rotina de sempre) e `[2] Instalar
+  aplicativos` (novo). Nenhuma outra tecla de menu mudou de posição ou de significado.
+- **Catálogo declarativo com 26 itens** em seis categorias — Hardware, Windows /
+  Sistema, Rede, Acesso Remoto, Produtividade e Utilitários (esta última criada como
+  ponto de extensão, sem itens, para não mover nenhum aplicativo de categoria). Menus,
+  numeração, lote, instalação global e verificação são derivados do catálogo:
+  acrescentar uma ferramenta é acrescentar uma entrada.
+- **Todos os identificadores foram conferidos no catálogo oficial do WinGet** (índice
+  da fonte `winget` e manifestos de `microsoft/winget-pkgs`, em 14/08/2026), junto com
+  editor, tipo de instalador, escopo e arquitetura. Nenhum ID foi deduzido.
+- **Instala apenas o que está ausente.** Atualizar continua sendo responsabilidade da
+  opção `[1]`: o módulo nunca executa `winget upgrade`. Item já presente é reportado
+  como `JA INSTALADO` e ignorado.
+- **Sysinternals sem download redundante**: as cinco ferramentas individuais declaram
+  a suíte que já as contém; com a Sysinternals Suite instalada, elas não são baixadas
+  de novo.
+- **`RDP` é tratado como recurso nativo** (`mstsc.exe`): nenhum ID é inventado e o
+  Remote Desktop **não** é habilitado. **`RustDesk` não possui pacote na fonte oficial
+  do WinGet** e é exibido como `Não disponível via WinGet` — sem URL substituta e sem
+  download fora do WinGet.
+- **Notepad++** (`Notepad++.Notepad++`) entra em Windows / Sistema e **Google Chrome**
+  (`Google.Chrome`) em Produtividade. O Chrome não é definido como navegador padrão.
+- **Resultado por código real do WinGet**, não por ausência de exceção: `INSTALADO`,
+  `JA INSTALADO`, `NAO ENCONTRADO`, `NAO DISPONIVEL`, `ERRO`, `CANCELADO`,
+  `SEM INTERNET`, `FONTE INDISPONIVEL`, `ACESSO NEGADO`,
+  `REINICIALIZACAO NECESSARIA` e `RECURSO NATIVO`. Depois de instalar, o estado final
+  é confirmado por consulta ao sistema — código 0 sozinho não é aceito como prova.
+- **Falha individual não interrompe o lote**; ao final, resumo consolidado com
+  instalados, já instalados, não disponíveis e falhas, e uma seção nos relatórios.
+- **Controles exclusivamente numéricos** em toda a área nova, inclusive confirmação
+  (`[1]` confirma, `[0]` cancela). Entrada com letras é recusada.
+- **Automação preservada e determinística**: `-Action Install -Id`,
+  `-Action InstallCategory -Category`, `-Action InstallAll` e `-Action List` executam
+  sem prompt; `-Action Menu` sem console interativo devolve `3` (não suportado) em vez
+  de bloquear. Alvo fora do catálogo interno é recusado antes de qualquer chamada ao
+  WinGet.
+- **Fallback Batch completo** (`:FB_APPS_*` no `Launcher.bat`) com o mesmo catálogo,
+  os mesmos identificadores, a mesma ordem e os mesmos controles numéricos, para
+  quando o PowerShell estiver ausente ou bloqueado. O código de retorno do WinGet é
+  comparado textualmente com `0`, porque `if errorlevel 1` é falso para os HRESULT
+  negativos que o WinGet devolve — um erro seria lido como sucesso.
+- **WinGet ausente** produz tela própria e código `3` (não suportado), nos dois
+  caminhos. O COMPARTDISK não instala nem baixa o WinGet.
+
 #### Debloat
 
 - **Cobertura ampliada de 150 para 197 itens de catálogo** (129 famílias Appx, contra
@@ -986,6 +1074,8 @@ Primeira versão da arquitetura modular.
 
 ---
 
+[1.4.0]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.0
+[1.3.1]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.3.1
 [1.3.0]: https://github.com/edsilas/compartdisk/releases/tag/v1.3.0
 [1.2.0]: https://github.com/edsilas/compartdisk/releases/tag/v1.2.0
 [1.1.0]: https://github.com/edsilas/compartdisk/releases/tag/v1.1.0
