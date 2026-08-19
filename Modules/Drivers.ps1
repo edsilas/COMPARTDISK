@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.3 - Drivers.ps1
+ COMPARTDISK 1.4.4 - Drivers.ps1
  Desenvolvido por Edsilas
  Acoes: List | Problems | Unsigned | Diagnose | Backup | Validate | Restore
         Package | Last | Export

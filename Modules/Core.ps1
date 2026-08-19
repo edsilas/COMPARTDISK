@@ -1,6 +1,6 @@
 ﻿<#
 ================================================================================
- COMPARTDISK 1.4.3 - Core.ps1
+ COMPARTDISK 1.4.4 - Core.ps1
  Desenvolvido por Edsilas
  Biblioteca central de funcoes reutilizaveis.
  Compativel com Windows PowerShell 5.1 e PowerShell 7.x (pwsh).
@@ -26,7 +26,7 @@ if (-not $Global:CompartDisk) { $Global:CompartDisk = @{} }
 
 $Global:CompartDisk.CoreDir    = $__CompartDiskCoreDir
 $Global:CompartDisk.Root       = Split-Path -Parent $__CompartDiskCoreDir
-$Global:CompartDisk.Version    = '1.4.3'
+$Global:CompartDisk.Version    = '1.4.4'
 $Global:CompartDisk.Product    = 'COMPARTDISK'
 $Global:CompartDisk.Author     = 'Edsilas'
 $Global:CompartDisk.Signature  = 'DESENVOLVIDO POR EDSILAS'
@@ -225,6 +225,36 @@ function Read-CompartDiskEntradaOpcao {
         # Prefixo ambiguo: aguarda a proxima tecla (ou o Enter).
         $buffer = $novo
     }
+}
+
+function Clear-CompartDiskTela {
+    <# Limpa a tela antes de desenhar um menu, como as rotinas :MENU_* do
+       Launcher.bat fazem com 'cls'. Sem isto, cada nivel de menu dos modulos
+       PowerShell se acumulava no terminal.
+
+       So limpa quando ha operador: em execucao desassistida (-Quiet, saida
+       redirecionada, ausencia de console) apagar a tela destruiria a saida que
+       alguem esta capturando. #>
+    [CmdletBinding()] param([switch]$Quiet)
+    if ($Quiet) { return }
+    if (-not (Test-CompartDiskInterativo)) { return }
+    try { Clear-Host } catch { }
+}
+
+function Write-CompartDiskMenuCabecalho {
+    <# Abre uma tela de menu: limpa o que estava antes e desenha titulo e regua
+       na mesma gramatica visual do restante da ferramenta (margem de 2 espacos,
+       titulo em branco, regua fina de 74 colunas).
+
+       Ponto UNICO usado por Apps.ps1 e Winget.ps1: os dois tinham a mesma funcao
+       duplicada, e nenhum dos dois limpava a tela. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Titulo, [switch]$Quiet)
+    Clear-CompartDiskTela -Quiet:$Quiet
+    Write-Color ''
+    Write-Color ("  {0}" -f $Titulo) -Color White
+    Write-Color ("  " + ('-' * 74)) -Color DarkGray
+    Write-Color ''
 }
 
 function Read-CompartDiskOpcao {
@@ -1544,58 +1574,73 @@ function ConvertTo-CompartDiskHtml {
 
     $css = @'
 :root{
-  --bg:#0d1117; --panel:#151b23; --panel-2:#1b2129; --rule:#252d38;
-  --ink:#c9d3de; --ink-dim:#7d8a99; --ink-bright:#eef3f8;
-  --crit:#e5484d; --warn:#e3a008; --ok:#3dd68c; --info:#4c8dff; --accent:#4c8dff;
+  --bg:#f4f6f8; --panel:#ffffff; --panel-2:#fafbfc; --rule:#e3e8ed; --rule-soft:#eef2f5;
+  --ink:#2b333c; --ink-dim:#66717c; --ink-bright:#141b22;
+  --crit:#a4262c; --crit-bg:#fdf3f4; --warn:#8a6116; --warn-bg:#fdf8ee;
+  --ok:#1f6b45; --ok-bg:#f1f8f4; --info:#1f5f8b; --info-bg:#f0f6fa; --accent:#1f5f8b;
   --mono:"Cascadia Mono","Cascadia Code",Consolas,"Lucida Console",monospace;
   --sans:"Segoe UI Variable Text","Segoe UI",Tahoma,sans-serif;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.55}
 .wrap{max-width:1240px;margin:0 auto;padding:0 24px 64px}
-header{border-bottom:1px solid var(--rule);background:linear-gradient(180deg,#11161d,#0d1117);position:sticky;top:0;z-index:9}
+header{border-bottom:1px solid var(--rule);background:var(--panel);position:sticky;top:0;z-index:9}
 .hd{max-width:1240px;margin:0 auto;padding:20px 24px 16px;display:flex;flex-wrap:wrap;gap:18px;align-items:flex-end;justify-content:space-between}
-h1{font-family:var(--mono);font-size:19px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-bright);margin:0 0 4px;font-weight:600}
-.sub{font-family:var(--mono);font-size:11.5px;color:var(--ink-dim);letter-spacing:.06em}
+h1{font-family:var(--mono);font-size:19px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-bright);margin:0 0 4px;font-weight:600}
+.sub{font-family:var(--mono);font-size:11.5px;color:var(--ink-dim);letter-spacing:.05em}
 .counts{display:flex;gap:8px;flex-wrap:wrap}
-.count{font-family:var(--mono);font-size:11px;letter-spacing:.09em;padding:7px 13px;border:1px solid var(--rule);background:var(--panel);border-radius:2px;display:flex;gap:9px;align-items:baseline}
+.count{font-family:var(--mono);font-size:11px;letter-spacing:.08em;padding:7px 13px;border:1px solid var(--rule);background:var(--panel-2);border-radius:4px;display:flex;gap:9px;align-items:baseline}
 .count b{font-size:17px;font-weight:600}
 .count.c b{color:var(--crit)} .count.w b{color:var(--warn)} .count.o b{color:var(--ok)} .count.i b{color:var(--info)}
 .toolbar{max-width:1240px;margin:0 auto;padding:12px 24px 0;display:flex;gap:10px;flex-wrap:wrap}
-input[type=search]{flex:1;min-width:220px;background:var(--panel);border:1px solid var(--rule);color:var(--ink);padding:9px 12px;font-family:var(--mono);font-size:12px;border-radius:2px}
-input[type=search]:focus{outline:2px solid var(--info);outline-offset:1px}
-button.tb{background:var(--panel);border:1px solid var(--rule);color:var(--ink-dim);font-family:var(--mono);font-size:11px;letter-spacing:.08em;padding:9px 14px;cursor:pointer;border-radius:2px}
+input[type=search]{flex:1;min-width:220px;background:var(--panel);border:1px solid var(--rule);color:var(--ink);padding:9px 12px;font-family:var(--mono);font-size:12px;border-radius:4px}
+input[type=search]:focus{outline:2px solid var(--accent);outline-offset:1px}
+button.tb{background:var(--panel);border:1px solid var(--rule);color:var(--ink-dim);font-family:var(--mono);font-size:11px;letter-spacing:.07em;padding:9px 14px;cursor:pointer;border-radius:4px}
 button.tb:hover{color:var(--ink-bright);border-color:var(--ink-dim)}
-button.tb:focus-visible{outline:2px solid var(--info);outline-offset:1px}
-h2.sec{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-dim);margin:38px 0 12px;padding-bottom:7px;border-bottom:1px solid var(--rule)}
-.card{background:var(--panel);border:1px solid var(--rule);border-left:3px solid var(--rule);border-radius:2px;margin:0 0 10px;overflow:hidden}
+button.tb:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+/* --- filtros inteligentes --- */
+.filtros{max-width:1240px;margin:0 auto;padding:12px 24px 16px}
+.filtros-tit{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-dim);margin-bottom:8px}
+.chips{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.chips+.chips{margin-top:8px}
+.chip{font-family:var(--sans);font-size:12px;font-weight:600;padding:6px 12px;border:1px solid var(--rule);background:var(--panel);color:var(--ink-dim);border-radius:999px;cursor:pointer}
+.chip:hover{border-color:var(--ink-dim);color:var(--ink-bright)}
+.chip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.chip.on{background:var(--info-bg);border-color:var(--accent);color:var(--accent)}
+.chip .n{font-family:var(--mono);font-size:10.5px;opacity:.75;margin-left:6px}
+.chip-sep{width:1px;height:20px;background:var(--rule);margin:0 4px}
+.filtro-nota{font-family:var(--mono);font-size:11px;color:var(--ink-dim);margin-top:9px}
+h2.sec{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-dim);margin:38px 0 12px;padding-bottom:7px;border-bottom:1px solid var(--rule)}
+.card{background:var(--panel);border:1px solid var(--rule);border-left:3px solid var(--rule);border-radius:4px;margin:0 0 10px;overflow:hidden}
 .card.crit{border-left-color:var(--crit)} .card.warn{border-left-color:var(--warn)}
 .card.ok{border-left-color:var(--ok)} .card.info{border-left-color:var(--info)}
 summary{cursor:pointer;padding:13px 16px;display:flex;gap:14px;align-items:center;list-style:none;user-select:none}
 summary::-webkit-details-marker{display:none}
-summary:focus-visible{outline:2px solid var(--info);outline-offset:-2px}
-.tok{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.05em;white-space:nowrap}
+summary:hover{background:var(--panel-2)}
+summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.tok{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.04em;white-space:nowrap}
 .card.crit .tok{color:var(--crit)} .card.warn .tok{color:var(--warn)}
 .card.ok .tok{color:var(--ok)} .card.info .tok{color:var(--info)}
 .tt{color:var(--ink-bright);font-weight:600;font-size:14.5px}
 .sm{color:var(--ink-dim);font-size:12.5px;margin-left:auto;text-align:right}
 .body{padding:2px 16px 18px;border-top:1px solid var(--rule)}
 dl{display:grid;grid-template-columns:minmax(150px,240px) 1fr;gap:1px;margin:14px 0 0;background:var(--rule);border:1px solid var(--rule)}
-dt,dd{background:var(--panel-2);margin:0;padding:8px 12px}
-dt{font-family:var(--mono);font-size:11.5px;color:var(--ink-dim);letter-spacing:.03em}
+dt,dd{background:var(--panel);margin:0;padding:8px 12px}
+dt{font-family:var(--mono);font-size:11.5px;color:var(--ink-dim);letter-spacing:.02em}
 dd{color:var(--ink-bright);word-break:break-word}
 table{width:100%;border-collapse:collapse;margin-top:14px;font-size:12.5px}
-th{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-dim);text-align:left;padding:8px 10px;border-bottom:1px solid var(--rule);white-space:nowrap}
-td{padding:8px 10px;border-bottom:1px solid var(--rule);vertical-align:top;word-break:break-word}
+th{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-dim);text-align:left;padding:8px 10px;border-bottom:1px solid var(--rule);white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid var(--rule-soft);vertical-align:top;word-break:break-word}
 tr:last-child td{border-bottom:none}
 tbody tr:hover td{background:var(--panel-2)}
-.finding{display:grid;grid-template-columns:64px 150px 1fr;gap:12px;padding:11px 16px;border-bottom:1px solid var(--rule);align-items:start}
+.finding{display:grid;grid-template-columns:64px 150px 1fr;gap:12px;padding:11px 16px;border-bottom:1px solid var(--rule-soft);align-items:start}
 .finding:last-child{border-bottom:none}
 .finding .area{font-family:var(--mono);font-size:11.5px;color:var(--ink-dim)}
 .finding .rec{display:block;color:var(--ink-dim);font-size:12px;margin-top:4px;padding-left:11px;border-left:2px solid var(--rule)}
 .empty{padding:16px;color:var(--ink-dim);font-family:var(--mono);font-size:12px}
-/* Tabelas longas: cabecalho fixo, ordenacao por coluna e rolagem contida na
-   propria caixa - o corpo da pagina nunca rola de lado. */
+.brand{font-family:var(--mono);font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--accent);margin-bottom:6px}
+footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--rule);color:var(--ink-dim);font-family:var(--mono);font-size:11px;letter-spacing:.04em}
+.hidden{display:none}
 .tw{overflow-x:auto;margin-top:14px}
 .tw table{margin-top:0}
 th.so{cursor:pointer;user-select:none;position:sticky;top:0;background:var(--panel);z-index:1}
@@ -1603,35 +1648,35 @@ th.so:hover{color:var(--ink-bright)}
 th.so::after{content:"";opacity:.35;margin-left:6px;font-size:9px}
 th.so[data-dir="asc"]::after{content:"\25B2";opacity:1}
 th.so[data-dir="desc"]::after{content:"\25BC";opacity:1}
-th.so:focus-visible{outline:2px solid var(--info);outline-offset:-2px}
-/* Hash: valor inteiro, sem corte, quebrando onde couber. Um clique na celula
-   seleciona e copia os 64 caracteres. */
-td.hash{font-family:var(--mono);font-size:11px;line-height:1.45;word-break:break-all;cursor:pointer;max-width:34ch}
+th.so:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+td.hash{font-family:var(--mono);font-size:11px;line-height:1.45;word-break:break-all;cursor:pointer;max-width:34ch;color:var(--ink-dim)}
 td.hash:hover{color:var(--ink-bright);background:var(--panel-2)}
 td.hash.copied{color:var(--ok)}
-td.hash::after{content:"clique para copiar";display:block;font-size:9.5px;letter-spacing:.06em;color:var(--ink-dim);opacity:0;transition:opacity .12s}
+td.hash::after{content:"clique para copiar";display:block;font-size:9.5px;letter-spacing:.05em;color:var(--ink-dim);opacity:0;transition:opacity .12s}
 td.hash:hover::after{opacity:1}
 td.hash.copied::after{content:"copiado";opacity:1;color:var(--ok)}
-/* Estados de socket: LISTEN e ESTABLISHED precisam saltar aos olhos. */
-.st{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:2px 7px;border:1px solid var(--rule);border-radius:2px;white-space:nowrap}
-.st-listen{color:var(--warn);border-color:var(--warn)}
-.st-estab{color:var(--ok);border-color:var(--ok)}
+.st{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.05em;padding:2px 7px;border:1px solid var(--rule);border-radius:3px;white-space:nowrap}
+.st-listen{color:var(--warn);border-color:var(--warn);background:var(--warn-bg)}
+.st-estab{color:var(--ok);border-color:var(--ok);background:var(--ok-bg)}
 .st-na{color:var(--ink-dim)}
 .rowhide{display:none}
-.brand{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:6px}
-footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--rule);color:var(--ink-dim);font-family:var(--mono);font-size:11px;letter-spacing:.05em}
-.hidden{display:none}
+.filtrohide{display:none}
+/* --- origem do componente: leitura rapida de "o que e do Windows" --- */
+.og{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.03em;padding:2px 8px;border:1px solid var(--rule);border-radius:3px;white-space:nowrap;display:inline-block}
+.og-windows{color:var(--info);border-color:#bcd6e8;background:var(--info-bg)}
+.og-terceiro{color:var(--warn);border-color:#e6d5ae;background:var(--warn-bg)}
+.og-desconhecido{color:var(--ink-dim);border-color:var(--rule);background:var(--panel-2)}
+.og-alerta{color:var(--crit);border-color:#e6c3c6;background:var(--crit-bg)}
+tr[data-atencao="1"] td{background:var(--crit-bg)}
+tr[data-atencao="1"]:hover td{background:#fbeaec}
 @media(max-width:720px){
   dl{grid-template-columns:1fr}
   .finding{grid-template-columns:1fr;gap:4px}
   .sm{margin-left:0;text-align:left;width:100%}
-  /* A rolagem lateral da tabela e responsabilidade exclusiva de .tw. Deixar
-     tambem a propria table como bloco rolavel criava dois contentores
-     aninhados, e quem acabava rolando de lado era a pagina. */
   th.so{position:static}
   td.hash{max-width:none;font-size:10.5px}
 }
-@media print{body{background:#fff;color:#000}.card,dt,dd{background:#fff}header{position:static}.toolbar{display:none}details{display:block}details>.body{display:block!important}}
+@media print{body{background:#fff}.card{break-inside:avoid}header{position:static}.toolbar,.filtros{display:none}details{display:block}details>.body{display:block!important}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 '@
 
@@ -1697,6 +1742,56 @@ footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--rule);color:v
     });
   });
 
+  /* --- filtros inteligentes, por secao ---
+     Cada secao classificada tem a propria barra e filtra apenas as proprias
+     linhas: filtro de processos nao mexe em servicos, e vice-versa. */
+  var mapaOrigem={
+    "windows":function(o){return o==="Windows"||o==="Microsoft";},
+    "terceiro":function(o){return o==="Terceiro";},
+    "sem-fabricante":function(o){return o==="Sem fabricante identificado";},
+    "sem-assinatura":function(o){return o==="Sem assinatura";},
+    "assinatura-invalida":function(o){return o==="Assinatura invalida";},
+    "nao-identificado":function(o){return o==="Nao identificado";}
+  };
+  document.querySelectorAll(".filtros[data-alvo]").forEach(function(barra){
+    var alvo=barra.getAttribute("data-alvo");
+    var nota=barra.querySelector(".filtro-nota");
+    var base=nota?nota.textContent:"";
+    function linhas(){return document.querySelectorAll('tr[data-secao="'+alvo+'"]');}
+    function aplicar(){
+      var on=Array.prototype.slice.call(barra.querySelectorAll(".chip.on"))
+        .map(function(c){return c.getAttribute("data-f");})
+        .filter(function(f){return f!=="todos";});
+      var total=0, vis=0;
+      linhas().forEach(function(tr){
+        total++;
+        var o=tr.getAttribute("data-origem")||"", at=tr.getAttribute("data-atencao")==="1";
+        var mostra = on.length===0 || on.some(function(f){
+          if(f==="atencao"){return at;}
+          return mapaOrigem[f] ? mapaOrigem[f](o) : false;
+        });
+        tr.classList.toggle("filtrohide",!mostra);
+        if(mostra){vis++;}
+      });
+      if(nota){ nota.textContent = on.length===0 ? base : (vis+" de "+total+" item(ns) atendem ao filtro."); }
+    }
+    barra.addEventListener("click",function(e){
+      var c=e.target.closest?e.target.closest(".chip"):null;
+      if(!c){return;}
+      if(c.getAttribute("data-f")==="todos"){
+        barra.querySelectorAll(".chip").forEach(function(x){x.classList.remove("on");});
+        c.classList.add("on");
+      } else {
+        c.classList.toggle("on");
+        var todos=barra.querySelector('[data-f="todos"]');
+        var algum=barra.querySelectorAll('.chip.on:not([data-f="todos"])').length;
+        if(todos){ todos.classList.toggle("on", algum===0); }
+      }
+      aplicar();
+    });
+    aplicar();
+  });
+
   /* Hash: um clique seleciona os 64 caracteres e copia. A selecao acontece
      mesmo quando a area de transferencia esta indisponivel (file:// sem
      contexto seguro), entao o valor nunca fica inacessivel. */
@@ -1747,6 +1842,7 @@ footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--rule);color:v
     & $a '</div></div>'
     & $a '<div class="toolbar"><input type="search" id="q" placeholder="filtrar secoes, propriedades e achados..." aria-label="Filtrar conteudo">'
     & $a '<button class="tb" id="expand" type="button">EXPANDIR TUDO</button><button class="tb" id="collapse" type="button">RECOLHER TUDO</button></div>'
+
     & $a '</header><div class="wrap">'
 
     # -- Identificacao
@@ -1780,8 +1876,21 @@ footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--rule);color:v
     }
 
     # -- Secoes
+    # Ordem de leitura: o que responde primeiro vem primeiro. Secoes fora desta
+    # lista mantem a ordem em que os modulos as produziram - nenhuma e perdida.
+    $ordemPreferida = @(
+        'Processos', 'Assinaturas digitais', 'Servicos (inventario)', 'Servicos essenciais',
+        'Inicializacao', 'Rede', 'Conexoes de rede', 'Portas em escuta', 'Firewall',
+        'Compartilhamentos', 'Drivers'
+    )
     $sections = @($Data.Sections)
     if ($sections.Count -gt 0) {
+        $ordenadas = New-Object System.Collections.ArrayList
+        foreach ($titulo in $ordemPreferida) {
+            foreach ($sx in $sections) { if ("$($sx.Title)" -eq $titulo) { [void]$ordenadas.Add($sx) } }
+        }
+        foreach ($sx in $sections) { if (-not $ordenadas.Contains($sx)) { [void]$ordenadas.Add($sx) } }
+        $sections = @($ordenadas)
         & $a '<h2 class="sec">Diagnostico detalhado</h2>'
         foreach ($s in $sections) {
             $cls = switch ("$($s.Status)") { 'CRIT' { 'crit' } 'WARN' { 'warn' } 'OK' { 'ok' } default { 'info' } }
@@ -1803,8 +1912,43 @@ footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--rule);color:v
                 & $a '<div class="tw"><table><thead><tr>'
                 foreach ($c in $cols) { & $a ('<th class="so" title="Ordenar por esta coluna">{0}</th>' -f (ConvertTo-CompartDiskHtmlEncoded $c)) }
                 & $a '</tr></thead><tbody>'
+                # Slug da secao: permite ao filtro separar processos de servicos sem
+                # que a classificacao dependa do nome da secao.
+                $slug = ((ConvertTo-CompartDiskHtmlEncoded $s.Title) -replace '[^A-Za-z0-9]+', '-').ToLowerInvariant().Trim('-')
+
+                # Filtros DENTRO da secao, junto dos dados que eles filtram.
+                # Emitidos so quando as linhas desta secao trazem classificacao.
+                $secClassificada = $false
+                foreach ($rr in $rows) {
+                    if ($rr.PSObject.Properties['Origem'] -and $rr.PSObject.Properties['Atencao']) { $secClassificada = $true; break }
+                }
+                if ($secClassificada) {
+                    & $a ('<div class="filtros" data-alvo="{0}"><span class="filtros-tit">Filtrar {1}</span><div class="chips">' -f $slug, (ConvertTo-CompartDiskHtmlEncoded $s.Title))
+                    & $a '<button class="chip on" type="button" data-f="todos">Todos</button>'
+                    & $a '<button class="chip" type="button" data-f="windows">Windows / Microsoft</button>'
+                    & $a '<button class="chip" type="button" data-f="terceiro">Terceiros</button>'
+                    & $a '<button class="chip" type="button" data-f="sem-fabricante">Sem fabricante</button>'
+                    & $a '<button class="chip" type="button" data-f="sem-assinatura">Sem assinatura</button>'
+                    & $a '<button class="chip" type="button" data-f="assinatura-invalida">Assinatura invalida</button>'
+                    & $a '<button class="chip" type="button" data-f="nao-identificado">Nao identificado</button>'
+                    & $a '<span class="chip-sep" aria-hidden="true"></span>'
+                    & $a '<button class="chip" type="button" data-f="atencao">Pede conferencia</button>'
+                    & $a '</div><div class="filtro-nota">Classificacao por assinatura digital, editor do certificado, binario do servico hospedado e caminho. &quot;Pede conferencia&quot; indica item que merece verificacao manual - nao e afirmacao de que algo esteja errado.</div></div>'
+                }
                 foreach ($r in $rows) {
-                    & $a '<tr>'
+                    $attr = (' data-secao="{0}"' -f $slug)
+                    # 'Origem' so vale como classificacao quando vem junto de
+                    # 'Atencao' - o par que o classificador sempre emite. Sem esta
+                    # condicao, a coluna 'Origem' da secao de Eventos (que
+                    # significa FONTE do evento) era lida como classificacao e
+                    # poluia o filtro com valores como 'VSS' ou 'EventLog'.
+                    $pOrig = $r.PSObject.Properties['Origem']
+                    $pAt   = $r.PSObject.Properties['Atencao']
+                    if ($pOrig -and $pAt -and "$($pOrig.Value)") {
+                        $attr += (' data-origem="{0}"' -f (ConvertTo-CompartDiskHtmlEncoded $pOrig.Value))
+                        if ("$($pAt.Value)" -eq 'Sim') { $attr += ' data-atencao="1"' }
+                    }
+                    & $a ('<tr{0}>' -f $attr)
                     foreach ($c in $cols) {
                         $v = $r.$c
                         $txt = ConvertTo-CompartDiskHtmlEncoded $v
@@ -1816,6 +1960,18 @@ footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--rule);color:v
                         }
                         elseif ("$v" -eq 'LISTEN')      { & $a '<td><span class="st st-listen">LISTEN</span></td>' }
                         elseif ("$v" -eq 'ESTABLISHED') { & $a '<td><span class="st st-estab">ESTABLISHED</span></td>' }
+                        elseif ($c -eq 'Origem' -and $r.PSObject.Properties['Atencao']) {
+                            $og = switch -Regex ("$v") {
+                                '^(Windows|Microsoft)$'   { 'og-windows' }
+                                '^Terceiro$'              { 'og-terceiro' }
+                                '^Assinatura invalida$'   { 'og-alerta' }
+                                default                   { 'og-desconhecido' }
+                            }
+                            & $a ('<td><span class="og {0}">{1}</span></td>' -f $og, $txt)
+                        }
+                        elseif ($c -eq 'Atencao' -and "$v" -eq 'Sim') {
+                            & $a '<td><span class="og og-alerta">Pede conferencia</span></td>'
+                        }
                         elseif ("$v" -eq 'N/A' -or "$v" -eq 'Indisponivel' -or "$v" -eq 'Acesso negado') {
                             & $a ('<td><span class="st st-na">{0}</span></td>' -f $txt)
                         }

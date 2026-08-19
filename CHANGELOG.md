@@ -13,6 +13,192 @@ Sem alterações pendentes.
 
 ---
 
+## [1.4.4] — 2026-08-19
+
+Correções no **Desempenho Máximo**, na navegação dos menus e no **Diagnóstico
+Avançado e Relatórios**, que ganha classificação de origem, filtros inteligentes e
+tema claro. Publicação em
+[Releases](https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.4).
+
+> **Sem remoção.** Nenhuma tecla de menu, ação, `ValidateSet`, argumento de linha de
+> comando, código de saída ou campo de relatório existente foi alterado. Os coletores
+> tocados receberam campos **acrescentados**, e quem lê apenas os antigos não percebe
+> diferença.
+
+### Corrigido
+
+- **Desempenho Máximo passa a usar exclusivamente a nomenclatura do Windows.** O
+  módulo renomeava o plano criado para `COMPARTDISK Desempenho Maximo`, o que fazia
+  um rótulo próprio aparecer nas Opções de Energia. O `/changename` foi **removido**:
+  o plano duplicado herda do modelo do sistema o nome localizado que o Windows já
+  usa, e nenhum nome personalizado é atribuído em nenhum caminho de execução.
+
+  A idempotência, que antes dependia desse rótulo, passa a ser resolvida por GUID
+  canônico e, quando o Windows cria o plano com GUID aleatório, por comparação com
+  o nome lido do próprio sistema: se já existia um plano homônimo, a cópia recém-criada
+  é descartada e o plano anterior é reutilizado. Isso mantém a proteção contra acúmulo
+  de planos idênticos sem inventar nomenclatura.
+
+- **O perfil aplicado passa a se restringir ao processador.** Antes, além das
+  configurações de CPU, a ação gravava *suspensão seletiva USB*, *desligar disco
+  rígido após* e *gerenciamento de energia do link PCI Express* — nenhuma das três
+  aumenta a capacidade de processamento, e as duas primeiras alcançam portas USB e o
+  desligamento de HD/SSD. As três saem do conjunto aplicado e continuam sendo lidas
+  e exibidas no diagnóstico.
+
+  Passam a ser aplicadas **cinco** configurações, todas do subgrupo processador:
+  estado mínimo, estado máximo, modo de boost, política de resfriamento e núcleos
+  mínimos (*core parking*). Tempo de tela, suspensão e hibernação já eram somente
+  diagnóstico e assim permanecem.
+
+- **Desempenho Máximo: as configurações ocultas do processador voltam a ser
+  aplicadas.** Execução real em Windows 11 mostrou `Modo de boost`, `Política de
+  resfriamento` e `Núcleos mínimos (core parking)` em `SKIP`, com "o valor atual não
+  pode ser lido" — justamente as três que sustentam o desempenho máximo da CPU. O
+  `powercfg /query` **omite** configurações marcadas como ocultas pelo Windows, e
+  `Set-PerfSettingValue` exigia ler antes de escrever: sem leitura, nenhuma escrita
+  era tentada.
+
+  A escrita funciona nessas configurações. Agora, quando a consulta confirma que a
+  configuração existe mas o índice atual não é exposto, a escrita é tentada e o
+  resultado é confirmado pelo `ACSettingIndex`/`DCSettingIndex` que o próprio
+  `powercfg` grava sob o GUID do plano — mecanismo que responde por configuração
+  oculta. Sem essa confirmação nada é reportado como aplicado: comando aceito e
+  valor não confirmável passa a ser `UNVERIFIED`, e falha de escrita continua `FAIL`.
+  `SKIP` fica reservado ao único caso em que a consulta prova ausência real.
+
+  `Estado mínimo` e `Estado máximo`, que já funcionavam, seguem pelo caminho de
+  sempre — leitura pelo `powercfg`, idempotência quando já corretos.
+
+- **Validação do plano ativo ao final da ação.** Além de mandar ativar, o módulo
+  confirma que o plano em vigor é o de Desempenho Máximo pretendido: compara o GUID
+  com o plano aplicado e, quando o plano canônico existe, também o nome que o Windows
+  lhe dá. Divergência vira `WARN` com o motivo, em vez de sucesso silencioso.
+
+> Nenhuma ação, `ValidateSet`, tecla de menu ou chamada do `Launcher.bat` mudou. O
+> módulo passa de 34 para 35 funções, com uma acrescentada
+> (`Get-PerfSettingIndexFromRegistry`) e nenhuma removida.
+
+- **Menus dos módulos passam a limpar a tela, como os do `Launcher.bat`.** Ao navegar
+  pelo WinGet e pelo catálogo de aplicativos, cada nível ficava impresso no terminal e
+  os menus se acumulavam — comportamento diferente das rotinas `:MENU_*` do
+  `Launcher.bat`, que começam com `cls`. `Apps.ps1` e `Winget.ps1` tinham a mesma
+  função de cabeçalho **duplicada**, e nenhuma das duas limpava.
+
+  As duas passam a delegar a `Write-CompartDiskMenuCabecalho`, no `Core.ps1`: um ponto
+  único que limpa a tela e desenha título e régua na mesma gramática visual de antes.
+  Nenhum sistema de navegação próprio foi criado para o WinGet — é a mesma função para
+  os dois módulos, como já acontece com a leitura de opção.
+
+  A limpeza só ocorre quando há operador: em execução desassistida (`-Quiet`, saída
+  redirecionada, ausência de console) a tela não é tocada, senão apagaria a saída que
+  alguém está capturando.
+
+  Dois ajustes acompanham a mudança, porque sem eles a limpeza engoliria informação
+  útil: em `Show-WingetMenu` o cabeçalho passou a ser desenhado **antes** do
+  diagnóstico (desenhado depois, apagaria a ficha recém-impressa), e a instalação
+  individual de um aplicativo ganhou a mesma parada numérica já usada nas outras telas
+  de resultado do módulo, para que o desfecho seja lido antes do menu reaparecer.
+
+- **Auditoria Completa: filtros inteligentes e classificação de origem.** O relatório
+  passa a responder de imediato "o que é do Windows e o que não é". Processos e
+  serviços ganham a coluna **Origem**, derivada de evidência do próprio sistema —
+  assinatura digital, editor do certificado e caminho do executável: `Windows`,
+  `Microsoft`, `Terceiro`, `Sem fabricante identificado`, `Sem assinatura`,
+  `Assinatura inválida` ou `Desconhecido`.
+
+  Cada seção classificada tem a **própria barra de filtros**, logo acima da sua
+  tabela: o filtro de processos não mexe em serviços e vice-versa. A tabela é
+  atualizada na hora, sem gerar a auditoria de novo.
+
+- **Nova seção `Serviços (inventário)`**, com estado, inicialização, conta, origem do
+  binário, assinatura, editor e SHA-256. Não substitui `Serviços essenciais`, que
+  segue com os 18 críticos e o mesmo formato: aquela responde "os críticos estão
+  saudáveis?", esta responde "quais serviços existem e de quem é o binário".
+
+> **Regra de segurança.** Nada é classificado como malicioso. Não ser da Microsoft,
+> não estar em `C:\Windows` ou não ter nome conhecido são apenas características — a
+> maior parte do software legítimo se encaixa nelas. O marcador **Pede conferência**
+> sinaliza só combinações que merecem verificação manual, sempre com o motivo ao lado:
+> assinatura presente porém inválida; nome de binário do Windows executando fora do
+> diretório do sistema ou assinado por outro editor; ausência de assinatura somada a
+> execução a partir de pasta gravável pelo usuário. Origem indeterminada é declarada
+> como `Desconhecido`, não como suspeita.
+
+- **Relatório HTML passa a usar tema claro.** Fundo claro, texto de alto contraste,
+  cartões e tabelas discretos, separadores leves e destaque reservado ao que exige
+  atenção. A paleta reaproveita os tons já usados no restante do CompartDisk. Toda a
+  estrutura, os nomes de classe e os recursos existentes — ordenação, filtro por
+  linha, células de hash, marcação de `LISTEN`/`ESTABLISHED` — foram preservados.
+
+- **Falsos positivos na classificação de origem, corrigidos com evidência real.** Um
+  relatório de execução em Windows 11 mostrou 24 componentes legítimos do sistema
+  caindo em `Desconhecido`: `csrss.exe`, `smss.exe`, `wininit.exe`, `services.exe`,
+  `System`, `Registry`, `Memory Compression`, os processos do Defender
+  (`MsMpEng.exe`, `NisSrv.exe`, `MpDefenderCoreService.exe`,
+  `SecurityHealthService.exe`) e vários `svchost.exe`. Todos com `Caminho = N/A` —
+  são processos protegidos, cujo caminho e assinatura o Windows não expõe nem sob
+  privilégio administrativo.
+
+  A classificação passa a usar evidência em camadas, nesta ordem: assinatura digital
+  e editor do certificado; **binário do serviço hospedado**, quando o processo não
+  expõe o próprio; e reconhecimento de **componente protegido do Windows** quando o
+  caminho não é exposto. Uma segunda fonte de caminho foi acrescentada — `Get-Process`
+  usa a API de módulo do processo, diferente do `ExecutablePath` do WMI, e resolve
+  casos em que a outra devolve vazio. `Desconhecido` foi renomeado para
+  **`Não identificado`**, que descreve melhor a ausência de evidência.
+
+  **O nome nunca conclui sozinho.** Ele apenas torna o item candidato à regra de
+  componente protegido; para classificar como `Windows` exige-se corroboração
+  independente, e a corroboração usada fica registrada na observação da linha:
+  invariante de PID (o processo ocioso é sempre o PID 0, o do núcleo sempre o PID 4),
+  serviço hospedado, conta de sistema, processo pai do núcleo, ou o caminho ilegível
+  por **duas APIs distintas sob privilégio administrativo** — próprio de processo
+  protegido, já que um processo comum tem o caminho legível por um administrador.
+  Sem elevação essa última evidência não é usada, porque a falha de leitura poderia
+  ser simples falta de permissão. Sem ela, o item
+  permanece em `Não identificado`. Um `svchost.exe` sob conta de usuário comum, com
+  pai `explorer.exe`, **não** é classificado como Windows. E um impostor em pasta
+  gravável tem caminho exposto: cai nas regras anteriores, onde continua sinalizado.
+
+  Componente da Microsoft **fora** de `C:\Windows` — Defender em `ProgramData`, Edge
+  em `Program Files` — é classificado como `Microsoft`, não como terceiro: a
+  assinatura basta.
+
+- **Coluna `Origem` da seção de Eventos deixou de ser lida como classificação.** A
+  seção de Eventos já tinha uma coluna `Origem` com outro significado (fonte do
+  evento), e o filtro a interpretava como classe de origem, poluindo-se com valores
+  como `VSS`, `EventLog` e `LsaSrv`. A classificação passa a ser reconhecida só
+  quando `Origem` vem acompanhada de `Atencao` — o par que o classificador sempre
+  emite.
+
+- **Seções do relatório em ordem de leitura.** Processos, assinaturas, serviços,
+  inicialização, rede, portas, firewall e compartilhamentos aparecem nessa sequência;
+  seções fora da lista mantêm a ordem em que os módulos as produziram, e nenhuma é
+  perdida.
+
+### Versão
+
+A numeração passa de `1.4.3` para `1.4.4` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
+`README.md`, no cabeçalho de todos os módulos e de todos os documentos.
+
+`remote.ps1` passa a apontar para a tag `v1.4.4`. Repositório, URLs, endpoints da API
+e validações permanecem como estavam — apenas a tag e o hash são atrelados à versão.
+O SHA-256 fixado fica vazio até a release ser publicada e o pacote conferido; enquanto
+isso a integridade é validada pelo hash publicado nas notas da release.
+
+### Registrado para commit separado
+
+- **Acentuação corrompida na saída de executáveis nativos.** `Invoke-NativeCommand`
+  (`Core.ps1`) não define `StandardOutputEncoding`, e nomes vindos do `powercfg`
+  aparecem como `Desempenho M?ximo` no log e no relatório. Afeta todo módulo que
+  chama executável nativo, por isso não entra nesta correção.
+- **`powercfg /a` tratado como falha.** O comando sai com código 1 mesmo quando a
+  mensagem é apenas informativa, e a execução abre com um `[WARN]` que não indica
+  problema.
+
+---
+
 ## [1.4.3] — 2026-08-15
 
 **Diagnóstico Avançado e Relatórios** passa a entregar um retrato técnico completo:
@@ -1329,6 +1515,7 @@ Primeira versão da arquitetura modular.
 
 ---
 
+[1.4.4]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.4
 [1.4.3]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.3
 [1.4.2]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.2
 [1.4.1]: https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.1

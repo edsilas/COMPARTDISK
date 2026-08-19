@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.3 - Winget.ps1
+ COMPARTDISK 1.4.4 - Winget.ps1
  Desenvolvido por Edsilas
  Diagnostico e preparacao do ambiente WinGet (App Installer).
  Acoes: Menu | Status | Prepare | Repair
@@ -403,11 +403,10 @@ function Initialize-Winget {
 # INTERFACE - somente numerica
 # ------------------------------------------------------------------------------
 function Write-WingetCabecalho {
+    <# Delega ao ponto unico do Core: limpa a tela e desenha titulo e regua.
+       Mantido como nome local para nao mexer nos pontos de chamada. #>
     param([string]$Titulo)
-    Write-Color ''
-    Write-Color ("  {0}" -f $Titulo) -Color White
-    Write-Color ("  " + ('-' * 74)) -Color DarkGray
-    Write-Color ''
+    Write-CompartDiskMenuCabecalho -Titulo $Titulo -Quiet:$Quiet
 }
 
 function Show-WingetPronto {
@@ -428,10 +427,21 @@ function Show-WingetMenu {
     <# Tela principal do modulo. O texto e as opcoes mudam conforme o estado. #>
     while ($true) {
         $env1 = Get-WingetEnvironment
+
+        # O cabecalho abre a tela (e a limpa). Por isso ele vem ANTES do
+        # diagnostico: desenhado depois, apagaria a ficha recem-impressa.
+        $tituloTela = switch ("$($env1.State)") {
+            'Available'   { 'WINGET DISPONIVEL' }
+            'Unsupported' { 'WINGET NAO SUPORTADO' }
+            'Blocked'     { 'WINGET BLOQUEADO POR POLITICA' }
+            'Broken'      { 'PROBLEMA NO WINGET' }
+            'Outdated'    { 'PROBLEMA NO WINGET' }
+            default       { 'WINGET NAO DISPONIVEL' }
+        }
+        Write-WingetCabecalho $tituloTela
         Write-WingetDiagnostico -Env $env1
 
         if ($env1.State -eq 'Available') {
-            Write-WingetCabecalho 'WINGET DISPONIVEL'
             Write-Log OK ('WinGet disponivel (versao {0}).' -f $(if ($env1.VersionText) { $env1.VersionText } else { 'n/d' }))
             Write-Color ''
             Write-Color '  [1] Verificar novamente' -Color Cyan
@@ -444,8 +454,6 @@ function Show-WingetMenu {
         }
 
         if ($env1.State -eq 'Unsupported' -or $env1.State -eq 'Blocked') {
-            $titulo = $(if ($env1.State -eq 'Unsupported') { 'WINGET NAO SUPORTADO' } else { 'WINGET BLOQUEADO POR POLITICA' })
-            Write-WingetCabecalho $titulo
             Write-Color ("  {0}" -f $env1.Reason) -Color Yellow
             Write-Color ''
             if ($env1.State -eq 'Blocked') {
@@ -466,7 +474,6 @@ function Show-WingetMenu {
 
         # Missing | Broken | Outdated | Unknown
         $ehReparo = ($env1.State -eq 'Broken' -or $env1.State -eq 'Outdated')
-        Write-WingetCabecalho $(if ($ehReparo) { 'PROBLEMA NO WINGET' } else { 'WINGET NAO DISPONIVEL' })
         Write-Color ("  Estado detectado: {0}." -f (Get-WingetRotuloEstado $env1.State)) -Color Yellow
         Write-Color ''
         if ($ehReparo) {

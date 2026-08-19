@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.3 - Performance.ps1
+ COMPARTDISK 1.4.4 - Performance.ps1
  Desenvolvido por Edsilas
 
  Acoes: Analyze | Ultimate | Balanced | Startup | Processes | Services
@@ -98,9 +98,11 @@ $REG_POWER      = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power'
 $REG_SCHEMES    = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes'
 $REG_VISUALFX   = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects'
 
-# Nome-marcador usado apenas se o Windows criar o plano com um GUID aleatorio.
-# Garante idempotencia: a proxima execucao encontra o plano pelo nome e reutiliza.
-$MARKER_NAME = 'COMPARTDISK Desempenho Maximo'
+# O plano de Desempenho Maximo usa SEMPRE a nomenclatura do proprio Windows.
+# Nenhum nome personalizado e atribuido: o plano duplicado herda do modelo do
+# sistema o nome localizado ("Desempenho maximo" / "Ultimate Performance"), e
+# a reutilizacao entre execucoes e resolvida por GUID e por comparacao de nome
+# lido do sistema, nunca por um rotulo proprio.
 
 # Estado de ambiente, preenchido por Initialize-PerfEnvironment
 $script:PowercfgPath = $null
@@ -283,11 +285,11 @@ function Invoke-PerfPowercfg {
         return $r
     }
     try {
-        # EVIDENCIA: no log de 13/08/2026 o '/changename' falhou com
-        # "Parametros invalidos" porque Invoke-NativeCommand une os argumentos
-        # com espaco: o nome do plano ("COMPARTDISK Desempenho Maximo") chegava
-        # ao powercfg como tres parametros separados. Argumentos que contem
-        # espaco passam a ser aspeados aqui, no envelope, e nao em cada chamada.
+        # EVIDENCIA: no log de 13/08/2026 um argumento com espaco chegou ao
+        # powercfg como varios parametros separados, porque Invoke-NativeCommand
+        # une os argumentos com espaco, e o comando falhou com "Parametros
+        # invalidos". O aspeamento continua necessario para qualquer argumento
+        # com espaco - a comecar pelo nome localizado dos planos do Windows.
         $argsSeguros = @()
         foreach ($a in @($Arguments)) {
             $t = "$a"
@@ -465,38 +467,39 @@ function Set-PerfActiveScheme {
 
 function Resolve-PerfPerformanceScheme {
     <#
-      Resolve o plano Ultimate Performance de forma IDEMPOTENTE.
-      Ordem: (1) GUID canonico ja presente; (2) plano marcado por este modulo;
-             (3) duplicar do modelo do Windows e identificar o GUID realmente criado.
+      Resolve o plano de Desempenho Maximo do Windows de forma IDEMPOTENTE,
+      SEMPRE com a nomenclatura do proprio sistema.
+
+      Ordem: (1) GUID canonico ja presente; (2) duplicar do modelo do Windows.
+
+      O plano duplicado herda do modelo o nome localizado que o Windows usa
+      ("Desempenho maximo" / "Ultimate Performance"). Nenhum /changename e
+      executado: renomear era o que produzia um rotulo proprio nas Opcoes de
+      energia, e o nome do sistema e o unico correto aqui.
+
+      Idempotencia sem rotulo proprio: quando a duplicacao devolve um GUID
+      aleatorio em vez do canonico, comparamos o nome do plano recem-criado com
+      os que ja existiam antes. Se um plano de mesmo nome ja existia, a copia
+      recem-criada e descartada e o plano anterior e reutilizado - o que impede
+      o acumulo de planos identicos a cada execucao.
+
       Retorna {Guid,Nome,Origem} ou $null.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)]$Schemes)
 
-    # (1) GUID canonico presente (caso mais comum apos a primeira execucao)
+    # (1) GUID canonico presente (caso mais comum, inclusive apos a 1a execucao)
     if (Test-PerfSchemeExists -Schemes $Schemes -Guid $GUID_ULTIMATE) {
         $nome = ($Schemes | Where-Object { $_.Guid -eq $GUID_ULTIMATE } | Select-Object -First 1).Nome
         Write-Log OK "Plano Desempenho Maximo ja existe (GUID canonico). Reutilizando - nada sera duplicado."
         return [pscustomobject]@{ Guid = $GUID_ULTIMATE; Nome = $nome; Origem = 'existente' }
     }
 
-    # (2) plano criado por este modulo em execucao anterior (GUID aleatorio, nome-marcador)
-    $marcado = @($Schemes | Where-Object { $_.Nome -eq $MARKER_NAME })
-    if ($marcado.Count -gt 0) {
-        Write-Log OK "Plano '$MARKER_NAME' de execucao anterior localizado. Reutilizando - nada sera duplicado."
-        if ($marcado.Count -gt 1) {
-            Write-Log WARN "Existem $($marcado.Count) planos com o nome '$MARKER_NAME'. Sera usado o primeiro; remova os extras em 'Opcoes de energia' se desejar."
-            Set-PerfResult 'WARN'
-        }
-        return [pscustomobject]@{ Guid = $marcado[0].Guid; Nome = $marcado[0].Nome; Origem = 'existente-marcado' }
-    }
-
-    # (3) criar. Snapshot antes para identificar por diferenca o GUID gerado.
+    # (2) criar. Snapshot antes para identificar por diferenca o GUID gerado.
     Write-Log INFO 'Plano Desempenho Maximo ausente. Duplicando a partir do modelo do Windows...'
-    $antes = @()
-    foreach ($s in $Schemes) { $antes += $s.Guid }
+    $antes = @($Schemes)
 
-    $d = Invoke-PerfPowercfg -Arguments @('/duplicatescheme', $GUID_ULTIMATE) -TimeoutSeconds 60 -Step 'Duplicar plano Ultimate Performance'
+    $d = Invoke-PerfPowercfg -Arguments @('/duplicatescheme', $GUID_ULTIMATE) -TimeoutSeconds 60 -Step 'Duplicar plano de Desempenho Maximo'
     if (-not (Test-PerfCommandOk $d)) {
         Write-Log WARN "Este dispositivo nao expoe o plano Desempenho Maximo. Detalhe: $(Get-PerfCommandDetail $d)"
         return $null
@@ -509,54 +512,44 @@ function Resolve-PerfPerformanceScheme {
         return $null
     }
     if (Test-PerfSchemeExists -Schemes $depois -Guid $GUID_ULTIMATE) {
-        Write-Log OK 'Plano Desempenho Maximo criado e confirmado com o GUID canonico.'
         $nome = ($depois | Where-Object { $_.Guid -eq $GUID_ULTIMATE } | Select-Object -First 1).Nome
+        Write-Log OK "Plano Desempenho Maximo criado e confirmado com o GUID canonico, sob o nome do sistema: '$nome'."
         return [pscustomobject]@{ Guid = $GUID_ULTIMATE; Nome = $nome; Origem = 'criado' }
     }
 
-    $novos = @($depois | Where-Object { $antes -notcontains $_.Guid })
+    $guidsAntes = @($antes | ForEach-Object { $_.Guid })
+    $novos = @($depois | Where-Object { $guidsAntes -notcontains $_.Guid })
     if ($novos.Count -eq 0) {
         Write-Log WARN 'A duplicacao retornou sucesso, mas nenhum plano novo apareceu na listagem. Criacao nao confirmada.'
         return $null
     }
     $novo = $novos[0]
-    Write-Log OK "Plano criado com GUID proprio: $($novo.Guid)."
+    $nomeNovo = "$($novo.Nome)"
+    Write-Log OK "Plano criado com GUID proprio $($novo.Guid), sob o nome do sistema: '$nomeNovo'."
 
-    # Renomear com o marcador garante que a proxima execucao reutilize este plano
-    # em vez de duplicar de novo (correcao do risco de dezenas de planos).
-    $c = Invoke-PerfPowercfg -Arguments @('/changename', $novo.Guid, $MARKER_NAME, 'Plano de desempenho maximo gerenciado pelo COMPARTDISK') `
-        -TimeoutSeconds 30 -Step 'Renomear plano criado'
-    if (Test-PerfCommandOk $c) {
-        $conf = Get-PerfPowerSchemes
-        $ok = $false
-        if ($conf) {
-            foreach ($s in $conf) { if ($s.Guid -eq $novo.Guid -and $s.Nome -eq $MARKER_NAME) { $ok = $true } }
+    # Ja existia um plano com este mesmo nome antes da duplicacao? Entao esta
+    # copia e redundante: descartamos a que acabamos de criar e reutilizamos a
+    # anterior. Sem isto, cada execucao acrescentaria mais um plano identico.
+    $previo = @($antes | Where-Object { "$($_.Nome)" -eq $nomeNovo -and $_.Guid -ne $novo.Guid }) | Select-Object -First 1
+    if ($previo) {
+        $ativo = Get-PerfActiveScheme
+        $ehAtivo = ($ativo -and $ativo.Guid -eq $novo.Guid)
+        if (-not $ehAtivo) {
+            $del = Invoke-PerfPowercfg -Arguments @('/delete', $novo.Guid) -TimeoutSeconds 30 -Step 'Descartar copia redundante do plano'
+            if (Test-PerfCommandOk $del) {
+                Write-Log OK "Copia redundante descartada. Reutilizando o plano '$nomeNovo' ja existente (GUID $($previo.Guid))."
+            } else {
+                Write-Log WARN "Nao foi possivel descartar a copia redundante do plano. Detalhe: $(Get-PerfCommandDetail $del)"
+                Set-PerfResult 'WARN'
+            }
+        } else {
+            Write-Log INFO 'A copia recem-criada ja esta ativa; ela sera mantida e nenhum plano sera removido.'
+            return [pscustomobject]@{ Guid = $novo.Guid; Nome = $nomeNovo; Origem = 'criado' }
         }
-        if ($ok) { Write-Log OK "Plano identificado como '$MARKER_NAME' - execucoes futuras irao reutiliza-lo." }
-        else {
-            Write-Log WARN 'Renomeacao executada mas nao confirmada. Execucoes futuras podem criar um plano adicional.'
-            Set-PerfResult 'WARN'
-        }
-    } else {
-        Write-Log WARN "Nao foi possivel renomear o plano criado. Detalhe: $(Get-PerfCommandDetail $c)"
-        Set-PerfResult 'WARN'
+        return [pscustomobject]@{ Guid = $previo.Guid; Nome = "$($previo.Nome)"; Origem = 'existente' }
     }
 
-    # EVIDENCIA: no log de 13/08/2026 o rename falhou e o modulo ainda assim
-    # devolveu Nome = MARKER_NAME, o que produziu a linha "Plano de energia
-    # ativo confirmado: COMPARTDISK Desempenho Maximo" para um plano que na
-    # verdade continuava com o nome herdado da duplicacao. O nome devolvido
-    # passa a ser SEMPRE o lido do sistema.
-    $nomeReal = $MARKER_NAME
-    $lista = Get-PerfPowerSchemes
-    if ($lista) {
-        $achado = @($lista | Where-Object { $_.Guid -eq $novo.Guid }) | Select-Object -First 1
-        if ($achado -and -not [string]::IsNullOrWhiteSpace("$($achado.Nome)")) { $nomeReal = "$($achado.Nome)" }
-    }
-    if ($nomeReal -ne $MARKER_NAME) {
-        Write-Log INFO "O plano criado responde pelo nome real '$nomeReal' (GUID $($novo.Guid))."
-    }
-    return [pscustomobject]@{ Guid = $novo.Guid; Nome = $nomeReal; Origem = 'criado' }
+    return [pscustomobject]@{ Guid = $novo.Guid; Nome = $nomeNovo; Origem = 'criado' }
 }
 
 # ============================================================================
@@ -596,6 +589,29 @@ function Get-PerfSleepCapabilities {
 # ============================================================================
 # 6. CONFIGURACOES DE ENERGIA - consulta e aplicacao com validacao posterior
 # ============================================================================
+
+function Get-PerfSettingIndexFromRegistry {
+    <#
+      Le o indice efetivo de UMA configuracao direto do registro do plano.
+
+      Este e o mecanismo de confirmacao para configuracoes OCULTAS: o
+      'powercfg /query' omite settings marcadas como ocultas (Attributes=1), de
+      modo que a saida textual nao serve de criterio de sucesso para elas. Ja o
+      valor gravado por '/setacvalueindex' aparece SEMPRE em ACSettingIndex
+      (ou DCSettingIndex) sob o GUID do plano - inclusive quando a configuracao
+      e oculta. Somente leitura.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$SchemeGuid,
+        [Parameter(Mandatory = $true)][string]$SubGuid,
+        [Parameter(Mandatory = $true)][string]$SettingGuid,
+        [ValidateSet('AC', 'DC')][string]$Line = 'AC'
+    )
+    $caminho = Join-Path (Join-Path (Join-Path $REG_SCHEMES $SchemeGuid) $SubGuid) $SettingGuid
+    $nome = $(if ($Line -eq 'DC') { 'DCSettingIndex' } else { 'ACSettingIndex' })
+    return (Get-PerfRegistryDword -Path $caminho -Name $nome)
+}
 
 function Get-PerfSettingState {
     <#
@@ -655,9 +671,22 @@ function Get-PerfSettingState {
 
 function Set-PerfSettingValue {
     <#
-      APLICAR -> CONSULTAR -> COMPARAR -> CONFIRMAR -> REGISTRAR.
+      APLICAR -> CONFIRMAR -> REGISTRAR.
       Status: ALREADY | APPLIED | UNVERIFIED | FAIL | SKIP
-      Nunca registra sucesso sem reler o valor efetivo.
+      Nunca registra sucesso sem confirmar o valor efetivo.
+
+      CONFIGURACOES OCULTAS: o 'powercfg /query' omite settings marcadas como
+      ocultas pelo Windows (Attributes=1) - caso de modo de boost, politica de
+      resfriamento e nucleos minimos de core parking em boa parte das
+      instalacoes. Antes, o indice ilegivel fazia a funcao devolver SKIP sem
+      sequer tentar escrever, e justamente as tres configuracoes que sustentam o
+      desempenho maximo do processador nunca eram aplicadas.
+
+      A escrita, porem, funciona nessas configuracoes. Entao: quando a consulta
+      confirma que a configuracao existe mas o indice atual nao pode ser lido, a
+      escrita passa a ser TENTADA e o resultado e confirmado pelo
+      ACSettingIndex/DCSettingIndex do registro, que o proprio powercfg grava sob
+      o GUID do plano. Sem essa confirmacao, nada e reportado como aplicado.
     #>
     [CmdletBinding()]
     param(
@@ -674,19 +703,26 @@ function Set-PerfSettingValue {
     }
 
     $antes = Get-PerfSettingState -SchemeGuid $SchemeGuid -SubGuid $SubGuid -SettingGuid $SettingGuid
-    if (-not $antes.Exists) {
-        $res.Status = 'SKIP'
+
+    # Unico caso em que nada e tentado: a consulta provou que a configuracao nao
+    # existe neste plano/hardware. Indice ilegivel NAO e prova de ausencia.
+    if (-not $antes.Presente) {
+        $res.Status  = 'SKIP'
         $res.Detalhe = $antes.Motivo
-        # "nao suportado" so pode ser dito quando a consulta provou a ausencia.
-        # Com a consulta bem sucedida e o indice ilegivel, o que se sabe e que a
-        # escrita nao foi tentada - nao que o hardware nao tenha a configuracao.
-        if ($antes.Presente) { Write-Log WARN "[$Line] $Label : nao aplicado - $($antes.Motivo)." }
-        else                 { Write-Log WARN "[$Line] $Label : nao suportado - $($antes.Motivo)." }
+        Write-Log WARN "[$Line] $Label : nao suportado - $($antes.Motivo)."
         return $res
     }
+
     $atual = $antes.Ac
     if ($Line -eq 'DC') { $atual = $antes.Dc }
+
+    # O indice pode nao ter vindo do powercfg por ser configuracao oculta; o
+    # registro ainda pode conhece-lo se ela ja foi gravada alguma vez.
+    if ($null -eq $atual) {
+        $atual = Get-PerfSettingIndexFromRegistry -SchemeGuid $SchemeGuid -SubGuid $SubGuid -SettingGuid $SettingGuid -Line $Line
+    }
     $res.Anterior = $atual
+    $oculta = ($null -eq $atual)
 
     # IDEMPOTENCIA: nada e escrito se o valor ja esta correto.
     if ($null -ne $atual -and [int]$atual -eq $Value) {
@@ -695,27 +731,50 @@ function Set-PerfSettingValue {
         return $res
     }
 
+    if ($oculta) {
+        Write-Log INFO "[$Line] $Label : valor atual nao exposto pelo powercfg (configuracao oculta). Aplicando e confirmando pelo registro."
+    }
+
     $verbo = '/setacvalueindex'
     if ($Line -eq 'DC') { $verbo = '/setdcvalueindex' }
     $a = Invoke-PerfPowercfg -Arguments @($verbo, $SchemeGuid, $SubGuid, $SettingGuid, ([string]$Value)) -TimeoutSeconds 30 -Step "Aplicar $Label"
     if (-not (Test-PerfCommandOk $a)) {
-        $res.Status = 'FAIL'
+        $res.Status  = 'FAIL'
         $res.Detalhe = (Get-PerfCommandDetail $a)
         Write-Log WARN "[$Line] $Label : falha ao aplicar - $($res.Detalhe)."
         return $res
     }
 
-    $depois = Get-PerfSettingState -SchemeGuid $SchemeGuid -SubGuid $SubGuid -SettingGuid $SettingGuid
+    # ---------- CONFIRMAR ----------
+    # 1) caminho normal (powercfg), 2) registro. O registro e a fonte que
+    #    responde por configuracao oculta, e o powercfg acabou de grava-lo.
+    $depois  = Get-PerfSettingState -SchemeGuid $SchemeGuid -SubGuid $SubGuid -SettingGuid $SettingGuid
     $efetivo = $depois.Ac
     if ($Line -eq 'DC') { $efetivo = $depois.Dc }
+    $origem  = 'powercfg'
+    if ($null -eq $efetivo) {
+        $efetivo = Get-PerfSettingIndexFromRegistry -SchemeGuid $SchemeGuid -SubGuid $SubGuid -SettingGuid $SettingGuid -Line $Line
+        $origem  = 'registro'
+    }
     $res.Efetivo = $efetivo
 
-    if ($null -ne $efetivo -and [int]$efetivo -eq $Value) {
-        $res.Status = 'APPLIED'
-        Write-Log OK "[$Line] $Label : $(Format-PerfValue -Label $Label -Value $atual) -> $(Format-PerfValue -Label $Label -Value $efetivo) (confirmado)."
+    if ($null -eq $efetivo) {
+        # Comando aceito, nenhuma via de leitura respondeu: nao ha prova de que a
+        # alteracao valeu, entao nao se afirma sucesso.
+        $res.Status  = 'UNVERIFIED'
+        $res.Detalhe = 'comando aceito, mas nao foi possivel confirmar o valor efetivo nem pelo powercfg nem pelo registro'
+        Write-Log WARN "[$Line] $Label : comando aceito, porem sem confirmacao do valor efetivo. Nao contabilizado como aplicado."
+        return $res
+    }
+
+    if ([int]$efetivo -eq $Value) {
+        $res.Status  = 'APPLIED'
+        $res.Detalhe = "confirmado pelo $origem"
+        $de = $(if ($null -eq $atual) { 'valor anterior nao exposto' } else { Format-PerfValue -Label $Label -Value $atual })
+        Write-Log OK "[$Line] $Label : $de -> $(Format-PerfValue -Label $Label -Value $efetivo) (confirmado pelo $origem)."
     } else {
-        $res.Status = 'UNVERIFIED'
-        $res.Detalhe = 'comando aceito, mas o valor relido nao corresponde ao solicitado'
+        $res.Status  = 'UNVERIFIED'
+        $res.Detalhe = "comando aceito, mas o valor relido ($origem) nao corresponde ao solicitado"
         Write-Log WARN "[$Line] $Label : comando aceito, porem o valor efetivo e $efetivo e nao $Value. Possivel bloqueio por politica."
     }
     return $res
@@ -858,10 +917,14 @@ function Get-PerfProfileDefinition {
         [pscustomobject]@{ Rotulo = 'Modo de boost do processador'; Sub = $SUB_PROCESSOR; Setting = 'be337238-0d82-4146-a960-4f3749d470c7'; Ac = 2;   Dc = 2;    Aplicar = $true }
         [pscustomobject]@{ Rotulo = 'Politica de resfriamento do sistema'; Sub = $SUB_PROCESSOR; Setting = '94d3a615-a899-4ac5-ae2b-e4d8f634367f'; Ac = 1; Dc = $null; Aplicar = $true }
         [pscustomobject]@{ Rotulo = 'Nucleos minimos do processador (core parking)'; Sub = $SUB_PROCESSOR; Setting = '0cc5b647-c1df-4637-891a-dec35c318583'; Ac = 100; Dc = 100; Aplicar = $true }
-        [pscustomobject]@{ Rotulo = 'PCI Express - gerenciamento de energia do link'; Sub = $SUB_PCIEXPRESS; Setting = 'ee12f906-d277-404b-b6da-e5fa1a576df5'; Ac = 0; Dc = $null; Aplicar = $true }
-        [pscustomobject]@{ Rotulo = 'Suspensao seletiva USB'; Sub = $SUB_USB; Setting = '48e6b7a6-50f5-4782-a5d4-53bb8f07e226'; Ac = 0; Dc = $null; Aplicar = $true }
-        [pscustomobject]@{ Rotulo = 'Desligar disco rigido apos'; Sub = $SUB_DISK; Setting = '6738e2c4-e8a5-4a42-b16a-e040e769756e'; Ac = 0; Dc = $null; Aplicar = $true }
+        [pscustomobject]@{ Rotulo = 'PCI Express - gerenciamento de energia do link'; Sub = $SUB_PCIEXPRESS; Setting = 'ee12f906-d277-404b-b6da-e5fa1a576df5'; Ac = $null; Dc = $null; Aplicar = $false }
+        [pscustomobject]@{ Rotulo = 'Suspensao seletiva USB'; Sub = $SUB_USB; Setting = '48e6b7a6-50f5-4782-a5d4-53bb8f07e226'; Ac = $null; Dc = $null; Aplicar = $false }
+        [pscustomobject]@{ Rotulo = 'Desligar disco rigido apos'; Sub = $SUB_DISK; Setting = '6738e2c4-e8a5-4a42-b16a-e040e769756e'; Ac = $null; Dc = $null; Aplicar = $false }
         # --- diagnostico apenas (nunca alteradas automaticamente) -------------
+        # PCI Express, USB e disco saem do conjunto aplicado: nenhum deles altera
+        # a capacidade de processamento da CPU, e mexer neles atingiria portas USB
+        # e desligamento de HD/SSD - efeitos fora do escopo de desempenho maximo
+        # do processador. Continuam sendo lidos e exibidos no diagnostico.
         [pscustomobject]@{ Rotulo = 'Desativar estados de ocioso do processador'; Sub = $SUB_PROCESSOR; Setting = '5d76a2ca-e8c0-402f-a133-2158492d58ad'; Ac = $null; Dc = $null; Aplicar = $false }
         [pscustomobject]@{ Rotulo = 'Desligar video apos'; Sub = $SUB_VIDEO; Setting = '3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e'; Ac = $null; Dc = $null; Aplicar = $false }
         [pscustomobject]@{ Rotulo = 'Suspender apos'; Sub = $SUB_SLEEP; Setting = '29f6c1db-86da-48c5-9fdb-f2b67b1f44da'; Ac = $null; Dc = $null; Aplicar = $false }
@@ -1026,6 +1089,12 @@ function Invoke-PerfUltimate {
         $st = Get-PerfSettingState -SchemeGuid $alvo.Guid -SubGuid $cfg.Sub -SettingGuid $cfg.Setting
         $efet = $st.Ac
         if ($r.Linha -eq 'DC') { $efet = $st.Dc }
+        # Configuracao oculta nao aparece no powercfg: a revalidacao usa a mesma
+        # segunda via da aplicacao, senao um item corretamente aplicado seria
+        # rebaixado a UNVERIFIED so por nao ser exibido.
+        if ($null -eq $efet) {
+            $efet = Get-PerfSettingIndexFromRegistry -SchemeGuid $alvo.Guid -SubGuid $cfg.Sub -SettingGuid $cfg.Setting -Line $r.Linha
+        }
         if ($null -eq $efet -or [int]$efet -ne [int]$r.Desejado) {
             $r.Status = 'UNVERIFIED'
             $r.Efetivo = $efet
@@ -1070,14 +1139,50 @@ function Invoke-PerfUltimate {
     # ---------- Efeitos visuais ----------
     Invoke-PerfVisualEffectsForAction -Alvo 2
 
-    # ---------- Estado final confirmado ----------
+    # ---------- VALIDACAO FINAL DO PLANO ATIVO ----------
+    # Nao basta ter mandado ativar: confirma-se que o plano em vigor E o plano de
+    # Desempenho Maximo pretendido, comparando GUID com o alvo resolvido e, quando
+    # o plano canonico existe, tambem o nome que o proprio Windows lhe da.
     $final = Get-PerfActiveScheme
+    $planoConfirmado = $false
+    $motivoPlano = 'nao foi possivel consultar o plano ativo'
+    if ($final) {
+        if ($final.Guid -eq $alvo.Guid) {
+            $planoConfirmado = $true
+            $motivoPlano = 'GUID do plano ativo confere com o plano de Desempenho Maximo aplicado'
+            $listaFinal = Get-PerfPowerSchemes
+            if ($listaFinal) {
+                $canonico = @($listaFinal | Where-Object { $_.Guid -eq $GUID_ULTIMATE }) | Select-Object -First 1
+                if ($canonico -and "$($canonico.Nome)" -ne "$($final.Nome)") {
+                    $planoConfirmado = $false
+                    $motivoPlano = "o plano ativo ('$($final.Nome)') nao corresponde ao plano de Desempenho Maximo do Windows ('$($canonico.Nome)')"
+                }
+            }
+        } else {
+            $motivoPlano = "o plano ativo e '$($final.Nome)' ($($final.Guid)), diferente do plano aplicado ($($alvo.Guid))"
+        }
+    }
+
+    if ($planoConfirmado) {
+        Write-Log OK "Plano ativo validado: '$($final.Nome)'."
+        Add-CompartDiskFinding -Severity OK -Area 'Desempenho' `
+            -Message "Plano de Desempenho Maximo do Windows ativo e confirmado: '$($final.Nome)'."
+    } else {
+        Set-PerfResult 'WARN'
+        Write-Log WARN "Validacao do plano ativo: $motivoPlano."
+        Add-CompartDiskFinding -Severity WARN -Area 'Desempenho' `
+            -Message "O plano de Desempenho Maximo nao pode ser confirmado como ativo: $motivoPlano." `
+            -Recommendation 'Conferir em Painel de Controle > Opcoes de Energia qual plano esta selecionado.'
+    }
+
+    # ---------- Estado final confirmado ----------
     if ($final) {
         Write-Color ''
         Write-Output $final.Raw
-        Add-CompartDiskSection -Title 'Estado final de energia' -Status OK -Pairs ([ordered]@{
+        Add-CompartDiskSection -Title 'Estado final de energia' -Status $(if ($planoConfirmado) { 'OK' } else { 'WARN' }) -Pairs ([ordered]@{
             'Plano ativo'      = $final.Nome
             'GUID'             = $final.Guid
+            'Plano confirmado' = $(if ($planoConfirmado) { 'Sim' } else { "Nao - $motivoPlano" })
             'Origem do plano'  = $alvo.Origem
             'Modern Standby'   = $(if ($script:ModernStandby) { 'Sim (S0)' } else { 'Nao' })
             'Ajustes em bateria' = $(if ($IncludeDcSettings) { 'Aplicados' } else { 'Preservados' })
@@ -1248,7 +1353,7 @@ function Show-PerfPowerAnalysis {
     }
     if ($planos) {
         $pares['Planos disponiveis'] = $planos.Count
-        $pares['Desempenho Maximo']  = $(if (Test-PerfSchemeExists -Schemes $planos -Guid $GUID_ULTIMATE) { 'presente' } elseif (@($planos | Where-Object { $_.Nome -eq $MARKER_NAME }).Count -gt 0) { 'presente (criado pelo COMPARTDISK)' } else { 'ausente' })
+        $pares['Desempenho Maximo']  = $(if (Test-PerfSchemeExists -Schemes $planos -Guid $GUID_ULTIMATE) { 'presente' } else { 'ausente' })
         $pares['Alto Desempenho']    = $(if (Test-PerfSchemeExists -Schemes $planos -Guid $GUID_HIGH) { 'presente' } else { 'ausente' })
         $pares['Equilibrado']        = $(if (Test-PerfSchemeExists -Schemes $planos -Guid $GUID_BALANCED) { 'presente' } else { 'ausente' })
         $pares['Economia de energia'] = $(if (Test-PerfSchemeExists -Schemes $planos -Guid $GUID_SAVER) { 'presente' } else { 'ausente' })
@@ -1311,8 +1416,15 @@ function Show-PerfPowerAnalysis {
             [void]$incons.Add('Estados de ocioso do processador desativados: aumenta consumo e temperatura sem ganho consistente.')
         }
         if ($planos) {
-            $dups = @($planos | Where-Object { $_.Nome -eq $MARKER_NAME -or $_.Guid -eq $GUID_ULTIMATE })
-            if ($dups.Count -gt 1) { [void]$incons.Add("Existem $($dups.Count) planos de desempenho maximo. Os extras podem ser removidos em Opcoes de energia.") }
+            # Duplicidade e contada pelo nome que o proprio Windows da ao plano,
+            # lido do GUID canonico. Sem o plano canonico presente nao ha nome de
+            # referencia, e nada e afirmado.
+            $refUlt = @($planos | Where-Object { $_.Guid -eq $GUID_ULTIMATE }) | Select-Object -First 1
+            if ($refUlt) {
+                $nomeUlt = "$($refUlt.Nome)"
+                $dups = @($planos | Where-Object { "$($_.Nome)" -eq $nomeUlt })
+                if ($dups.Count -gt 1) { [void]$incons.Add("Existem $($dups.Count) planos com o nome '$nomeUlt'. Os extras podem ser removidos em Opcoes de energia.") }
+            }
         }
         foreach ($i in $incons) {
             Set-PerfResult 'WARN'

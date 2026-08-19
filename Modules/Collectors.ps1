@@ -1,6 +1,6 @@
 ﻿<#
 ================================================================================
- COMPARTDISK 1.4.3 - Collectors.ps1
+ COMPARTDISK 1.4.4 - Collectors.ps1
  Desenvolvido por Edsilas
  Coletores de dados reutilizaveis (somente leitura, nao alteram o sistema).
  Carregado automaticamente pelo Core.ps1.
@@ -944,6 +944,211 @@ function Get-CompartDiskTrechoErro {
     return $t
 }
 
+function Get-CompartDiskOrigemComponente {
+    <#
+      Classifica a ORIGEM de um componente a partir de evidencia do proprio
+      sistema, em ordem de confiabilidade:
+
+        1. assinatura digital valida + editor do certificado   <- principal
+        2. binario do servico hospedado, quando o processo nao expoe o proprio
+        3. processo protegido do Windows cujo caminho o sistema nao expoe
+        4. caminho do executavel
+
+      Devolve {Origem, Atencao, Motivo}.
+
+      Origem: Windows | Microsoft | Terceiro | Sem fabricante identificado |
+              Sem assinatura | Assinatura invalida | Nao identificado
+
+      REGRA DE SEGURANCA: nada aqui afirma que um item e malicioso. Nao ser da
+      Microsoft, estar fora de C:\Windows, ter nome pouco conhecido, rodar sob
+      determinada conta ou nao expor todos os metadados sao caracteristicas, nao
+      indicios - a maior parte do software legitimo se encaixa em alguma delas.
+      'Atencao' marca apenas combinacoes que MERECEM CONFERENCIA MANUAL, sempre
+      com o motivo ao lado. Sem evidencia suficiente, o item fica em
+      'Nao identificado', nunca em suspeita.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()][string]$Caminho,
+        [AllowNull()][string]$Assinatura,
+        [AllowNull()][string]$Editor,
+        [AllowNull()][string]$Nome,
+        # Evidencia secundaria: binario do servico hospedado por este processo.
+        [AllowNull()][string]$ServicoAssinatura,
+        [AllowNull()][string]$ServicoEditor,
+        [AllowNull()][string]$ServicoCaminho,
+        # Lista de servicos hospedados (apenas para o texto do motivo).
+        [AllowNull()][string]$Servicos,
+        # Corroboracao independente do nome, usada apenas na regra 3.
+        [AllowNull()][string]$Usuario,
+        [AllowNull()][string]$ProcessoPai,
+        [AllowNull()][object]$ProcessoId,
+        [switch]$Elevado
+    )
+
+    $out = [pscustomobject]@{ Origem = 'Nao identificado'; Atencao = 'Nao'; Motivo = '' }
+
+    $cam  = "$Caminho"
+    $ass  = "$Assinatura"
+    $ed   = "$Editor"
+    $nome = "$Nome"
+    $temCaminho = ($cam -and $cam -ne 'N/A')
+
+    $win = "$env:SystemRoot"
+    if ([string]::IsNullOrWhiteSpace($win)) { $win = 'C:\Windows' }
+    $emWindows = ($temCaminho -and $cam.StartsWith($win, [System.StringComparison]::OrdinalIgnoreCase))
+
+    # O editor vem do certificado - e a evidencia. O nome do arquivo nunca e
+    # usado para deduzir fabricante.
+    $ehMicrosoft = ($ed -match '(?i)^Microsoft\b')
+
+    # ---------- 1. assinatura do proprio executavel (evidencia principal) ----
+    switch ($ass) {
+        'Assinado e valido' {
+            if ($ehMicrosoft) {
+                # Assinatura da Microsoft basta: componente da Microsoft fora do
+                # diretorio do Windows (Defender, Edge, Office) continua sendo
+                # Microsoft, nao "terceiro".
+                $out.Origem = $(if ($emWindows) { 'Windows' } else { 'Microsoft' })
+            } else {
+                $out.Origem = $(if ($ed -and $ed -ne 'N/A') { 'Terceiro' } else { 'Sem fabricante identificado' })
+            }
+        }
+        'Nao assinado'       { $out.Origem = 'Sem assinatura' }
+        'Assinado, invalido' { $out.Origem = 'Assinatura invalida' }
+        default              { $out.Origem = 'Nao identificado' }
+    }
+
+    # ---------- 2. evidencia do servico hospedado ---------------------------
+    # svchost e afins nem sempre expoem o proprio caminho, mas o binario do
+    # servico que eles hospedam e legivel - e e a mesma imagem em execucao.
+    if ($out.Origem -eq 'Nao identificado' -and "$ServicoAssinatura" -eq 'Assinado e valido') {
+        $svcMs = ("$ServicoEditor" -match '(?i)^Microsoft\b')
+        $svcWin = ("$ServicoCaminho" -and "$ServicoCaminho".StartsWith($win, [System.StringComparison]::OrdinalIgnoreCase))
+        if ($svcMs) {
+            $out.Origem = $(if ($svcWin) { 'Windows' } else { 'Microsoft' })
+            $out.Motivo = "identificado pelo binario do servico hospedado ($ServicoCaminho), com assinatura valida de $ServicoEditor"
+        } else {
+            $out.Origem = 'Terceiro'
+            $out.Motivo = "identificado pelo binario do servico hospedado ($ServicoCaminho), com assinatura valida de $ServicoEditor"
+        }
+    }
+
+    # ---------- 3. componente protegido do Windows --------------------------
+    # Processos protegidos e do nucleo nao expoem caminho nem aceitam leitura de
+    # assinatura, nem para administrador. A ausencia de caminho e, aqui, parte da
+    # evidencia - um impostor em pasta gravavel TEM caminho exposto e cai nas
+    # regras acima, onde continua sendo avaliado.
+    #
+    # O nome sozinho nao decide nada: e apenas o que torna o item CANDIDATO. Para
+    # concluir, exige-se corroboracao independente - conta de sistema, servico
+    # hospedado do Windows ou processo pai proprio do nucleo. Sem corroboracao,
+    # o item fica em 'Nao identificado', nunca em 'Windows' por presuncao.
+    if ($out.Origem -eq 'Nao identificado' -and -not $temCaminho) {
+        $protegidos = @(
+            'system','system idle process','registry','memory compression','secure system',
+            'smss.exe','csrss.exe','wininit.exe','services.exe','lsass.exe','winlogon.exe',
+            'msmpeng.exe','nissrv.exe','mpdefendercoreservice.exe','securityhealthservice.exe',
+            'securityhealthsystray.exe','svchost.exe','fontdrvhost.exe','dwm.exe','lsaiso.exe',
+            'backgroundtaskhost.exe','runtimebroker.exe','wudfhost.exe','audiodg.exe',
+            'searchindexer.exe','searchprotocolhost.exe','searchfilterhost.exe'
+        )
+        $paisNucleo = @('system','smss.exe','wininit.exe','services.exe','svchost.exe','winlogon.exe','csrss.exe')
+        $contasSistema = @('nt authority\system','nt authority\local service','nt authority\network service',
+                           'autoridade nt\sistema','autoridade nt\servico local','autoridade nt\servico de rede')
+
+        if ($protegidos -contains $nome.ToLowerInvariant()) {
+            $corrob = @()
+
+            # (a) Invariantes de arquitetura do Windows: o processo ocioso e
+            #     SEMPRE o PID 0 e o processo do nucleo e SEMPRE o PID 4.
+            #     Nenhum outro processo pode ocupar esses identificadores.
+            $pidNum = -1
+            try { $pidNum = [int]$ProcessoId } catch { }
+            if ($pidNum -eq 0 -and $nome.ToLowerInvariant() -eq 'system idle process') { $corrob += 'PID 0, reservado ao processo ocioso do sistema' }
+            if ($pidNum -eq 4 -and $nome.ToLowerInvariant() -eq 'system')              { $corrob += 'PID 4, reservado ao processo do nucleo' }
+
+            # (b) Servico do Windows hospedado por este processo.
+            if ("$Servicos") { $corrob += "hospeda o servico $Servicos" }
+
+            # (c) Conta de sistema.
+            $u = "$Usuario".ToLowerInvariant()
+            if ($contasSistema -contains $u) { $corrob += "executa sob conta de sistema ($Usuario)" }
+
+            # (d) Processo pai do nucleo, quando ainda existe (smss.exe encerra
+            #     apos a inicializacao, entao a ausencia do pai nao diz nada).
+            if ($paisNucleo -contains "$ProcessoPai".ToLowerInvariant()) { $corrob += "iniciado por $ProcessoPai" }
+
+            # (e) Sob privilegio administrativo, DUAS APIs independentes -
+            #     ExecutablePath do WMI e a API de modulo do Get-Process -
+            #     falharam em ler o caminho de um processo em execucao. Isso e
+            #     proprio de processo protegido: um processo comum de usuario tem
+            #     o caminho legivel por um administrador. Sem elevacao a leitura
+            #     poderia falhar por falta de permissao, e ai nada se conclui.
+            if ($Elevado) { $corrob += 'caminho ilegivel por duas APIs distintas sob privilegio administrativo, proprio de processo protegido' }
+
+            if ($corrob.Count -gt 0) {
+                $out.Origem = 'Windows'
+                $out.Motivo = ('componente protegido do Windows: ' + ($corrob -join '; '))
+            } else {
+                $out.Motivo = 'nome corresponde a componente do Windows, mas sem corroboracao independente; necessita analise'
+            }
+        }
+    }
+
+    # Assinatura valida sem editor legivel continua sem fabricante identificado.
+    if ($out.Origem -eq 'Terceiro' -and ($ed -eq 'N/A' -or [string]::IsNullOrWhiteSpace($ed)) -and -not "$ServicoEditor") {
+        $out.Origem = 'Sem fabricante identificado'
+    }
+
+    # ---------- indicadores que pedem conferencia manual --------------------
+    $motivos = @()
+
+    if ($out.Origem -eq 'Assinatura invalida') {
+        $motivos += 'assinatura presente porem invalida'
+    }
+
+    # Nome de binario do Windows com caminho EXPOSTO e fora do diretorio do
+    # sistema, ou assinado por outro editor. So se aplica quando ha caminho:
+    # sem caminho, o item ja foi resolvido como componente protegido acima.
+    $nucleo = @('svchost.exe','lsass.exe','services.exe','csrss.exe','winlogon.exe','smss.exe',
+                'wininit.exe','explorer.exe','conhost.exe','dllhost.exe','taskhostw.exe',
+                'rundll32.exe','spoolsv.exe','ctfmon.exe','sihost.exe')
+    if ($nucleo -contains $nome.ToLowerInvariant() -and $temCaminho) {
+        if (-not $emWindows) {
+            $motivos += "nome de binario do Windows executando fora de $win"
+        } elseif ($ass -eq 'Assinado e valido' -and -not $ehMicrosoft) {
+            $motivos += 'nome de binario do Windows com assinatura de outro editor'
+        }
+    }
+
+    # Sem assinatura E rodando de pasta gravavel pelo usuario. Isoladamente
+    # nenhuma das duas diz nada; juntas, justificam um olhar.
+    if ($out.Origem -eq 'Sem assinatura' -and $temCaminho) {
+        # Concatenacao simples em vez de Join-Path: aqui so se compara prefixo de
+        # texto, e Join-Path falha quando a unidade do caminho nao existe.
+        $downloads = $(if ($env:USERPROFILE) { "$($env:USERPROFILE.TrimEnd('\'))\Downloads" } else { '' })
+        $graveis = @($env:TEMP, $env:TMP, $downloads, $env:LOCALAPPDATA, $env:APPDATA, 'C:\Users\Public')
+        foreach ($g in $graveis) {
+            if ([string]::IsNullOrWhiteSpace($g)) { continue }
+            if ($cam.StartsWith($g, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $motivos += 'sem assinatura digital e executando de pasta gravavel pelo usuario'
+                break
+            }
+        }
+    }
+
+    if ($motivos.Count -gt 0) {
+        $out.Atencao = 'Sim'
+        $out.Motivo  = ($motivos -join '; ')
+    } elseif ($out.Origem -eq 'Nao identificado' -and -not $out.Motivo) {
+        # Ausencia de evidencia, nao suspeita. Fica declarado como tal.
+        $out.Motivo = 'evidencia insuficiente para determinar a origem; necessita analise'
+    }
+
+    return $out
+}
+
 function Get-CompartDiskProcessInventory {
     <# Inventario completo de processos com integridade do executavel.
 
@@ -955,6 +1160,10 @@ function Get-CompartDiskProcessInventory {
     [CmdletBinding()] param([switch]$SemHash, [int]$MaxArquivos = 400)
 
     $rows = New-Object System.Collections.ArrayList
+    # Elevacao muda o significado de "caminho ilegivel": sem ela, a falha de
+    # leitura pode ser simples falta de permissao e nao prova nada.
+    $ehAdmin = $false
+    try { $ehAdmin = [bool](Test-Administrator) } catch { }
     $procs = @(Get-CompartDiskCim -Class Win32_Process)
     if ($procs.Count -eq 0) {
         Write-Log DEBUG 'Win32_Process nao retornou processos.' -NoConsole
@@ -963,10 +1172,15 @@ function Get-CompartDiskProcessInventory {
 
     # --- dono do processo, em uma unica passagem ----------------------------
     $donos = @{}
+    $caminhoAlt = @{}
     $donoIndisponivel = 'N/A'
     try {
         foreach ($p in (Get-Process -IncludeUserName -ErrorAction Stop)) {
             if ($null -ne $p.UserName) { $donos[[int]$p.Id] = "$($p.UserName)" }
+            # Segunda fonte de caminho: Get-Process usa a API de modulo do
+            # processo, diferente do ExecutablePath do WMI. Uma resolve casos em
+            # que a outra devolve vazio, e nenhuma das duas e suposicao.
+            try { if ($p.Path) { $caminhoAlt[[int]$p.Id] = "$($p.Path)" } } catch { }
         }
     } catch {
         $donoIndisponivel = $(if (Test-Administrator) { 'Indisponivel' } else { 'Acesso negado' })
@@ -975,10 +1189,18 @@ function Get-CompartDiskProcessInventory {
 
     # --- servicos hospedados, por PID ---------------------------------------
     $servicosPorPid = @{}
+    $binarioPorPid   = @{}
     foreach ($s in (Get-CompartDiskCim -Class Win32_Service -Filter 'ProcessId > 0')) {
         $sp = [int]$s.ProcessId
         if (-not $servicosPorPid.ContainsKey($sp)) { $servicosPorPid[$sp] = New-Object System.Collections.ArrayList }
         [void]$servicosPorPid[$sp].Add("$($s.Name)")
+        # O binario do servico e a MESMA imagem em execucao. Guardado porque
+        # processo protegido costuma nao expor o proprio caminho, enquanto o do
+        # servico e legivel - e vira a evidencia secundaria da classificacao.
+        if (-not $binarioPorPid.ContainsKey($sp)) {
+            $exeSvc = Get-CompartDiskExeDeLinhaDeComando "$($s.PathName)"
+            if ($exeSvc) { $binarioPorPid[$sp] = $exeSvc }
+        }
     }
 
     # Limite de arquivos distintos analisados: protege contra uma maquina com
@@ -987,8 +1209,16 @@ function Get-CompartDiskProcessInventory {
     $vistos = @{}
     $analisados = 0
 
+    # Nome por PID: usado so para corroborar o processo pai na classificacao.
+    $nomePorPid = @{}
+    foreach ($p in $procs) { $nomePorPid[[int]$p.ProcessId] = "$($p.Name)" }
+
     foreach ($p in $procs) {
         $caminho = "$($p.ExecutablePath)"
+        if ([string]::IsNullOrWhiteSpace($caminho)) {
+            $alt = $caminhoAlt[[int]$p.ProcessId]
+            if ($alt) { $caminho = $alt }
+        }
         $trust = $null
 
         if ([string]::IsNullOrWhiteSpace($caminho)) {
@@ -1014,24 +1244,129 @@ function Get-CompartDiskProcessInventory {
         try { if ($p.CreationDate) { $inicio = ([datetime]$p.CreationDate).ToString('dd/MM HH:mm') } } catch { }
 
         $pid_ = [int]$p.ProcessId
+        $svcNomes = $(if ($servicosPorPid.ContainsKey($pid_)) { ($servicosPorPid[$pid_] -join ', ') } else { '' })
+
+        # Evidencia secundaria consultada SOMENTE quando o processo nao expoe o
+        # proprio executavel: a assinatura do processo continua sendo o criterio
+        # principal, e nada e reavaliado a toa.
+        $svcTrust = $null; $svcExe = ''
+        if ([string]::IsNullOrWhiteSpace($caminho) -and $binarioPorPid.ContainsKey($pid_)) {
+            $svcExe = $binarioPorPid[$pid_]
+            $chaveSvc = $svcExe.ToLowerInvariant()
+            if (-not $vistos.ContainsKey($chaveSvc) -and $analisados -lt $MaxArquivos) {
+                $vistos[$chaveSvc] = Get-CompartDiskFileTrust -Path $svcExe -SemHash:$SemHash
+                $analisados++
+            }
+            if ($vistos.ContainsKey($chaveSvc)) { $svcTrust = $vistos[$chaveSvc] }
+        }
+
+        $cls = Get-CompartDiskOrigemComponente -Caminho $caminho -Assinatura $trust.Assinatura -Editor $trust.Editor -Nome "$($p.Name)" `
+               -ServicoAssinatura $(if ($svcTrust) { $svcTrust.Assinatura } else { '' }) `
+               -ServicoEditor $(if ($svcTrust) { $svcTrust.Editor } else { '' }) `
+               -ServicoCaminho $svcExe -Servicos $svcNomes `
+               -Usuario $(if ($donos.ContainsKey($pid_)) { $donos[$pid_] } else { '' }) `
+               -ProcessoPai $(try { $nomePorPid[[int]$p.ParentProcessId] } catch { '' }) `
+               -ProcessoId $pid_ -Elevado:$ehAdmin
         [void]$rows.Add([pscustomobject]@{
             Processo   = "$($p.Name)"
             PID        = $pid_
             PPID       = $(try { [int]$p.ParentProcessId } catch { 'N/A' })
             Usuario    = $(if ($donos.ContainsKey($pid_)) { $donos[$pid_] } else { $donoIndisponivel })
+            Origem     = $cls.Origem
+            Atencao    = $cls.Atencao
             Memoria    = $mem
             Threads    = $(try { [int]$p.ThreadCount } catch { 'N/A' })
             Handles    = $(try { [int]$p.HandleCount } catch { 'N/A' })
-            Servicos   = $(if ($servicosPorPid.ContainsKey($pid_)) { ($servicosPorPid[$pid_] -join ', ') } else { '' })
+            Servicos   = $svcNomes
             Assinatura = $trust.Assinatura
             Editor     = $trust.Editor
             SHA256     = $trust.SHA256
             Caminho    = $(if ($caminho) { $caminho } else { 'N/A' })
+            Observacao = $cls.Motivo
             Inicio     = $inicio
         })
     }
 
     return @($rows | Sort-Object -Property Processo, PID)
+}
+
+function Get-CompartDiskExeDeLinhaDeComando {
+    <# Extrai o caminho do executavel de uma linha de comando de servico, que
+       pode vir com aspas e argumentos. Somente texto: nao toca em disco. #>
+    [CmdletBinding()] param([AllowNull()][string]$Linha)
+    if ([string]::IsNullOrWhiteSpace($Linha)) { return '' }
+    $m = [regex]::Match($Linha, '^\s*"([^"]+)"')
+    if ($m.Success) { return $m.Groups[1].Value }
+    $m2 = [regex]::Match($Linha, '^\s*(.+?\.exe)\b', 'IgnoreCase')
+    if ($m2.Success) { return $m2.Groups[1].Value }
+    return $Linha.Trim()
+}
+
+function Get-CompartDiskServiceInventory {
+    <#
+      Inventario de TODOS os servicos com origem do binario.
+
+      Funcao NOVA e separada de Get-CompartDiskServiceDiagnostics, que continua
+      respondendo pelos 18 servicos essenciais com o mesmo formato de sempre:
+      aquela pergunta "os servicos criticos estao saudaveis?", esta responde
+      "quais servicos existem e de quem e o binario de cada um".
+
+      O caminho vem de PathName (Win32_Service), do qual se extrai o executavel -
+      a linha pode conter argumentos e aspas.
+    #>
+    [CmdletBinding()] param([switch]$SemHash, [int]$MaxArquivos = 400)
+
+    $rows = New-Object System.Collections.ArrayList
+    $vistos = @{}
+    $analisados = 0
+
+    foreach ($s in (Get-CompartDiskCim -Class Win32_Service)) {
+        $linha = "$($s.PathName)"
+        $exe = ''
+        if (-not [string]::IsNullOrWhiteSpace($linha)) {
+            $m = [regex]::Match($linha, '^\s*"([^"]+)"')
+            if ($m.Success) { $exe = $m.Groups[1].Value }
+            else {
+                # Sem aspas: o caminho vai ate o primeiro ".exe"
+                $m2 = [regex]::Match($linha, '^\s*(.+?\.exe)\b', 'IgnoreCase')
+                if ($m2.Success) { $exe = $m2.Groups[1].Value } else { $exe = $linha.Trim() }
+            }
+        }
+
+        $trust = $null
+        if ([string]::IsNullOrWhiteSpace($exe)) {
+            $trust = [pscustomobject]@{ SHA256 = 'N/A'; Assinatura = 'N/A'; Editor = 'N/A'; Detalhe = 'Caminho do binario nao exposto' }
+        } else {
+            $chave = $exe.ToLowerInvariant()
+            if (-not $vistos.ContainsKey($chave)) {
+                if ($analisados -ge $MaxArquivos) {
+                    $vistos[$chave] = [pscustomobject]@{ SHA256 = 'Nao calculado'; Assinatura = 'Nao verificado'; Editor = 'N/A'; Detalhe = ("Limite de {0} arquivos distintos atingido" -f $MaxArquivos) }
+                } else {
+                    $vistos[$chave] = Get-CompartDiskFileTrust -Path $exe -SemHash:$SemHash
+                    $analisados++
+                }
+            }
+            $trust = $vistos[$chave]
+        }
+
+        $cls = Get-CompartDiskOrigemComponente -Caminho $exe -Assinatura $trust.Assinatura -Editor $trust.Editor -Nome (Split-Path -Leaf "$exe")
+
+        [void]$rows.Add([pscustomobject]@{
+            Servico    = "$($s.Name)"
+            Nome       = "$($s.DisplayName)"
+            Estado     = "$($s.State)"
+            Inicio     = "$($s.StartMode)"
+            Conta      = $(if ($s.StartName) { "$($s.StartName)" } else { 'N/A' })
+            Origem     = $cls.Origem
+            Atencao    = $cls.Atencao
+            Assinatura = $trust.Assinatura
+            Editor     = $trust.Editor
+            SHA256     = $trust.SHA256
+            Binario    = $(if ($exe) { $exe } else { 'N/A' })
+            Observacao = $cls.Motivo
+        })
+    }
+    return @($rows | Sort-Object -Property Servico)
 }
 
 function Get-CompartDiskNetworkConnections {

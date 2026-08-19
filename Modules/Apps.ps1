@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.3 - Apps.ps1
+ COMPARTDISK 1.4.4 - Apps.ps1
  Desenvolvido por Edsilas
  Instalacao de aplicativos de suporte tecnico pelo gerenciador de pacotes do
  Windows (winget), a partir de um catalogo declarativo.
@@ -770,11 +770,10 @@ function Add-AppsRelatorio {
 function Test-ModoInterativo { return (Test-CompartDiskInterativo -Quiet:$Quiet) }
 
 function Write-AppsCabecalho {
+    <# Delega ao ponto unico do Core: limpa a tela e desenha titulo e regua.
+       Mantido como nome local para nao mexer nos pontos de chamada. #>
     param([string]$Titulo)
-    Write-Color ''
-    Write-Color ("  {0}" -f $Titulo) -Color White
-    Write-Color ("  " + ('-' * 74)) -Color DarkGray
-    Write-Color ''
+    Write-CompartDiskMenuCabecalho -Titulo $Titulo -Quiet:$Quiet
 }
 
 function Show-WingetIndisponivel {
@@ -865,6 +864,15 @@ function Show-MenuCategoria {
         Write-ResultadoIndividual -Registro $reg
         Add-AppsRelatorio -Registros @($reg) -Titulo ('Instalacao de aplicativo - {0}' -f $app.Name)
         Set-ResultadoModulo -Registros @($reg)
+
+        # O menu da categoria e redesenhado a seguir, o que limpa a tela. Sem
+        # esta parada o operador nunca leria o desfecho da instalacao. Mesmo
+        # padrao numerico das demais telas de resultado do modulo.
+        if (Test-ModoInterativo) {
+            Write-Color '  [0] Voltar' -Color DarkGray
+            Write-Color ''
+            [void](Read-CompartDiskOpcao -Maximo 0)
+        }
     }
 }
 

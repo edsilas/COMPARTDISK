@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.3 - Audit.ps1  (revisao cirurgica)
+ COMPARTDISK 1.4.4 - Audit.ps1  (revisao cirurgica)
  Desenvolvido por Edsilas
  Acoes: Full | Quick | Events | Software | License
 
@@ -633,7 +633,7 @@ function Add-AuditContextSection {
     $script:IsAdmin = Test-AuditAdministrator
 
     $pares = [ordered]@{
-        'Modulo'            = 'Audit 1.4.3'
+        'Modulo'            = 'Audit 1.4.4'
         'Acao'              = $Action
         'Modo'              = $Modo
         'Janela de eventos' = ("$Days dia(s)")
@@ -1805,6 +1805,32 @@ function Add-AuditProcessInventory {
     if ($indefinidos.Count -gt 0) { $estadoArea = 'Parcial' }
     Update-AuditArea 'Integridade de executaveis' $estadoArea $(
         if ($indefinidos.Count -gt 0) { "{0} executavel(is) sem verificacao possivel" -f $indefinidos.Count } else { '' })
+
+    # ---- inventario de servicos com origem do binario ----------------------
+    # Nao substitui 'Servicos essenciais', que segue com os 18 criticos e o mesmo
+    # formato: aquela responde "os criticos estao saudaveis?", esta responde
+    # "quais servicos existem e de quem e o binario de cada um".
+    $sv = Invoke-AuditCollect -Name 'ServiceInventory' -Requires 'Get-CompartDiskServiceInventory' -Cache `
+          -Script { Get-CompartDiskServiceInventory }
+    if ($sv.State -ne 'Ok') {
+        Add-AuditNotCollected -Collect $sv -Title 'Servicos (inventario)' -Area 'Servicos' `
+            -Impact 'servicos nao inventariados com origem do binario.' -Severity 'INFO'
+        return
+    }
+    $servicos = @($sv.Items)
+    $svAtencao = @($servicos | Where-Object { $_.Atencao -eq 'Sim' })
+    $svTerceiro = @($servicos | Where-Object { $_.Origem -eq 'Terceiro' })
+    Add-AuditSection -Title 'Servicos (inventario)' -Status $(if ($svAtencao.Count -gt 0) { 'WARN' } else { 'INFO' }) `
+        -Rows $servicos -Summary (
+        "{0} servico(s): {1} de terceiros, {2} com indicador que pede conferencia manual." -f `
+        $servicos.Count, $svTerceiro.Count, $svAtencao.Count)
+    Write-AuditTable $servicos @('Servico', 'Estado', 'Inicio', 'Origem', 'Editor') 160 12
+
+    if ($svAtencao.Count -gt 0) {
+        Add-AuditFinding -Severity 'WARN' -Area 'Integridade de executaveis' `
+            -Message ("{0} servico(s) com indicador que pede conferencia manual." -f $svAtencao.Count) `
+            -Recommendation 'Abrir a secao "Servicos (inventario)" e filtrar por "Pede conferencia" para ver o motivo de cada um.'
+    }
 }
 
 function Add-AuditNetworkSurface {
