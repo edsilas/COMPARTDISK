@@ -44,12 +44,7 @@ $TagFixa  = if ($env:COMPARTDISK_TAG)   { $env:COMPARTDISK_TAG }   else { 'v1.4.
 # Hash do pacote COMPARTDISK-1.4.4.zip anexado a tag acima. Fixa-lo aqui e mais forte
 # do que depender das notas da release: o valor passa a viajar com o proprio script.
 # Se ficar vazio, o script recorre ao SHA-256 publicado nas notas (Get-HashPublicado).
-#
-# ESTADO DE TRANSICAO: vazio ate a release v1.4.4 ser publicada e o pacote conferido.
-# Enquanto isso a integridade e validada pelo hash das notas da release; nao havendo
-# hash publicado, Test-Integridade declara a limitacao em vez de aceitar o pacote em
-# silencio. Manter aqui o hash da 1.4.3 faria a validacao recusar o pacote correto.
-$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { '' }
+$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { '5a8136e7db082c011a77de4325ba9e019a160c8ba9c1f6c1e3361a3053414bce' }
 $Origem   = "https://github.com/$Repo"
 $ApiBase  = "https://api.github.com/repos/$Repo"
 

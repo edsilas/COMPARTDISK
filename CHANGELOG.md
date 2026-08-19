@@ -182,10 +182,16 @@ tema claro. Publicação em
 A numeração passa de `1.4.3` para `1.4.4` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
 `README.md`, no cabeçalho de todos os módulos e de todos os documentos.
 
-`remote.ps1` passa a apontar para a tag `v1.4.4`. Repositório, URLs, endpoints da API
-e validações permanecem como estavam — apenas a tag e o hash são atrelados à versão.
-O SHA-256 fixado fica vazio até a release ser publicada e o pacote conferido; enquanto
-isso a integridade é validada pelo hash publicado nas notas da release.
+`remote.ps1` passa a apontar para a tag `v1.4.4`, com o SHA-256 do pacote publicado
+fixado no próprio script. Repositório, URLs, endpoints da API e validações permanecem
+como estavam — apenas a tag e o hash são atrelados à versão. O valor foi conferido em
+três fontes independentes que coincidem: o asset baixado da release, o pacote regerado
+a partir da tag e o hash declarado nas notas da publicação.
+
+```text
+COMPARTDISK-1.4.4.zip
+SHA-256: 5a8136e7db082c011a77de4325ba9e019a160c8ba9c1f6c1e3361a3053414bce
+```
 
 ### Registrado para commit separado
 
