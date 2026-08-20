@@ -334,12 +334,22 @@ criar um a cada execução. Publicação em
 A numeração passa de `1.4.4` para `1.4.5` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
 `README.md`, no cabeçalho de todos os módulos e de todos os documentos.
 
-`remote.ps1` passa a apontar para a tag `v1.4.5`. O SHA-256 do pacote fica em branco
-nesta publicação e é fixado no script em commit próprio, depois de conferido no asset
-da release — o mesmo procedimento adotado em 1.4.3 e 1.4.4. Enquanto estiver em branco,
-`Get-HashPublicado` recorre ao SHA-256 declarado nas notas da publicação, e a validação
-de integridade continua ativa. Repositório, URLs, endpoints da API e demais validações
-permanecem como estavam.
+`remote.ps1` passa a apontar para a tag `v1.4.5`, com o SHA-256 do pacote publicado
+fixado no próprio script em commit seguinte ao da release — o mesmo procedimento adotado
+em 1.4.3 e 1.4.4. Repositório, URLs, endpoints da API e demais validações permanecem
+como estavam: apenas a tag e o hash são atrelados à versão.
+
+O pacote é gerado a partir da própria tag, o que torna o valor reproduzível por
+qualquer pessoa:
+
+```text
+git archive --format=zip --prefix=COMPARTDISK-1.4.5/ v1.4.5 > COMPARTDISK-1.4.5.zip
+```
+
+```text
+COMPARTDISK-1.4.5.zip
+SHA-256: e4f1ee15b9c867a8cfd54c371da5ff8c766b28dfd4f1d9dfa14b4468db3824da
+```
 
 ### Registrado para commit separado
 
