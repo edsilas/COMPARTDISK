@@ -13,6 +13,348 @@ Sem alterações pendentes.
 
 ---
 
+## [1.4.5] — 2026-08-20
+
+Nova **Central de Aplicativos**, que pesquisa qualquer aplicativo publicado na fonte
+oficial do WinGet pelo nome e instala em poucos passos, e correções no **Perfil de
+Desempenho Máximo**, que passa a reutilizar o plano de energia existente em vez de
+criar um a cada execução. Publicação em
+[Releases](https://github.com/edsilas/COMPARTDISK/releases/tag/v1.4.5).
+
+> As duas correções de `Modules/Performance.ps1` desta versão são as que a 1.4.4
+> deixou registradas em **Registrado para commit separado**: a acentuação corrompida
+> na leitura da saída do `powercfg` e o `powercfg /a` tratado como falha.
+
+### Adicionado
+
+- **Central de Aplicativos no menu Aplicativos (`2` › `2`).** Pesquisa qualquer
+  aplicativo publicado na fonte oficial do WinGet **pelo nome** e instala em poucos
+  passos, sem exigir que o operador conheça comandos, sintaxe ou identificadores de
+  pacote. É a ação `Central` de `Modules/Apps.ps1` — a mesma rotina de instalação e as
+  mesmas verificações do catálogo interno.
+
+  A pesquisa é tolerante: normaliza maiúsculas, acentos, espaços e hífens, entende
+  abreviações e apelidos e tolera erro de digitação por distância de edição. `chrome`,
+  `chr`, `crome` e `google chrome` chegam ao Google Chrome; `7zip` e `7 zip` ao 7-Zip;
+  `vscode`, `vs code`, `code` e `visual code` ao Visual Studio Code; `vlc` e `videolan`
+  ao VLC.
+
+  Os resultados **não** são a saída bruta do `winget search`. Consultas do catálogo
+  local de apelidos e do WinGet são consolidadas, as duplicidades removidas por
+  identificador e a ordem decidida por relevância: correspondência exata, início do
+  nome, parte do nome, editor, apelido conhecido e, por último, aproximação por
+  semelhança. Empates são desfeitos pela posição em que a fonte oficial devolveu cada
+  resultado — a opinião do próprio WinGet entra como desempate, nunca no lugar da
+  correspondência com o que foi digitado.
+
+  A normalização preserva **letra de qualquer alfabeto** e descarta apenas separador e
+  pontuação. Descartar tudo que não fosse `a-z0-9` fazia um nome em alfabeto não latino
+  colapsar sobre o termo pesquisado e virar correspondência exata falsa: uma pesquisa
+  por `office` trazia utilitários de nome parecido à frente do próprio Microsoft 365.
+
+  O identificador é comparado **sem o moniker do editor** — `Netpack.XFB` responde por
+  `xfb` —, porque o editor tem tier próprio e mais baixo. E a proximidade é medida
+  contra o texto que **produziu** a correspondência, não sempre contra o nome. Sem as
+  duas coisas, uma pesquisa por `net` enchia a tela de pacotes da `NetEase`, da
+  `Netpack` e da `netless-io`, à frente de qualquer programa realmente chamado `Net…`.
+
+  A tela separa **Melhores resultados** de **Mais resultados relacionados**: em cima as
+  correspondências diretas sem ressalva; embaixo os canais secundários (`Beta`, `Dev`,
+  `Nightly`, `Insiders`, `Preview`) e os pacotes de terceiros quando existe um do
+  próprio editor procurado. A numeração é contínua e **nenhum resultado válido do**
+  **WinGet é descartado** — só agrupado. Aparecem até oito por vez; havendo mais, a tela
+  informa o total encontrado e sugere refinar o termo, de modo que uma pesquisa por uma
+  letra só não despeje centenas de linhas no console.
+
+  **Oficialidade sem invenção.** O único vínculo que os dados do WinGet permitem
+  afirmar é o editor que consta no identificador publicado: `Google.Chrome` responde
+  por `Google`, `arjun-g.google-meet-desktop` não. Termo igual ao editor reforça o
+  pacote; existindo um pacote do editor procurado, os homônimos de terceiros perdem
+  posição — sem serem removidos. Nada é deduzido a partir do nome do programa.
+
+  A escada de correspondência é **nome exato › palavra completa do nome › início do
+  nome › pacote exato › parte do nome › início do pacote › parte do pacote › editor**:
+  o nome do aplicativo pesa mais que o identificador, que é dado técnico. Somam-se a
+  **cobertura** das palavras do termo (`google chrome` separa o Chrome de qualquer
+  outro programa do Google por larga margem), a **posição** da palavra no nome e os
+  rótulos que o WinGet publica, comparados palavra a palavra para que `Betaflight`
+  nunca seja confundido com `Beta`. Correspondência aproximada nunca supera
+  correspondência direta.
+
+  Uma **segunda etapa** cuida da diversidade: variações do mesmo pacote, reconhecidas
+  pela família do identificador publicado (`Google.Chrome` e `Google.Chrome.Beta`,
+  `Mozilla.Firefox` e `Mozilla.Firefox.ESR`), não ocupam várias das primeiras posições —
+  a melhor de cada família mantém o lugar e as irmãs recuam, sem sair da lista.
+
+  Cada resultado passa a guardar `Version` e `Source` além de nome, identificador e
+  editor, e a tela de instalação mostra a versão quando a fonte a informa.
+
+  **Preferência de idioma.** Programas que publicam uma variante por localidade
+  (`Mozilla.Firefox.af`, `Mozilla.Firefox.pt-BR`, dezenas delas) tomavam a primeira
+  página e escondiam o pacote base. A preferência do COMPARTDISK passa a ser
+  **`pt-BR` › pacote base › `pt` / `pt-PT` › `en-US` / `en` › demais localidades**, concentrada
+  em `Get-AppsPrioridadeIdioma` — mudar a ordem é mudar essa função e só ela. `pt-PT`
+  não é tratado como equivalente de `pt-BR`. O peso entra somado à relevância e **nunca**
+  **filtra**: variante estrangeira continua listada, em *mais resultados relacionados*, e
+  o recuo por família cresce a cada tradução seguinte para que não dominem a tela.
+
+  A localidade vem só de dado objetivo do resultado — o **segmento final do identificador
+  publicado**. **Editor não indica idioma** (`Mozilla` não torna um pacote `pt-BR`) e
+  **nome exibido também não**: `Mozilla Firefox (en-US)` é o rótulo do pacote *base*
+  `Mozilla.Firefox` e informa o idioma padrão dele, não que ele seja a variante `en-US` —
+  essa tem identificador próprio (`Mozilla.Firefox.en-US`). O sufixo entre parênteses do
+  nome entra apenas para **confirmar** um segmento do identificador que as culturas do
+  .NET não conhecem; sozinho ele nunca cria uma localidade. Um código só é aceito quando
+  está entre as culturas do .NET ou quando identificador e nome declaram o mesmo código,
+  o que reconhece `Mozilla.Firefox.ast` sem confundir `Mozilla.Firefox.ESR`,
+  `Google.Chrome.Dev` ou `Adobe.Acrobat.Reader.64-bit` com localidade. Nomes continuam
+  sendo exibidos exatamente como o WinGet os devolve — a preferência ordena, não traduz.
+
+  `Get-AppsLocalidade` classifica cada resultado em **pacote base** (`Mozilla.Firefox`),
+  **variante de idioma** (`Mozilla.Firefox.pt-BR`, localidade explícita) e **outra**
+  **variante do pacote** (`Mozilla.Firefox.ESR`, `Mozilla.Firefox.MSIX` — outra edição do
+  mesmo aplicativo, nunca um idioma). Localidade e variante são dimensões independentes e
+  não se convertem uma na outra; pacote sem localidade declarada pesa igual ao base.
+
+  Enter sem termo deixou de ser consulta inútil: a tela pede o nome e oferece nova
+  pesquisa ou voltar.
+
+  A leitura da tabela também recupera o caso em que o nome preenche a coluna inteira e
+  sobra um único espaço antes do identificador — antes a linha era descartada, e com
+  ela o pacote procurado.
+
+  O catálogo de apelidos (`$script:ApelidosCentral`) é declarativo — acrescentar um
+  aplicativo popular é acrescentar uma entrada — e **não é uma fonte de pacotes**: ele
+  traduz o termo digitado e dá preferência ao pacote esperado. Tudo o que aparece na
+  tela e tudo o que é instalado vem do WinGet; um identificador que saia do ar degrada
+  para a pesquisa normal, sem oferecer item que a fonte oficial não confirme.
+
+  Cada entrada declara uma **lista** de identificadores, do mais provável para o menos:
+  um termo genérico aceita mais de uma resposta legítima. `office`, `word` e `planilha`
+  trazem Microsoft 365, LibreOffice e ONLYOFFICE; `navegador` e `browser` trazem os
+  navegadores; `acesso remoto` traz AnyDesk e TeamViewer. Apenas o primeiro
+  identificador é sondado quando a pesquisa por nome não o traz, então o custo típico
+  continua sendo uma chamada por pesquisa.
+
+  Antes de oferecer a instalação, a Central verifica se o pacote **já está instalado**
+  e, se estiver, informa e não instala: atualizar continua sendo a opção `3`. A
+  instalação reaproveita integralmente `Invoke-AppInstalacao`, com o mesmo vocabulário
+  de resultado e a mesma conferência do estado final — código de saída zero continua
+  não sendo tratado como prova de instalação.
+
+  **Segurança.** O nome procurado é a única entrada de texto: é higienizado, limitado
+  a 60 caracteres e viaja **entre aspas** como valor de `--query`, e
+  `Invoke-NativeCommand` não usa shell. O identificador instalado é sempre o que o
+  WinGet devolveu, validado por forma (`Editor.Pacote`, com recusa de número de versão
+  e de célula truncada) e confirmado na fonte oficial antes da instalação. Nenhum
+  comando é montado a partir de texto digitado.
+
+  **Contingência.** Sem PowerShell, o Launcher aplica a rotina Batch
+  `:FB_APPS_CENTRAL`, com o mesmo fluxo e reaproveitando `:FB_APPS_INSTALAR`. Ali os
+  apelidos mais comuns continuam sendo traduzidos, mas não há tolerância a erro por
+  semelhança nem classificação por relevância — a limitação está declarada no código.
+
+> **Sem remoção de capacidade.** Nenhuma ação, `ValidateSet`, argumento de linha de
+> comando, código de saída ou campo de relatório foi alterado. `Central` foi
+> **acrescentada** ao `ValidateSet` de `Apps.ps1` sem tocar nas ações existentes. A
+> reorganização das teclas do menu Aplicativos está descrita em *Alterado* e
+> *Removido*, abaixo.
+
+### Alterado
+
+- **Preferência de idioma da Central: `pt-BR` na frente, e nome em outra escrita
+  pesando como as demais localidades.** A experiência da Central é em português do
+  Brasil, então a tradução `pt-BR` passou à frente do pacote base — a ordem completa é
+  **`pt-BR` › pacote base › `pt` / `pt-PT` › `en-US` / `en` › demais localidades**,
+  ainda concentrada em `Get-AppsPrioridadeIdioma`.
+
+  Faltava um caso: o pacote que **não declara localidade nenhuma** e publica o nome em
+  outra escrita (`Lenovo.LenovoVoice`, exibido em chinês) pesava como pacote base, o
+  topo da escala. `Test-AppsEscritaNaoLatina` — texto com letras e **nenhuma** delas
+  latina — o classifica com o peso das demais localidades. Continua na lista, em *mais
+  resultados relacionados*; nada é removido, nada é traduzido e nada é transcrito: o
+  nome aparece exatamente como o WinGet o devolveu.
+
+  **Não é detecção de idioma e não vira localidade.** `Get-AppsLocalidade` continua
+  lendo apenas o identificador publicado, e `Mozilla.Firefox` segue sendo pacote base
+  mesmo exibido como *Mozilla Firefox (en-US)*; `.ESR` e `.MSIX` seguem sendo edições,
+  nunca idiomas. O fator também não se aplica quando a **pesquisa** é em outra escrita:
+  quem procura em chinês está procurando o que foi publicado em chinês.
+
+  Idioma continua sendo **fator, não filtro**: uma correspondência forte em `en-US`
+  continua acima de uma correspondência fraca em `pt-BR`, e um apelido exato continua
+  apontando o pacote que ele nomeia.
+
+- **Navegação da Central de Aplicativos por tecla fixa: `[P]` nova pesquisa e `[V]`
+  voltar, em todas as telas.** A tela de resultados usava o número seguinte ao último
+  resultado para *nova pesquisa* e `0` para *voltar* — e esse número mudava a cada
+  pesquisa, porque a quantidade de resultados varia. As duas ações passam a ter tecla
+  própria, no mesmo lugar sempre, aceitas em maiúscula ou minúscula.
+
+  A regra é **uma só para a Central inteira**: tela de resultados, tela de *nenhum
+  aplicativo encontrado* (que também cobre a falha de consulta à fonte oficial), tela
+  de termo em branco e a pausa entre telas. Antes, só a de resultados tinha as teclas
+  novas e as demais continuavam pedindo `[1]` / `[0]`, recusando `p` com *"Use apenas
+  numeros"*.
+
+  Os **números continuam sendo apenas dos aplicativos** (`1` a `N`) e só onde existe
+  lista: `0` e o número seguinte ao último deixaram de navegar. Entrada inválida
+  continua sendo recusada com aviso, sem exceção e sem sair da Central. A confirmação
+  de instalação (`[1]` Sim / `[0]` Não) não é navegação e permanece numérica.
+
+  A leitura da tecla continua sendo a do `Core.ps1` (`Read-CompartDiskEntradaOpcao`,
+  com o mesmo comportamento de `CHOICE`); a validação ficou em `Read-CentralOpcao`,
+  ponto único de `Apps.ps1` para todas as telas da Central — `-Maximo 0` nas que não
+  têm lista. Nenhum outro menu foi tocado, e `Read-CompartDiskOpcao` — numérico, usado
+  por todos os demais — permanece como está. As rotinas Batch `:FB_APPS_CENTRAL` e
+  `:FB_CENTRAL_VAZIO` receberam as mesmas teclas, por paridade.
+
+  Pesquisa, apelidos, ranking, preferência de idioma, agrupamento, limite de oito
+  resultados, seleção, instalação, mensagens e logs: nada alterado.
+
+- **Menu Aplicativos reorganizado na ordem real de uso.** As três opções passam a ser
+  `1` Verificar / preparar WinGet, `2` Central de Aplicativos (pesquisar e instalar) e
+  `3` Atualizar aplicativos (WinGet) — primeiro garantir o gerenciador de pacotes,
+  depois instalar, por último manter o que já existe.
+
+  **Nenhuma das três mudou por dentro.** Cada tecla chama exatamente a mesma rotina de
+  antes — `:MOD_WINGET_PREP_MENU`, `:MOD_APPS_CENTRAL_MENU` e `:MOD_WINGET_MENU` —,
+  com os mesmos comandos, argumentos, elevação, mensagens, tratamento de erro e
+  fallback Batch. Mudou a posição no menu, não o comportamento.
+
+  O rodapé passou a descrever as opções na nova ordem, e as mensagens que citavam o
+  número da preparação do WinGet (`[3]`) ou o da atualização (`[1]`) — no
+  `Launcher.bat` e em `Modules/Apps.ps1` — foram atualizadas para `[1]` e `[3]`.
+  `choice /c 12340` virou `choice /c 1230`: a tecla `4` deixou de existir e não executa
+  mais nada.
+
+### Removido
+
+- **Opção `Instalar aplicativos (catálogo de suporte técnico)` do menu Aplicativos.**
+  Era a antiga tecla `2`. A Central de Aplicativos passou a ser o caminho único de
+  instalação — as duas ofereciam a mesma capacidade, com a Central alcançando toda a
+  fonte oficial e não apenas o catálogo curado.
+
+  **Do Launcher saiu apenas o fluxo exclusivo dessa tecla**, `:MOD_APPS_MENU` e
+  `:MOD_APPS_INSTALAR`. Nada compartilhado foi tocado: `Modules/Apps.ps1` continua
+  íntegro — catálogo declarativo, ações `Menu`, `Install`, `InstallCategory`,
+  `InstallAll`, `List` e `Central` — e as rotinas Batch `:FB_APPS_*` permanecem porque
+  `:FB_APPS_CENTRAL` reaproveita `:FB_APPS_ZERAR`, `:FB_APPS_INSTALAR`,
+  `:FB_APPS_SEM_WINGET` e os desfechos de instalação. A rotina `:FB_APPS_MENU` deixou
+  de ser alcançada pelo menu e ficou registrada como tal no próprio arquivo.
+
+  O catálogo de suporte técnico continua disponível em automação
+  (`-Action Install -Id <id>`, `-Action InstallCategory`, `-Action InstallAll`,
+  `-Action List`) e documentado em [Funcionalidades](docs/FUNCIONALIDADES.md).
+
+### Corrigido
+
+- **`Aplicar Perfil Desempenho Máximo` (`3` › `3`) criava um plano de energia a cada
+  execução.** `Modules/Performance.ps1` só reconhecia o plano pelo GUID canônico
+  `e9a42b02-…`. Como `powercfg /duplicatescheme` devolve um **GUID aleatório**, a partir
+  da segunda execução esse GUID não aparecia mais na listagem e o plano — já presente e
+  muitas vezes já ativo — era dado como ausente. O resultado era um plano criado e
+  descartado a cada execução, com mensagens contraditórias na mesma saída:
+  `Plano atual: Desempenho Máximo`, `Plano Desempenho Maximo ausente`,
+  `Plano criado com GUID proprio` e `Copia redundante descartada`.
+
+  `Resolve-PerfPerformanceScheme` passa a resolver em três etapas, com a criação como
+  **último** recurso: GUID canônico presente na listagem; plano derivado já presente; e
+  só então duplicar o modelo do Windows, uma única vez. Quando o plano existe, ele é
+  reutilizado — se já estiver ativo, nada é alterado; se outro estiver ativo, apenas
+  ativado. O GUID continua sendo o identificador: é por GUID que o plano é ativado e
+  configurado. O nome só participa do reconhecimento da duplicata, cujo GUID é por
+  definição imprevisível, e ainda assim **normalizado** (`ConvertTo-PerfNameKey` remove
+  acentuação, caixa e pontuação), de modo que `Desempenho Máximo`, `Desempenho maximo` e
+  `DESEMPENHO MÁXIMO` deixam de ser planos diferentes.
+
+  O nome de referência vem do próprio Windows sempre que possível, por uma consulta
+  somente leitura `powercfg /query <GUID canônico>`; os nomes pt-BR e en-US entram
+  apenas como apoio. Os GUIDs de Equilibrado, Alto Desempenho e Economia de Energia são
+  excluídos da comparação, para que `Alto Desempenho` jamais seja confundido com o plano
+  de Desempenho Máximo. Idiomas fora desse conjunto continuam protegidos pela rede já
+  existente, que reconhece a cópia redundante pelo nome lido do sistema e a descarta.
+  **Nenhum plano preexistente é removido** e planos antigos de mesmo nome são apenas
+  reportados.
+
+- **Acentuação corrompida na saída do `powercfg`** — o log trazia
+  `Desempenho M?ximo` e `N?o foi poss?vel` no lugar dos acentos.
+  O `powercfg.exe` não escreve UTF-8 quando sua saída é
+  redirecionada: usa a página de código **OEM** do sistema (850 em pt-BR). Como o
+  `Launcher.bat` executa `chcp 65001`, era o UTF-8 do console que o .NET usava para
+  decodificar o canal redirecionado, e cada byte acentuado virava `U+FFFD` de forma
+  irreversível.
+
+  A correção fica **contida em `Modules/Performance.ps1`**: `Invoke-PerfNativeProcess`
+  captura `stdout`/`stderr` em **bytes** — drenando os dois canais concorrentemente,
+  como o `Invoke-NativeCommand` do Core — e `ConvertFrom-PerfNativeBytes` decodifica sem
+  supor a codificação: UTF-8 estrito primeiro (ASCII puro e saída realmente UTF-8 passam
+  intactos) e página de código OEM apenas para os bytes que o UTF-8 rejeita. A
+  infraestrutura global de execução de processos do `Core.ps1` **não** foi alterada.
+
+- **O fallback Batch `:FB_PERFORMANCE` criava um plano a cada execução.** Mesmo
+  defeito e mesma causa da rotina PowerShell, na via de emergência do
+  `Launcher.bat` — a que roda quando o PowerShell não está disponível. Ela também
+  só procurava o GUID canônico e, não o encontrando, duplicava o modelo sem
+  verificar se o plano já existia.
+
+  A resolução passou a seguir a mesma ordem de três etapas do `Performance.ps1`,
+  com a criação como último recurso. O nome de referência vem do próprio Windows
+  (`powercfg -query`, somente leitura) e é aceito apenas da linha cujo GUID
+  confere com o consultado — assim uma mensagem de erro com parênteses nunca é
+  tomada por nome de plano. A comparação é feita entre **duas cadeias vindas da
+  saída do `powercfg`**, nunca com `findstr` nem com nome escrito no código: se o
+  `chcp 65001` degradar a acentuação, ela degrada os dois lados de forma idêntica
+  e a igualdade se mantém. Os idiomas em que a consulta não resolve o modelo
+  continuam protegidos pela rede que descarta a cópia redundante — **somente a
+  cópia criada naquela execução**, nunca um plano preexistente.
+
+  A ativação passou a ser validada por releitura de `powercfg /getactivescheme`,
+  como `:FB_PERF_BALANCED` já fazia: código de retorno 0 não prova que o plano
+  ficou ativo. A queda para Alto Desempenho, os efeitos visuais e as demais
+  rotinas `:FB_PERF_*` ficaram inalterados. A expansão retardada continua
+  desativada — os trechos que precisam ler uma variável definida dentro de um
+  laço usam `call` para sub-rotina, e o arquivo segue sem BOM, em CRLF e ASCII.
+
+- **`powercfg /a` com código de retorno diferente de zero descartava uma saída válida.**
+  Em dispositivos que não expõem parte dos estados de suspensão, o comando imprime a
+  relação completa e ainda assim retorna erro. `Get-PerfSleepCapabilities` passa a
+  aproveitar essa saída e registrar um **aviso** — nunca uma falha fatal —, sem
+  interromper a aplicação do perfil. Quando não há saída utilizável, a falha continua
+  sendo reportada com o detalhe técnico, como antes.
+
+  As mensagens próprias do CompartDisk nessa função passaram a seguir português do
+  Brasil acentuado, alinhadas à documentação. Preservados sem alteração: as
+  configurações aplicadas e o estado `ALREADY` quando o valor já está correto, as
+  configurações em bateria (DC) e o parâmetro `-IncludeDcSettings`, a decisão de **não**
+  desativar Hibernação e Inicialização Rápida, os efeitos visuais e a revalidação final.
+
+### Versão
+
+A numeração passa de `1.4.4` para `1.4.5` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
+`README.md`, no cabeçalho de todos os módulos e de todos os documentos.
+
+`remote.ps1` passa a apontar para a tag `v1.4.5`. O SHA-256 do pacote fica em branco
+nesta publicação e é fixado no script em commit próprio, depois de conferido no asset
+da release — o mesmo procedimento adotado em 1.4.3 e 1.4.4. Enquanto estiver em branco,
+`Get-HashPublicado` recorre ao SHA-256 declarado nas notas da publicação, e a validação
+de integridade continua ativa. Repositório, URLs, endpoints da API e demais validações
+permanecem como estavam.
+
+### Registrado para commit separado
+
+- **Acentuação da saída de executáveis nativos nos demais módulos.** A correção desta
+  versão está contida em `Modules/Performance.ps1`, que passou a capturar a saída do
+  `powercfg` em bytes e a decodificá-la sem supor UTF-8. `Invoke-NativeCommand`
+  (`Core.ps1`) continua sem definir `StandardOutputEncoding`, de modo que os outros
+  módulos que chamam executáveis nativos seguem sujeitos ao mesmo efeito. Alterar o
+  executor compartilhado afeta todos os módulos de uma vez e por isso não entra aqui.
+- **Duplicação de plano de energia no fallback Batch de outras rotinas.** `:FB_PERFORMANCE`
+  foi corrigida nesta versão. As demais rotinas `:FB_*` que criam objetos do sistema não
+  foram auditadas sob o mesmo critério de idempotência.
+
+---
+
 ## [1.4.4] — 2026-08-19
 
 Correções no **Desempenho Máximo**, na navegação dos menus e no **Diagnóstico

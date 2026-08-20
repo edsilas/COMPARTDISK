@@ -1,6 +1,6 @@
 # Requisitos do Sistema
 
-**COMPARTDISK 1.4.4** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.5** · Desenvolvido por Edsilas
 
 ---
 
@@ -36,7 +36,7 @@ profundidade do diagnóstico — **nenhuma funcionalidade deixa de existir**.
 |---|---|---|
 | **PowerShell 5.1** | Diagnóstico completo e relatórios nos quatro formatos | Rotinas Batch equivalentes assumem |
 | **PowerShell 7** | Mesmo que acima, com melhor desempenho | PowerShell 5.1 é usado |
-| **Winget** | Atualização de programas e instalação do catálogo de aplicativos | O menu `2` › `3` diagnostica e prepara o App Installer por meios oficiais |
+| **Winget** | Atualização de programas e instalação de aplicativos pela Central | O menu `2` › `1` diagnostica e prepara o App Installer por meios oficiais |
 | **WMIC** | Consultas de hardware no modo Batch | Consultas alternativas são usadas |
 | **PnPUtil** | Backup e inventário de drivers | Opção informa indisponibilidade |
 | **manage-bde** | Consulta ao BitLocker no modo Batch | Opção informa indisponibilidade |

@@ -1,6 +1,6 @@
 # Política de Atualização
 
-**COMPARTDISK 1.4.4** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.5** · Desenvolvido por Edsilas
 
 ---
 

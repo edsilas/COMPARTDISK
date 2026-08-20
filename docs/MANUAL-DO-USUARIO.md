@@ -1,6 +1,6 @@
 # Manual do Usuário
 
-**COMPARTDISK 1.4.4** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.5** · Desenvolvido por Edsilas
 
 Manual escrito para quem **não é técnico**. Cada recurso é explicado em linguagem
 simples: o que faz, quando usar e o que esperar.
@@ -55,7 +55,7 @@ Uma janela preta e azul se abre com o menu. É por ali que você trabalha.
 ## Entendendo a tela
 
 ```
-  COMPARTDISK  1.4.4
+  COMPARTDISK  1.4.5
   Assistente de Reparo
 
   --------------------------------------------------------------------------
@@ -119,35 +119,14 @@ onde começar.
 
 ### `2` Aplicativos
 
-Abre uma tela com duas opções: `1` atualizar e `2` instalar. A tecla `0` volta.
+Abre uma tela com três opções, na ordem em que costumam ser usadas: `1` verificar o
+WinGet, `2` a Central de Aplicativos e `3` atualizar. A tecla `0` volta.
 
-#### `2` › `1` Atualizar aplicativos
+#### `2` › `1` Verificar / preparar WinGet
 
-**O que é:** atualiza os programas instalados para as versões mais novas.
-
-**Quando usar:** de vez em quando, para manter tudo em dia.
-
-**O que esperar:** precisa de internet. Programas abertos podem falhar ao atualizar —
-feche o que puder antes. É comum aparecerem alguns avisos amarelos.
-
-#### `2` › `2` Instalar aplicativos
-
-**O que é:** instala ferramentas de suporte técnico (diagnóstico de hardware, rede,
-acesso remoto e produtividade) escolhidas em uma lista pronta.
-
-**Quando usar:** ao preparar um computador de trabalho ou ao precisar de uma
-ferramenta específica em um atendimento.
-
-**O que esperar:** tudo é escolhido por números. Você pode instalar um aplicativo por
-vez, todos os de uma categoria ou todos de uma vez. **O que já está instalado é
-ignorado** — esta opção não atualiza nem remove nada. Se um aplicativo falhar, os
-demais continuam, e no final aparece um resumo. Precisa de internet.
-
-#### `2` › `3` Verificar / preparar WinGet
-
-**O que é:** as duas opções acima dependem do **WinGet**, o gerenciador de pacotes que
-acompanha o Windows. Esta opção verifica se ele está lá e funcionando — e, quando não
-está, tenta prepará-lo.
+**O que é:** as outras duas opções deste menu dependem do **WinGet**, o gerenciador de
+pacotes que acompanha o Windows. Esta opção verifica se ele está lá e funcionando — e,
+quando não está, tenta prepará-lo.
 
 **Quando usar:** quando aparecer o aviso de que o WinGet está indisponível, ou antes
 de preparar uma máquina, para conferir.
@@ -169,6 +148,49 @@ então oferece voltar para instalar ou atualizar aplicativos.
 
 > Nada é baixado de sites de terceiros, e nenhuma proteção do Windows é desativada
 > para isso funcionar.
+
+#### `2` › `2` Central de Aplicativos
+
+**O que é:** procura qualquer aplicativo pelo nome e instala. Você não precisa saber
+nenhum comando nem o nome técnico do pacote.
+
+**Quando usar:** sempre que quiser instalar um programa — um navegador, um leitor de
+PDF, um compactador, uma ferramenta de diagnóstico, o que for.
+
+**O que esperar:** a tela pede o nome do aplicativo. **Não precisa acertar o nome**
+**exato**: `crome` encontra o Google Chrome, `7 zip` encontra o 7-Zip, `vs code`
+encontra o Visual Studio Code. Maiúsculas, acentos, espaços e erros pequenos de
+digitação não atrapalham.
+
+Em seguida aparece uma lista numerada, separada em **Melhores resultados** e **Mais**
+**resultados relacionados**. Em cima ficam os que respondem direto ao que você pediu;
+embaixo, versões de teste (`Beta`, `Dev`) e programas parecidos de outros fabricantes.
+Nada é escondido — tudo o que o WinGet encontrou continua na lista.
+
+Cada item mostra o nome, o **editor** e o pacote, para você distinguir o programa
+oficial de um parecido. Você escolhe pelo número, confere os dados na tela e confirma
+com `[1]`. Os números são só dos aplicativos: para procurar outra coisa tecle `P`, e
+para voltar tecle `V` — em maiúscula ou minúscula, sempre as mesmas teclas, inclusive
+quando a pesquisa não encontra nada.
+
+Se aparecerem muitos resultados, a tela mostra os mais relevantes e avisa quantos
+foram encontrados, para você escrever um nome mais específico.
+
+Se o aplicativo **já estiver instalado**, a Central avisa e não instala nada — para
+atualizar o que já existe, use a opção `3`. Se algo der errado, a mensagem explica o
+motivo em português e informa que nada mais foi alterado. Precisa de internet.
+
+> A instalação usa sempre o pacote oficial confirmado pelo WinGet. O que você digita
+> serve apenas para procurar: nada do texto vira comando.
+
+#### `2` › `3` Atualizar aplicativos
+
+**O que é:** atualiza os programas instalados para as versões mais novas.
+
+**Quando usar:** de vez em quando, para manter tudo em dia.
+
+**O que esperar:** precisa de internet. Programas abertos podem falhar ao atualizar —
+feche o que puder antes. É comum aparecerem alguns avisos amarelos.
 
 ---
 

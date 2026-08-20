@@ -1,6 +1,6 @@
 # Descrição das Funcionalidades
 
-**COMPARTDISK 1.4.4** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.5** · Desenvolvido por Edsilas
 
 Descrição técnica do que cada recurso faz. Para a explicação em linguagem simples,
 veja o [Manual do Usuário](MANUAL-DO-USUARIO.md).
@@ -27,7 +27,7 @@ veja o [Manual do Usuário](MANUAL-DO-USUARIO.md).
 | `Battery.ps1` | `Info` `Report` `Sleep` |
 | `Bitlocker.ps1` | `Status` `Report` `Keys` |
 | `Explorer.ps1` | `Restart` `ClearCache` `Spooler` `ResetView` |
-| `Apps.ps1` | `Menu` `Install` `InstallCategory` `InstallAll` `List` |
+| `Apps.ps1` | `Menu` `Install` `InstallCategory` `InstallAll` `List` `Central` |
 | `Winget.ps1` | `Menu` `Status` `Prepare` `Repair` |
 | `Audit.ps1` | `Full` `Quick` `Events` `Software` `License` |
 | `Report.ps1` | `Build` `Consolidate` `Open` |
@@ -213,14 +213,18 @@ SHA-256 para transporte manual, e nenhum envio é tentado ou simulado.
 
 ## Aplicativos
 
-Duas capacidades independentes, sob a opção `2` do menu principal.
+Três opções, sob a opção `2` do menu principal, na ordem real de uso: **verificar /
+preparar o WinGet**, **Central de Aplicativos** e **atualizar aplicativos**.
 
 **Atualizar aplicativos** permanece a rotina Batch `:MOD_WINGET`: `winget upgrade
 --all --include-unknown`, precedida de teste da fonte. Nada nela foi alterado.
 
-**Instalar aplicativos** é o módulo `Apps.ps1`, que instala **apenas o que estiver
-ausente**. Não atualiza, não reinstala e não remove — atualizar continua sendo
-responsabilidade da outra opção.
+**O catálogo de suporte técnico** é o módulo `Apps.ps1`, que instala **apenas o que
+estiver ausente**. Não atualiza, não reinstala e não remove — atualizar continua sendo
+responsabilidade da outra opção. Ele **deixou de ser opção do menu**: a Central de
+Aplicativos passou a ser o caminho único de instalação, e manter as duas era oferecer
+a mesma capacidade duas vezes. O catálogo continua íntegro no módulo e disponível em
+automação; a Central usa a mesma rotina de instalação — nada foi removido dele.
 
 O catálogo é declarativo: nome, identificador Winget, categoria, descrição, editor,
 tipo de instalador, escopo, arquitetura e observações. Menus, numeração, lote,
@@ -261,6 +265,145 @@ Em automação, `-Action Install -Id <id>`, `-Action InstallCategory -Category <
 `-Action InstallAll` e `-Action List` operam sem prompt. O alvo precisa existir no
 catálogo interno: identificadores arbitrários são recusados antes de qualquer chamada
 ao Winget.
+
+### Central de Aplicativos
+
+**Central de Aplicativos** é a ação `Central` do mesmo `Apps.ps1`: pesquisa pelo nome
+na fonte oficial e instala em poucos passos, para quem não conhece o `winget`. É o
+caminho de instalação oferecido pelo menu, com a mesma rotina de instalação e as
+mesmas verificações do catálogo curado.
+
+A pesquisa normaliza o termo (maiúsculas, acentos, espaços e hífens são ignorados;
+**letra de qualquer alfabeto é preservada**), consulta um **catálogo declarativo de**
+**apelidos** — `$script:ApelidosCentral`, no próprio módulo — e consulta o Winget. Os
+resultados das consultas são consolidados, as duplicidades removidas por identificador
+e a ordem é decidida por relevância: correspondência exata, início do nome, parte do
+nome, editor, apelido conhecido e, por último, aproximação por distância de edição.
+A escada é **nome exato › palavra completa do nome › início do nome › pacote exato ›
+parte do nome › início do pacote › parte do pacote › editor**. O nome do aplicativo
+pesa mais que o identificador porque `Editor.Pacote` é dado técnico, não é como a
+pessoa chama o programa: `cloud` acha o *Google Cloud SDK* pelo **nome**, não porque o
+identificador contenha `Cloud`. O identificador é comparado sem o moniker do editor
+(`Netpack.XFB` responde por `xfb`), e o editor entra como fator secundário — sem isso,
+uma pesquisa por `net` trazia todo pacote da `NetEase` como se o nome começasse por
+`net`.
+
+Palavra completa vale mais que ocorrência incidental: em `cloud`, *Google Cloud SDK* e
+*Adobe Creative Cloud* ficam à frente de *Nextcloud Desktop*. A **posição** da palavra
+no nome entra como desempate leve, e a **cobertura** premia o resultado que atende
+todas as palavras do termo — `google chrome` separa o Chrome de qualquer outro
+programa do Google por larga margem. A proximidade é medida contra o texto que
+**produziu** a correspondência, e não sempre contra o nome. Empates são desfeitos pela
+posição em que a fonte oficial devolveu cada resultado — a opinião do próprio Winget
+entra como desempate, nunca como critério principal.
+
+Correspondência aproximada nunca supera correspondência direta: em `chrome`, o
+*Chromium* fica atrás do *Google Chrome* por construção da escada.
+
+Uma **segunda etapa** de classificação cuida da diversidade: variações do mesmo pacote
+— reconhecidas pela família do identificador publicado, os dois primeiros segmentos,
+como `Google.Chrome` e `Google.Chrome.Beta` ou `Mozilla.Firefox` e
+`Mozilla.Firefox.ESR` — não ocupam várias das primeiras posições: a melhor de cada
+família mantém o lugar e as irmãs recuam. **Não é filtro**: nada sai da lista.
+
+### Preferência de idioma
+
+Muitos pacotes publicam uma variante por localidade (`Mozilla.Firefox.af`,
+`Mozilla.Firefox.pt-BR`). `Get-AppsPrioridadeIdioma` é a **regra central** — mudar a
+preferência é mudar essa função, e só ela: **`pt-BR` › pacote base › `pt` / `pt-PT` ›
+`en-US` / `en` › demais localidades**. `pt-PT` não é tratado como equivalente de
+`pt-BR`. O peso entra somado à relevância e **nunca filtra**: variante estrangeira
+continua listada, em *mais resultados relacionados*.
+
+Um caso não tem localidade a declarar: o pacote sem segmento de idioma no
+identificador que publica o **nome em outra escrita** (`Lenovo.LenovoVoice`, exibido em
+chinês). `Test-AppsEscritaNaoLatina` constata isso — texto com letras e **nenhuma**
+delas latina — e o item passa a pesar como as demais localidades. Não é detecção de
+idioma nem vira localidade: `Get-AppsLocalidade` continua lendo só o identificador. O
+fator não se aplica quando a **pesquisa** também é em outra escrita: quem procura em
+chinês está procurando o que foi publicado em chinês.
+
+`Get-AppsLocalidade` só usa dado objetivo do resultado: o **segmento final do
+identificador publicado** (`Mozilla.Firefox.pt-BR`). **Editor não indica idioma** e
+**nome exibido também não**: `Mozilla Firefox (en-US)` é o rótulo do pacote *base*
+`Mozilla.Firefox` — informa o idioma padrão dele, não que ele seja a variante `en-US`,
+que tem identificador próprio (`Mozilla.Firefox.en-US`). O sufixo entre parênteses do
+nome entra **apenas para confirmar** um segmento do identificador que as culturas do
+.NET não conhecem; sozinho ele nunca cria uma localidade. Um código só é aceito quando
+está entre as culturas do .NET **ou** quando identificador e nome declaram o mesmo
+código — é o par que confirma `Mozilla.Firefox.ast` sem que `Mozilla.Firefox.ESR`,
+`Google.Chrome.Dev` ou `Adobe.Acrobat.Reader.64-bit` sejam confundidos com localidade.
+
+A classificação distingue três coisas que não se misturam: **pacote base**
+(`Mozilla.Firefox`, sem localidade), **variante de idioma** (`Mozilla.Firefox.pt-BR`,
+localidade explícita) e **outra variante do pacote** (`Mozilla.Firefox.ESR`,
+`Mozilla.Firefox.MSIX` — outra edição do mesmo aplicativo, nunca um idioma chamado
+`ESR` ou `MSIX`). Pacote sem localidade declarada pesa igual ao base: o que separa
+`Mozilla.Firefox.ESR` de `Mozilla.Firefox` é a correspondência com o termo digitado,
+não a regra de idioma.
+
+`Get-AppsCodigoLocalidade` normaliza `pt-BR`, `pt_br`, `PTBR` e `ptbr` para a mesma
+forma **apenas para comparar**; o nome exibido continua sendo exatamente o que o WinGet
+devolveu — o COMPARTDISK não traduz nome de aplicativo.
+
+No recuo por família, o escalonamento vale só para as variantes estrangeiras: base,
+`pt-BR`, `pt-PT` e `en-US` recuam por igual, para que a ordem entre elas continue sendo
+a da preferência de idioma e não a da fila.
+
+Sem correspondência direta valem, pela melhor delas: **palavras** do termo espalhadas
+pelo nome (comparadas uma a uma, sem depender da ordem), semelhança textual e, por
+último, coincidência apenas no editor. O cálculo de semelhança sai na frente quando a
+diferença de tamanho já reprova o limite — o que mantém rápida uma pesquisa ampla.
+
+**Oficialidade.** O único vínculo que os dados do Winget permitem afirmar é o editor
+que consta no identificador publicado: `Google.Chrome` responde por `Google`,
+`arjun-g.google-meet-desktop` não. Quando o termo procurado é igual a esse editor, o
+pacote recebe reforço; quando existe um pacote do editor procurado, os homônimos de
+terceiros perdem posição — mas **continuam listados**. Nada é deduzido a partir do nome
+do programa, e nenhum vínculo oficial é inventado.
+
+Rótulos que o próprio Winget publica no nome (`Beta`, `Dev`, `Nightly`, `Insiders`,
+`Preview`, `Unofficial`…) reduzem a pontuação para não passarem na frente da versão
+principal. São comparados **palavra a palavra**, de modo que `Betaflight` nunca é
+confundido com `Beta`, e não penalizam nada quando o operador pediu o rótulo.
+
+Cada resultado guarda `Name`, `Id`, `Publisher`, `Version`, `Source` e a posição
+devolvida pela fonte. A tela usa nome, editor e pacote; o resto serve à classificação
+e à conferência antes de instalar.
+
+A classificação marca cada item como **destaque** — correspondência direta ou apelido
+conhecido, sem nenhuma penalização — e é isso que separa *Melhores resultados* de
+*Mais resultados relacionados* na tela. `Get-AppsPesquisa` devolve a lista inteira já
+classificada: **nenhum resultado válido do Winget é descartado**; quem exibe é que
+decide quantos cabem (oito) e informa o total quando há mais.
+`crome` chega a Google Chrome, `7 zip` a 7-Zip, `vs code` a Visual Studio Code e
+`vlc` a VLC.
+
+Cada entrada do catálogo declara uma **lista** de identificadores, do mais provável
+para o menos: um termo genérico aceita mais de uma resposta legítima, e `office`
+coloca Microsoft 365, LibreOffice e ONLYOFFICE à frente dos complementos de nome
+parecido. Apenas o primeiro identificador é sondado quando a pesquisa por nome não o
+traz; os demais chegam pela própria pesquisa, sem custo adicional.
+
+O catálogo de apelidos **não é uma fonte de pacotes**: ele traduz o termo digitado e
+dá preferência ao pacote esperado. Tudo o que aparece na tela e tudo o que é
+instalado vem do Winget — um identificador que saia do ar degrada para a pesquisa
+normal, sem oferecer item que a fonte oficial não confirme.
+
+Custo típico: **uma** chamada ao Winget por pesquisa. A segunda só ocorre quando o
+apelido aponta um pacote que a primeira consulta não trouxe; a terceira, só quando a
+primeira não trouxe nada.
+
+A instalação reaproveita integralmente `Invoke-AppInstalacao`, com as mesmas
+verificações e o mesmo vocabulário de resultado. Antes da confirmação a Central
+checa se o pacote **já está instalado** e, se estiver, informa e não instala:
+atualizar continua sendo responsabilidade da opção `1`.
+
+O termo digitado é higienizado, limitado a 60 caracteres e viaja **entre aspas** como
+valor de `--query`; `Invoke-NativeCommand` não usa shell. O identificador instalado é
+sempre o que o Winget devolveu, validado por forma (`Editor.Pacote`) e confirmado na
+fonte oficial. A ação exige console interativo: em automação continuam valendo
+`Install`, `InstallCategory`, `InstallAll` e `List`.
 
 ### Quando o WinGet não está disponível
 

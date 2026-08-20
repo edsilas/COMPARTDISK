@@ -1,6 +1,6 @@
 # Estrutura do Projeto
 
-**COMPARTDISK 1.4.4** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.5** · Desenvolvido por Edsilas
 
 ---
 
@@ -34,7 +34,7 @@ compartdisk/
 │   ├── Battery.ps1                   Bateria e energia
 │   ├── Bitlocker.ps1                 Criptografia de disco
 │   ├── Explorer.ps1                  Explorer, ícones e impressão
-│   ├── Apps.ps1                      Catálogo e instalação de aplicativos (Winget)
+│   ├── Apps.ps1                      Catálogo, Central e instalação de aplicativos (Winget)
 │   ├── Winget.ps1                    Diagnóstico e preparação do ambiente WinGet
 │   ├── Audit.ps1                     Auditoria
 │   └── Report.ps1                    Consolidação de relatórios

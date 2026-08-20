@@ -5,7 +5,7 @@
     <img src="https://img.shields.io/badge/License-Apache%202.0-0078D4?style=flat-square&logo=apache&logoColor=white" alt="License">
   </a>
   <a href="https://github.com/edsilas/COMPARTDISK/releases">
-    <img src="https://img.shields.io/badge/Release-v1.4.4-107C10?style=flat-square&logo=github&logoColor=white" alt="Release">
+    <img src="https://img.shields.io/badge/Release-v1.4.5-107C10?style=flat-square&logo=github&logoColor=white" alt="Release">
   </a>
   <a href="CHANGELOG.md">
     <img src="https://img.shields.io/badge/Changelog-hist%C3%B3rico-6E6E6E?style=flat-square&logo=markdown&logoColor=white" alt="Changelog">
@@ -28,7 +28,7 @@ Compatível atualmente com Windows 10 e Windows 11.
 > Desenvolvido por Edsilas
 
 > [!IMPORTANT]
-> **Versão atual: 1.4.4.** Baixe o pacote e leia as notas de lançamento em
+> **Versão atual: 1.4.5.** Baixe o pacote e leia as notas de lançamento em
 > **[Releases](https://github.com/edsilas/COMPARTDISK/releases)** —
 > https://github.com/edsilas/COMPARTDISK/releases
 
@@ -190,7 +190,7 @@ mas **não remove funcionalidades**.
 |---|---|---|
 | Windows PowerShell 5.1 | Diagnóstico completo e relatórios nos quatro formatos | Rotinas Batch assumem |
 | PowerShell 7 | O mesmo, com melhor desempenho | O PowerShell 5.1 é utilizado |
-| Winget | Atualização de programas instalados e instalação do catálogo de aplicativos | O menu de aplicativos diagnostica e prepara o App Installer |
+| Winget | Atualização de programas instalados e instalação de aplicativos pela Central | O menu de aplicativos diagnostica e prepara o App Installer |
 | PnPUtil | Backup e inventário de drivers | A opção informa indisponibilidade |
 
 > [!TIP]
@@ -298,7 +298,7 @@ Instruções detalhadas em [Guia de Instalação](docs/INSTALACAO.md).
 ## 6. Interface
 
 ```text
-  COMPARTDISK  1.4.4
+  COMPARTDISK  1.4.5
   Assistente de Reparo
 
   --------------------------------------------------------------------------
@@ -324,7 +324,9 @@ Instruções detalhadas em [Guia de Instalação](docs/INSTALACAO.md).
 ```
 
 A navegação é feita por teclas numéricas, sem necessidade de pressionar Enter. A
-tecla `0` retorna à tela anterior. O rodapé indica qual motor está em uso e onde o
+tecla `0` retorna à tela anterior — exceto na Central de Aplicativos, onde os números
+são dos aplicativos e a navegação usa `P` (nova pesquisa) e `V` (voltar) em todas as
+telas. O rodapé indica qual motor está em uso e onde o
 registro está sendo gravado.
 
 ### Mapa dos menus
@@ -337,7 +339,7 @@ flowchart LR
     MP(["<b>Menu principal</b>"])
 
     MP --> M1["<b>1</b> · Reparo Geral Automático<br/><i>executa direto — 20 a 60 min</i>"]
-    MP --> M2["<b>2</b> · Aplicativos<br/><i>2 opções — atualizar e instalar (Winget)</i>"]
+    MP --> M2["<b>2</b> · Aplicativos<br/><i>3 opções — preparar, pesquisar e instalar, atualizar (WinGet)</i>"]
     MP --> M3["<b>3</b> · Rede, Internet e Conectividade<br/><i>7 opções — 4 leem, 3 alteram</i>"]
     MP --> M4["<b>4</b> · Otimização, Limpeza e Privacidade<br/><i>9 opções — 2 leem, 2 irreversíveis</i>"]
     MP --> M5["<b>5</b> · Reparo do Sistema e Update<br/><i>9 opções — 2 leem, 7 alteram</i>"]
@@ -346,8 +348,8 @@ flowchart LR
     MP --> M8["<b>8</b> · Diagnóstico e Relatórios<br/><i>9 opções — todas somente leitura</i>"]
     MP --> M9["<b>9</b> · Ambiente de Execução<br/><i>2 opções — somente leitura</i>"]
 
-    M2 --> AP["<b>2 › 2</b> · Instalar aplicativos<br/><i>6 categorias — instala só o ausente</i>"]
-    M2 --> WG["<b>2 › 3</b> · Verificar / preparar WinGet<br/><i>diagnóstico e recuperação oficial</i>"]
+    M2 --> WG["<b>2 › 1</b> · Verificar / preparar WinGet<br/><i>diagnóstico e recuperação oficial</i>"]
+    M2 --> CA["<b>2 › 2</b> · Central de Aplicativos<br/><i>pesquisa por nome e instala</i>"]
 
     M4 --> DB["<b>4 › 9</b> · Desbloat do Windows<br/><i>9 opções — 3 níveis, 1 simula</i>"]
     DB --> BK["<b>4 › 9 › 9</b> · Backup e reversão<br/><i>4 opções</i>"]
@@ -356,7 +358,7 @@ flowchart LR
     classDef altera fill:#FFF4CE,stroke:#9D5D00,color:#3B2300
     classDef critico fill:#FDE7E9,stroke:#A4262C,color:#6E0811
     class M8,M9 leitura
-    class M2,M3,M5,AP,WG,DB,BK altera
+    class M2,M3,M5,WG,CA,DB,BK altera
     class M1,M4,M6 critico
     class M7 leitura
 ```
@@ -592,7 +594,7 @@ patrocinado ou endossado pela Microsoft.
 
 <div align="center">
 
-**COMPARTDISK 1.4.4** — Desenvolvido por Edsilas
+**COMPARTDISK 1.4.5** — Desenvolvido por Edsilas
 
 https://github.com/edsilas/COMPARTDISK
 

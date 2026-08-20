@@ -1,6 +1,6 @@
 # Manual Técnico
 
-**COMPARTDISK 1.4.4** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.5** · Desenvolvido por Edsilas
 
 Para quem vai ler, manter ou estender o código.
 
@@ -12,7 +12,7 @@ Todos os vinte módulos de domínio seguem exatamente esta estrutura:
 
 ```powershell
 <#
- COMPARTDISK 1.4.4 - Exemplo.ps1
+ COMPARTDISK 1.4.5 - Exemplo.ps1
  Desenvolvido por Edsilas
  Acoes: Acao1 | Acao2
 #>
@@ -268,6 +268,10 @@ da causa. Com chaves nomeadas o problema não existe.
 `Apps.ps1` mantém o catálogo de instalação em `$script:Catalogo`. Menus, numeração,
 lote, instalação global e verificação são derivados dele — incluir uma ferramenta é
 acrescentar uma entrada, sem tocar em lógica de menu.
+
+O catálogo **não é mais opção do menu Aplicativos**: a Central de Aplicativos passou a
+ser o caminho de instalação da interface. Ele continua íntegro no módulo e responde por
+`-Action Install`, `-Action InstallCategory`, `-Action InstallAll` e `-Action List`.
 
 ```powershell
 [pscustomobject]@{ Name = 'HWiNFO'; Id = 'REALiX.HWiNFO'; Category = 'Hardware'

@@ -1,6 +1,6 @@
 # Descrição dos Menus
 
-**COMPARTDISK 1.4.4** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.5** · Desenvolvido por Edsilas
 
 Mapa completo de todas as telas. Cada opção indica se **altera** o computador ou se
 apenas **lê** informações.
@@ -32,7 +32,7 @@ relatório final. De 20 a 60 minutos. **Reinicie ao terminar.**
 
 ### `2` — Aplicativos 🟡
 
-Abre o submenu de aplicativos, com duas capacidades independentes.
+Abre o submenu de aplicativos, com três capacidades independentes.
 
 ---
 
@@ -40,56 +40,35 @@ Abre o submenu de aplicativos, com duas capacidades independentes.
 
 | Tecla | Opção | Tipo |
 |---|---|---|
-| `1` | Atualizar aplicativos (Winget) | 🟡 |
-| `2` | Instalar aplicativos (catálogo de suporte técnico) | 🟡 |
-| `3` | Verificar / preparar WinGet | 🟡 |
+| `1` | Verificar / preparar WinGet | 🟡 |
+| `2` | Central de Aplicativos (pesquisar e instalar) | 🟡 |
+| `3` | Atualizar aplicativos (WinGet) | 🟡 |
 | `0` | Voltar | — |
 
-**`1` Atualizar aplicativos** — atualiza todos os programas instalados que o
+A ordem segue o uso real: primeiro garantir o WinGet, depois instalar, por último
+manter o que já está instalado.
+
+**`1` Verificar / preparar WinGet** — diagnostica o gerenciador de pacotes do Windows
+e, quando ele não está disponível, tenta prepará-lo por métodos oficiais. É o ponto de
+partida quando aparece o aviso de WinGet indisponível.
+
+**`2` Central de Aplicativos** — pesquisa **qualquer** aplicativo publicado na fonte
+oficial do WinGet pelo nome e instala em poucos passos, sem exigir que você conheça
+comandos ou identificadores de pacote. É o caminho de instalação do COMPARTDISK.
+
+**`3` Atualizar aplicativos** — atualiza todos os programas instalados que o
 gerenciador de pacotes do Windows conhece. É exatamente a rotina que antes ficava na
 tecla `2` do menu principal, sem qualquer alteração de comportamento. Requer
 internet. Programas em uso podem falhar — feche o que puder antes.
 
-**`2` Instalar aplicativos** — instala ferramentas de suporte técnico a partir de um
-catálogo interno. **Instala apenas o que estiver ausente**: nada é atualizado,
-reinstalado ou removido por esta opção. Toda a navegação é numérica.
+> A instalação a partir do **catálogo de suporte técnico** deixou de ser opção do
+> menu: a Central de Aplicativos passou a ser o caminho único de instalação, e manter
+> as duas era oferecer a mesma capacidade duas vezes. O catálogo continua em
+> `Modules/Apps.ps1` para automação — `-Action Install`, `-Action InstallCategory`,
+> `-Action InstallAll` e `-Action List` — e está descrito em
+> [Funcionalidades](FUNCIONALIDADES.md).
 
-### Menu Instalar Aplicativos
-
-| Tecla | Opção | Tipo |
-|---|---|---|
-| `1` | Hardware (6 aplicativos) | 🟡 |
-| `2` | Windows / Sistema (9 aplicativos) | 🟡 |
-| `3` | Rede (6 aplicativos) | 🟡 |
-| `4` | Acesso Remoto (2 aplicativos) | 🟡 |
-| `5` | Produtividade (2 aplicativos) | 🟡 |
-| `6` | Utilitários (2 aplicativos) | 🟡 |
-| `7` | Instalar todos os aplicativos | 🟡 |
-| `8` | Ver aplicativos instalados | 🔵 |
-| `0` | Voltar | — |
-
-Dentro de uma categoria, cada aplicativo recebe um número; o número seguinte ao
-último aplicativo é **Instalar todos**, e `0` volta. Depois de instalar um item, o
-menu da categoria reaparece, o que permite instalar vários itens em sequência.
-
-Como em todas as telas, a tecla executa direto, sem Enter. A única exceção é a
-categoria **Windows / Sistema**, onde existe a opção `10`: ali o `1` espera a tecla
-seguinte, porque ainda pode virar `10`. Apertar Enter confirma o `1` sozinho.
-
-**Instalar todos** (da categoria ou global) mostra a lista antes de agir e só executa
-após a confirmação `[1]`; `[0]` cancela sem alterar nada. Uma falha individual não
-interrompe o lote, e ao final é exibido o resumo com instalados, já instalados, não
-disponíveis e falhas.
-
-**`8` Ver aplicativos instalados** apenas consulta: mostra o estado de cada item do
-catálogo, com a versão instalada quando o Winget a informa.
-
-Todos os itens do catálogo possuem pacote na fonte oficial do Winget. O catálogo
-continua sabendo declarar item **não instalável** — recurso nativo do Windows ou sem
-pacote oficial —, e o menu o exibe como tal quando existir: nenhum identificador é
-inventado e o COMPARTDISK não baixa instaladores fora do Winget.
-
-### `3` — Verificar / preparar WinGet 🟡
+### `1` — Verificar / preparar WinGet 🟡
 
 Diagnostica o ambiente do WinGet e, quando ele não está disponível, tenta prepará-lo
 **por métodos oficiais do Windows**. A tela mostra a ficha do diagnóstico — sistema,
@@ -108,6 +87,95 @@ O que a preparação faz, nesta ordem:
 Depois de agir, o resultado é **validado de verdade**: existência do `winget.exe`,
 `--version`, `--info`, fontes e uma consulta de teste. Só então a tela informa que o
 WinGet está pronto e oferece voltar direto para os aplicativos.
+
+### `2` — Central de Aplicativos 🟡
+
+Pesquisa por nome e instalação em poucos passos, para quem não conhece o `winget`.
+É a ação `Central` do módulo `Apps.ps1` — a mesma rotina de instalação e as mesmas
+verificações do catálogo interno.
+
+A tela pede **uma** coisa: o nome do aplicativo. Não é preciso acertar o nome exato —
+a pesquisa ignora maiúsculas, acentos, espaços e hífens, entende abreviações e
+apelidos e tolera erro de digitação:
+
+| Você digita | A Central encontra |
+|---|---|
+| `chrome`, `chr`, `crome`, `google chrome` | Google Chrome |
+| `7zip`, `7 zip` | 7-Zip |
+| `vscode`, `vs code`, `code`, `visual code` | Visual Studio Code |
+| `vlc`, `videolan` | VLC media player |
+
+Os resultados **não** são a saída bruta do `winget search`: eles são classificados por
+relevância. O **nome do aplicativo** pesa mais que o identificador e o editor; palavra
+completa vale mais que pedaço de palavra; quem atende **todas** as palavras do termo
+vem antes de quem atende uma só; e correspondência aproximada nunca supera
+correspondência direta. Empates são desfeitos pela ordem em que a própria fonte
+oficial devolveu os resultados.
+
+Variações do mesmo pacote (`Google.Chrome` e `Google.Chrome.Beta`, `Mozilla.Firefox` e
+`Mozilla.Firefox.ESR`) não ocupam várias das primeiras posições: a melhor de cada
+família mantém o lugar e as irmãs recuam — sem sair da lista.
+
+Muitos programas publicam **uma variante por idioma** (`Mozilla.Firefox.af`,
+`Mozilla.Firefox.pt-BR`, …). A preferência do COMPARTDISK é **pt-BR › pacote base ›
+português (pt / pt-PT) › en-US › demais localidades**, e o recuo cresce a cada tradução
+seguinte, de modo que dezenas delas não tomem a primeira página. Nenhuma é removida.
+
+O pacote publicado **com o nome em outra escrita** e sem localidade no identificador
+(`Lenovo.LenovoVoice`, exibido em chinês) pesa como as demais localidades: continua na
+lista, em *mais resultados relacionados*, sem tomar a frente de um resultado
+equivalente em pt-BR ou en-US. O nome é exibido **exatamente** como o WinGet o
+devolveu — o COMPARTDISK classifica, nunca traduz nem transcreve.
+
+A localidade vem só de dado objetivo do resultado — o **segmento final do identificador
+publicado**. **Editor não indica idioma** (`Mozilla` não torna um pacote pt-BR) e
+**nome exibido também não**: `Mozilla Firefox (en-US)` é o rótulo do pacote *base*
+`Mozilla.Firefox`, e não a variante `en-US`, que tem identificador próprio. Do mesmo
+modo, `Mozilla.Firefox.ESR` e `Mozilla.Firefox.MSIX` são **outras edições** do mesmo
+aplicativo, nunca idiomas. E o nome exibido é sempre o que o WinGet devolveu: o
+COMPARTDISK ordena por idioma, nunca traduz nome de aplicativo.
+
+A tela separa **Melhores resultados** de **Mais resultados relacionados**. Em
+*melhores* ficam as correspondências diretas sem ressalva; em *relacionados*, canais
+secundários (`Beta`, `Dev`, `Nightly`, `Insiders`) e pacotes de terceiros quando
+existe um do próprio editor procurado. **Nada é escondido**: a numeração é contínua e
+todo resultado válido do WinGet continua na tela.
+
+Aparecem até oito por vez. Os **números são dos aplicativos**; a navegação tem tecla
+fixa: `P` faz uma nova pesquisa e `V` volta — maiúscula ou minúscula, sempre no mesmo
+lugar, **em todas as telas da Central**: com resultados, sem resultados, com o termo
+em branco ou na pausa depois de instalar. Quando o WinGet devolve mais que isso — uma
+pesquisa por `g`, por exemplo —, a tela informa quantos foram encontrados e sugere
+refinar o termo.
+
+Termos genéricos trazem o que a maioria das pessoas procura: `office`, `word` ou
+`planilha` colocam Microsoft 365, LibreOffice e ONLYOFFICE na frente dos complementos
+e utilitários de nome parecido; `navegador` e `browser` trazem os navegadores.
+
+Uma pesquisa por `google` traz primeiro os pacotes cujo **editor publicado é o próprio
+`Google`** e depois os de terceiros, como `arjun-g.google-meet-desktop`. Esse é o único
+vínculo que os dados do WinGet permitem afirmar — o editor que consta no identificador
+publicado. O COMPARTDISK **não** deduz oficialidade a partir do nome do programa e não
+remove pacote de terceiro: apenas não o coloca no lugar do oficial.
+
+Tecle Enter sem digitar nada e a tela pede o nome, oferecendo `P` para pesquisar de
+novo e `V` para voltar — as mesmas teclas da tela de resultados e da tela de "nenhum
+aplicativo encontrado".
+
+Escolhido um resultado, a tela mostra aplicativo, editor, pacote e fonte, verifica se
+ele **já está instalado** — e, se estiver, diz isso e não instala nada, porque
+atualizar continua sendo a opção `3`. Só depois da confirmação `[1]` a instalação
+acontece, sempre pelo **identificador exato** confirmado na fonte oficial, e o estado
+final é conferido consultando o sistema.
+
+A única coisa digitada em toda a Central é o nome procurado. Ele é higienizado antes
+de qualquer uso, viaja entre aspas como valor da consulta e **nunca** vira comando; o
+identificador instalado é sempre o que o WinGet devolveu, nunca o texto digitado.
+
+Sem PowerShell, o Launcher aplica a rotina Batch equivalente, com o mesmo fluxo. Ali
+os apelidos mais comuns continuam sendo traduzidos, mas não há tolerância a erro de
+digitação por semelhança nem classificação por relevância — a limitação é declarada
+no próprio código.
 
 Quando o Windows é antigo demais ou uma política corporativa bloqueia o App
 Installer, a opção **não tenta forçar nada**: informa o motivo e encerra sem alterar

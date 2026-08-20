@@ -1,6 +1,6 @@
 @echo off
 :: ==============================================================================
-:: COMPARTDISK 1.4.4 - ASSISTENTE DE REPARO PARA WINDOWS 10 E WINDOWS 11
+:: COMPARTDISK 1.4.5 - ASSISTENTE DE REPARO PARA WINDOWS 10 E WINDOWS 11
 :: DESENVOLVIDO POR EDSILAS
 ::
 :: Arquitetura hibrida: Batch como interface, navegacao, controle de fluxo,
@@ -56,7 +56,7 @@ if errorlevel 1 set "SEM_UTF8=1"
 :: Se o processo morrer de forma abrupta, a ultima linha deste arquivo aponta
 :: exatamente o estagio em que a falha ocorreu.
 :: ==============================================================================
-set "COMPARTDISK_VERSION=1.4.4"
+set "COMPARTDISK_VERSION=1.4.5"
 set "COMPARTDISK_ROOT=%~dp0"
 set "COMPARTDISK_MODULES=%~dp0Modules"
 set "COMPARTDISK_SELF=%~f0"
@@ -466,10 +466,17 @@ goto MENU_PRINCIPAL
 :: SUBMENUS
 :: ==============================================================================
 :MENU_APLICATIVOS
-:: A opcao [2] do menu principal continua sendo a area de aplicativos. O que era
-:: execucao direta da atualizacao passa a ser [1] deste submenu, com o MESMO
-:: comportamento e a MESMA rotina (:MOD_WINGET). A instalacao foi ACRESCENTADA
-:: em [2]; nada da atualizacao foi movido, reescrito ou substituido.
+:: A opcao [2] do menu principal continua sendo a area de aplicativos. As tres
+:: capacidades seguem a ordem real de uso: [1] prepara o WinGet, [2] pesquisa e
+:: instala pelo nome, [3] atualiza o que ja esta instalado. Cada tecla chama a
+:: MESMA rotina de antes (:MOD_WINGET_PREP_MENU, :MOD_APPS_CENTRAL_MENU e
+:: :MOD_WINGET_MENU): mudou a posicao no menu, nao o comportamento.
+:: O antigo [2] Instalar aplicativos (catalogo de suporte tecnico) SAIU do menu:
+:: a Central de Aplicativos passou a ser o caminho unico de instalacao, e manter
+:: as duas era oferecer a mesma capacidade duas vezes. O catalogo declarativo
+:: continua em Modules\Apps.ps1 (acoes Install/InstallCategory/InstallAll/List,
+:: para automacao) e as rotinas :FB_APPS_* continuam servindo a Central, que
+:: reaproveita :FB_APPS_INSTALAR para instalar sem PowerShell.
 cls
 echo.
 echo   %C_TITULO%Aplicativos%C_RESET%
@@ -477,22 +484,24 @@ echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION%%C_RESET%
 echo.
 echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
 echo.
-echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Atualizar aplicativos (Winget)%C_RESET%
-echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Instalar aplicativos (catalogo de suporte tecnico)%C_RESET%
-echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Verificar / preparar WinGet%C_RESET%
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Verificar / preparar WinGet%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Central de Aplicativos (pesquisar e instalar)%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Atualizar aplicativos (WinGet)%C_RESET%
 echo.
 echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
 echo.
 echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
-if "%HAS_WINGET%"=="0" echo   %C_AMARELO%Winget indisponivel neste sistema: use a opcao [3] para diagnosticar e preparar.%C_RESET%
-echo   %C_CINZA%[1] atualiza o que ja esta instalado. [2] instala somente o que estiver ausente.%C_RESET%
+if "%HAS_WINGET%"=="0" echo   %C_AMARELO%Winget indisponivel neste sistema: use a opcao [1] para diagnosticar e preparar.%C_RESET%
+echo   %C_CINZA%[1] verifica e prepara o WinGet.%C_RESET%
+echo   %C_CINZA%[2] pesquisa e instala aplicativos pelo nome.%C_RESET%
+echo   %C_CINZA%[3] atualiza os aplicativos instalados.%C_RESET%
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
 choice /c 1230 /n /m "  Opcao: "
 if errorlevel 4 goto MENU_PRINCIPAL
-if errorlevel 3 goto MOD_WINGET_PREP_MENU
-if errorlevel 2 goto MOD_APPS_MENU
-if errorlevel 1 goto MOD_WINGET_MENU
+if errorlevel 3 goto MOD_WINGET_MENU
+if errorlevel 2 goto MOD_APPS_CENTRAL_MENU
+if errorlevel 1 goto MOD_WINGET_PREP_MENU
 :: Rede de seguranca: CHOICE interrompido (Ctrl+C) retorna 0
 goto MENU_APLICATIVOS
 
@@ -957,7 +966,7 @@ pause & goto MENU_APLICATIVOS
 :MOD_WINGET
 if "%HAS_WINGET%"=="0" (
     call :LOG_MSG "ERR" "Winget ausente ou corrompido neste sistema."
-    call :LOG_MSG "WARN" "Use a opcao [3] Verificar / preparar WinGet para diagnosticar e preparar o ambiente."
+    call :LOG_MSG "WARN" "Use a opcao [1] Verificar / preparar WinGet para diagnosticar e preparar o ambiente."
     goto :EOF
 )
 call :LOG_MSG "INFO" "Testando fontes e conectividade com repositorios Winget..."
@@ -973,19 +982,20 @@ if errorlevel 1 (
 goto :EOF
 
 :: ------------------------------------------------------------------------------
-:: INSTALACAO DE APLICATIVOS (catalogo declarativo em Modules\Apps.ps1)
-:: Sem PowerShell ou sem o modulo, o Launcher aplica a rotina Batch :FB_APPS_MENU,
-:: que oferece o mesmo catalogo e os mesmos controles numericos.
+:: CENTRAL DE APLICATIVOS (pesquisa por nome em Modules\Apps.ps1, acao Central)
+:: Mesma rotina de instalacao ja usada pelo catalogo: pesquisa, escolha, confirma
+:: e instala pelo identificador exato. Sem PowerShell ou sem o modulo, o Launcher
+:: aplica a rotina Batch :FB_APPS_CENTRAL, com o mesmo fluxo e os mesmos limites.
 :: ------------------------------------------------------------------------------
-:MOD_APPS_MENU
+:MOD_APPS_CENTRAL_MENU
 cls
-call :MOD_APPS_INSTALAR
+call :MOD_APPS_CENTRAL
 pause & goto MENU_APLICATIVOS
 
-:MOD_APPS_INSTALAR
-set "PS_ARGS=-Action Menu"
+:MOD_APPS_CENTRAL
+set "PS_ARGS=-Action Central"
 call :RUN_PS "Apps.ps1"
-if errorlevel 9000 goto FB_APPS_MENU
+if errorlevel 9000 goto FB_APPS_CENTRAL
 goto :EOF
 
 :: ------------------------------------------------------------------------------
@@ -1821,34 +1831,160 @@ if errorlevel 1 (
 goto :EOF
 
 :FB_PERFORMANCE
+:: Resolve o plano de Desempenho Maximo na MESMA ordem do Performance.ps1:
+::   1. GUID canonico ja visivel na listagem;
+::   2. duplicata de uma execucao anterior, reconhecida pelo nome do sistema;
+::   3. so entao duplicar o modelo do Windows - uma unica vez.
+::
+:: EVIDENCIA: "powercfg -duplicatescheme" devolve um GUID ALEATORIO. A versao
+:: anterior procurava somente o GUID canonico, entao a partir da segunda
+:: execucao o plano - ja existente, e muitas vezes ja ativo - era dado como
+:: ausente e um plano novo era criado a cada execucao, sem limite.
+set "FBP_ULT=e9a42b02-d5df-448d-aa00-03f14749eb61"
+set "FBP_ALTO=8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
 set "TARGET_GUID="
+set "FBP_NOME="
+set "FBP_ACHADO="
+set "FBP_IGNORAR="
+set "FBP_CAND="
 
-:: 1. Tenta ver se o GUID original ja esta nativamente visivel
-powercfg -l | findstr "e9a42b02-d5df-448d-aa00-03f14749eb61" >nul
+:: 1. GUID canonico ja visivel na listagem
+powercfg -l | findstr /i /c:"%FBP_ULT%" >nul 2>&1
 if not errorlevel 1 (
-    set "TARGET_GUID=e9a42b02-d5df-448d-aa00-03f14749eb61"
+    set "TARGET_GUID=%FBP_ULT%"
+    call :LOG_MSG "OK" "[Batch] Plano Desempenho Maximo encontrado. Reutilizando - nada sera duplicado."
+    goto FB_PERF_ATIVAR
+)
+
+:: 2. Duplicata de uma execucao anterior. O nome de referencia vem do proprio
+::    Windows, por consulta SOMENTE LEITURA; se o modelo nao for resolvivel neste
+::    dispositivo a consulta apenas falha, sem efeito algum.
+call :FB_PERF_NOME "%FBP_ULT%"
+call :FB_PERF_PROCURAR
+if defined FBP_ACHADO (
+    set "TARGET_GUID=%FBP_ACHADO%"
+    call :LOG_MSG "OK" "[Batch] Plano Desempenho Maximo encontrado. Reutilizando - nada sera duplicado."
+    goto FB_PERF_ATIVAR
+)
+
+:: 3. Criar - uma unica vez, e so agora.
+call :LOG_MSG "INFO" "[Batch] Plano Desempenho Maximo nao encontrado. Criando a partir do modelo do Windows..."
+:: O "delims=:" captura o GUID apos "GUID do Esquema de Energia:" (PT-BR) ou
+:: "Power Scheme GUID:" (EN-US).
+for /f "tokens=2 delims=:" %%A in ('powercfg -duplicatescheme %FBP_ULT% 2^>nul') do (
+    for /f "tokens=1" %%B in ("%%A") do set "TARGET_GUID=%%B"
+)
+if not defined TARGET_GUID goto FB_PERF_ALTO
+
+:: Rede de protecao para os idiomas em que a etapa 2 nao obteve o nome: se um
+:: plano de mesmo nome ja existia, a copia recem-criada e redundante. Somente a
+:: copia criada agora e descartada - nenhum plano preexistente e removido.
+set "FBP_IGNORAR=%TARGET_GUID%"
+call :FB_PERF_NOME "%TARGET_GUID%"
+call :FB_PERF_PROCURAR
+if not defined FBP_ACHADO (
+    call :LOG_MSG "OK" "[Batch] Plano criado com sucesso."
+    goto FB_PERF_ATIVAR
+)
+powercfg -delete %TARGET_GUID% >nul 2>&1
+if errorlevel 1 (
+    call :LOG_MSG "WARN" "[Batch] Nao foi possivel descartar a copia redundante do plano."
 ) else (
-    :: 2. Duplica o modelo oculto e captura o novo GUID gerado
-    :: O "delims=:" funciona perfeitamente para capturar apos "GUID de Esquema de Energia:" (PT-BR) ou "Power Scheme GUID:" (EN-US)
-    for /f "tokens=2 delims=:" %%A in ('powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2^>nul') do (
-        for /f "tokens=1" %%B in ("%%A") do set "TARGET_GUID=%%B"
-    )
+    call :LOG_MSG "OK" "[Batch] Copia redundante descartada. Reutilizando o plano ja existente."
 )
+set "TARGET_GUID=%FBP_ACHADO%"
+goto FB_PERF_ATIVAR
 
-:: 3. Se falhou ao duplicar (Notebooks Modern Standby), cai para o plano de "Alto Desempenho" padrao
+:FB_PERF_ALTO
+:: Sem Desempenho Maximo (tipico em notebooks com Modern Standby): cai para o
+:: plano de Alto Desempenho nativo, como antes.
+call :LOG_MSG "WARN" "[Batch] Desempenho Maximo nao suportado. Aplicando Alto Desempenho nativo."
+set "TARGET_GUID=%FBP_ALTO%"
+
+:FB_PERF_ATIVAR
 if not defined TARGET_GUID (
-    call :LOG_MSG "WARN" "[Batch] Desempenho Maximo nao suportado. Aplicando Alto Desempenho nativo."
-    set "TARGET_GUID=8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+    call :LOG_MSG "WARN" "[Batch] Nenhum plano de desempenho pode ser resolvido. Nada foi alterado."
+    goto FB_PERF_FIM
 )
-
-:: 4. Ativa o plano capturado
 powercfg -setactive %TARGET_GUID% >nul 2>&1
 if errorlevel 1 (
     call :LOG_MSG "WARN" "Falha ao aplicar esquema de energia Maximo/Alto."
-) else (
-    call :LOG_MSG "OK" "Plano de energia de Desempenho ativado com sucesso."
-    reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f >nul 2>&1
+    goto FB_PERF_FIM
 )
+:: Codigo de retorno 0 nao prova que o plano ficou ativo: uma politica de grupo
+:: pode aceitar o comando e reverter o estado. O GUID e ASCII, entao este findstr
+:: nao depende de acentuacao. Mesma validacao ja feita por :FB_PERF_BALANCED.
+powercfg /getactivescheme | findstr /i /c:"%TARGET_GUID%" >nul 2>&1
+if errorlevel 1 (
+    call :LOG_MSG "WARN" "[Batch] O Windows nao confirmou o plano de desempenho como ativo."
+    goto FB_PERF_FIM
+)
+call :LOG_MSG "OK" "Plano de energia de Desempenho ativado com sucesso."
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f >nul 2>&1
+
+:FB_PERF_FIM
+set "FBP_ULT="
+set "FBP_ALTO="
+set "FBP_NOME="
+set "FBP_ACHADO="
+set "FBP_IGNORAR="
+set "FBP_CAND="
+set "FBP_ALVO="
+goto :EOF
+
+:FB_PERF_NOME
+:: %~1 = GUID de um plano. Devolve em FBP_NOME o nome que o Windows exibe para
+:: ele. Consulta somente leitura: quando o GUID nao e resolvivel, apenas falha.
+set "FBP_NOME="
+set "FBP_ALVO=%~1"
+for /f "tokens=2,3 delims=:()" %%A in ('powercfg -query %~1 2^>nul') do (
+    call :FB_PERF_NOME_LINHA "%%A" "%%B"
+)
+set "FBP_ALVO="
+goto :EOF
+
+:FB_PERF_NOME_LINHA
+:: %~1 = campo do GUID   %~2 = texto entre parenteses.
+:: Aceita o nome APENAS da linha cujo GUID e o que foi consultado. Assim as
+:: linhas de subgrupo e de configuracao sao ignoradas, e uma mensagem de erro do
+:: powercfg que por acaso tenha parenteses nunca e tomada por nome de plano.
+:: O "if defined" e avaliado em tempo de execucao, entao guarda a primeira linha
+:: valida sem precisar de expansao retardada - que este arquivo mantem
+:: desativada de proposito.
+if defined FBP_NOME goto :EOF
+if "%~2"=="" goto :EOF
+set "FBP_CAND="
+for /f "tokens=1" %%G in ("%~1") do set "FBP_CAND=%%G"
+if not defined FBP_CAND goto :EOF
+if /i not "%FBP_CAND%"=="%FBP_ALVO%" goto :EOF
+set "FBP_NOME=%~2"
+goto :EOF
+
+:FB_PERF_PROCURAR
+:: Procura na listagem um plano com o nome de FBP_NOME cujo GUID nao seja
+:: FBP_IGNORAR. Devolve o GUID em FBP_ACHADO.
+set "FBP_ACHADO="
+if not defined FBP_NOME goto :EOF
+for /f "tokens=2,3 delims=:()" %%A in ('powercfg -l 2^>nul') do (
+    call :FB_PERF_TESTAR "%%A" "%%B"
+)
+goto :EOF
+
+:FB_PERF_TESTAR
+:: %~1 = campo do GUID   %~2 = nome do plano, como o Windows o exibe.
+::
+:: A comparacao e entre DUAS cadeias vindas da MESMA origem - a saida do
+:: powercfg -, entao vale byte a byte: se "chcp 65001" degradar a acentuacao,
+:: ela degrada os dois lados de forma identica e a igualdade se mantem. Por isso
+:: o nome nao e procurado com findstr nem escrito aqui em nenhum idioma.
+if defined FBP_ACHADO goto :EOF
+if not defined FBP_NOME goto :EOF
+if /i not "%~2"=="%FBP_NOME%" goto :EOF
+set "FBP_CAND="
+for /f "tokens=1" %%G in ("%~1") do set "FBP_CAND=%%G"
+if not defined FBP_CAND goto :EOF
+if defined FBP_IGNORAR if /i "%FBP_CAND%"=="%FBP_IGNORAR%" goto :EOF
+set "FBP_ACHADO=%FBP_CAND%"
 goto :EOF
 
 :FB_PERF_BALANCED
@@ -2223,6 +2359,13 @@ goto :EOF
 :: Mesmo catalogo, mesmos identificadores, mesma regra (instala apenas o que
 :: estiver ausente) e mesmos controles - todos numericos.
 ::
+:: O catalogo saiu do menu Aplicativos: a Central de Aplicativos e o caminho de
+:: instalacao, e :FB_APPS_MENU nao e mais alcancada por nenhuma tecla. Estas
+:: rotinas permanecem porque :FB_APPS_CENTRAL reaproveita o nucleo de instalacao
+:: daqui - :FB_APPS_ZERAR, :FB_APPS_INSTALAR e os desfechos :FB_APPS_JA_PRESENTE,
+:: :FB_APPS_NAO_INSTALAVEL, :FB_APPS_FALHA e :FB_APPS_NAO_CONFIRMADO -, alem de
+:: :FB_APPS_SEM_WINGET.
+::
 :: O catalogo aparece UMA unica vez por categoria, nas rotinas :FB_APPS_WALKn.
 :: Menu, selecao, lote e verificacao percorrem essas listas aplicando um "verbo"
 :: (o rotulo passado em %~1), entao acrescentar um aplicativo aqui e acrescentar
@@ -2547,6 +2690,344 @@ echo   %C_CINZA%Ja instalados   %C_RESET%%C_TEXTO%%FB_APPS_JA%%C_RESET%
 echo   %C_CINZA%Nao disponiveis %C_RESET%%C_TEXTO%%FB_APPS_ND%%C_RESET%
 echo   %C_CINZA%Falhas          %C_RESET%%C_TEXTO%%FB_APPS_ERR%%C_RESET%
 call :LOG_MSG "INFO" "[Batch] Instalados: %FB_APPS_OK% | Ja instalados: %FB_APPS_JA% | Nao disponiveis: %FB_APPS_ND% | Falhas: %FB_APPS_ERR%"
+goto :EOF
+
+:: ------------------------------------------------------------------------------
+:: FALLBACK BATCH DA CENTRAL DE APLICATIVOS
+::
+:: Equivalente a acao Central de Modules\Apps.ps1 quando o PowerShell esta ausente
+:: ou bloqueado. Mesmo fluxo: pesquisar pelo nome, escolher, confirmar, instalar.
+:: A instalacao NAO e reescrita aqui: reaproveita :FB_APPS_INSTALAR, que ja
+:: verifica presenca, instala e confirma o estado final.
+::
+:: SEGURANCA DO TEXTO DIGITADO
+::   As aspas saem do termo antes de qualquer uso e "|", "&", "<" e ">" sao
+::   trocados por caractere inofensivo - a mesma higienizacao de :LOG_MSG. Na
+::   linha do winget o termo aparece sempre ENTRE ASPAS, como valor da consulta.
+::   Nada do que foi digitado vira nome de comando, de rotina ou de variavel.
+::
+:: SEGURANCA DO IDENTIFICADOR
+::   O identificador nao vem do que foi digitado: vem da tabela do winget, e todo
+::   campo com metacaractere de CMD e recusado. Antes de instalar ele e
+::   confirmado na fonte oficial com "winget show --exact". O que a fonte nao
+::   confirmar nao e instalado.
+::
+:: LIMITE DECLARADO
+::   Sem PowerShell nao ha tolerancia a erro de digitacao por semelhanca nem
+::   classificacao por relevancia: esta rotina traduz os apelidos mais comuns e
+::   apresenta os resultados na ordem em que o winget os devolve. Linhas cujo
+::   identificador o console tenha truncado sao recusadas na confirmacao.
+:: ------------------------------------------------------------------------------
+:FB_APPS_CENTRAL
+if "%HAS_WINGET%"=="0" goto FB_APPS_SEM_WINGET
+call :LOG_MSG "INFO" "[Batch] Central de aplicativos pela rotina de contingencia."
+
+:FB_CENTRAL_LOOP
+cls
+echo.
+echo   %C_TITULO%Central de Aplicativos%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION% - rotina Batch%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo   %C_TEXTO%Digite o nome do aplicativo que voce quer instalar.%C_RESET%
+echo   %C_CINZA%Nao precisa acertar o nome exato: crome, 7 zip e vs code funcionam.%C_RESET%
+echo.
+echo   %C_CINZA%Deixe em branco e tecle Enter para voltar.%C_RESET%
+echo.
+set "FB_CT="
+set /p "FB_CT=  Aplicativo: "
+if not defined FB_CT goto :EOF
+:: Aspa solta quebraria toda a expansao seguinte. Nome de programa nao tem aspas.
+set "FB_CT=%FB_CT:"=%"
+if not defined FB_CT goto :EOF
+set "FB_CT=%FB_CT:|=/%"
+set "FB_CT=%FB_CT:&=+%"
+set "FB_CT=%FB_CT:<=(%"
+set "FB_CT=%FB_CT:>=)%"
+call :LOG_MSG "INFO" "[Batch] Central: termo pesquisado - %FB_CT%"
+
+set "FB_C_CONSULTA=%FB_CT%"
+call :FB_CENTRAL_APELIDO
+
+call :LOG_MSG "INFO" "Procurando na fonte oficial do WinGet..."
+set "FB_C_TMP=%LOGDIR%compartdisk_central.tmp"
+winget search "%FB_C_CONSULTA%" --source winget --accept-source-agreements > "%FB_C_TMP%" 2>nul
+
+cls
+echo.
+echo   %C_TITULO%Central de Aplicativos%C_RESET%
+echo   %C_CINZA%Pesquisa: %FB_CT%%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo   %C_TEXTO%Resultados encontrados:%C_RESET%
+echo.
+set "FB_C_DADOS=0"
+set "FB_C_N=0"
+if exist "%FB_C_TMP%" for /f "usebackq tokens=* delims=" %%L in ("%FB_C_TMP%") do call :FB_CENTRAL_LINHA "%%L"
+if exist "%FB_C_TMP%" del "%FB_C_TMP%" >nul 2>&1
+if "%FB_C_N%"=="0" goto FB_CENTRAL_VAZIO
+
+echo.
+echo    %C_CIANO%[P]%C_RESET%  %C_TEXTO%Nova pesquisa%C_RESET%
+echo    %C_CINZA%[V]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+set "FB_C_SEL="
+set /p "FB_C_SEL=  Escolha: "
+if not defined FB_C_SEL goto FB_CENTRAL_LOOP
+set "FB_C_SEL=%FB_C_SEL:"=%"
+if not defined FB_C_SEL goto FB_CENTRAL_LOOP
+:: Navegacao por tecla FIXA: a quantidade de resultados muda a cada pesquisa, a
+:: tecla nao. O "/i" aceita maiuscula e minuscula. Os numeros continuam sendo
+:: apenas dos aplicativos - [0] e o numero seguinte ao ultimo deixaram de
+:: navegar aqui.
+if /i "%FB_C_SEL%"=="V" goto :EOF
+if /i "%FB_C_SEL%"=="P" goto FB_CENTRAL_LOOP
+:: Somente um digito de 1 a 9 seleciona: qualquer outra coisa e recusada ANTES
+:: de virar indice de variavel.
+set "FB_C_OK="
+for %%d in (1 2 3 4 5 6 7 8 9) do if "%FB_C_SEL%"=="%%d" set "FB_C_OK=1"
+if not defined FB_C_OK goto FB_CENTRAL_INVALIDO
+if %FB_C_SEL% GTR %FB_C_N% goto FB_CENTRAL_INVALIDO
+set "FB_C_ID="
+set "FB_C_NOME="
+call :FB_CENTRAL_ESCOLHER "%FB_C_SEL%"
+if not defined FB_C_ID goto FB_CENTRAL_INVALIDO
+
+cls
+echo.
+echo   %C_TITULO%Instalar Aplicativo%C_RESET%
+echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION% - rotina Batch%C_RESET%
+echo.
+echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
+echo.
+echo   %C_CINZA%Aplicativo  %C_RESET%%C_TEXTO%%FB_C_NOME%%C_RESET%
+echo   %C_CINZA%Pacote      %C_RESET%%C_TEXTO%%FB_C_ID%%C_RESET%
+echo   %C_CINZA%Fonte       %C_RESET%%C_TEXTO%winget (fonte oficial da Microsoft)%C_RESET%
+echo.
+call :LOG_MSG "INFO" "Confirmando o pacote na fonte oficial..."
+:: Codigo de saida do winget NAO e testado com "if errorlevel": o winget devolve
+:: HRESULT, que chega negativo, e um erro seria lido como sucesso.
+winget show --id "%FB_C_ID%" --exact --source winget --versions >nul 2>&1
+set "FB_RC=%errorlevel%"
+if not "%FB_RC%"=="0" goto FB_CENTRAL_NAO_CONFIRMADO
+:: Instalar o que ja existe seria trabalho perdido: esta rotina instala apenas o
+:: que estiver ausente, como o restante da area de aplicativos.
+winget list --id "%FB_C_ID%" --exact --accept-source-agreements >nul 2>&1
+set "FB_RC=%errorlevel%"
+if "%FB_RC%"=="0" goto FB_CENTRAL_JA_INSTALADO
+echo.
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Sim, instalar%C_RESET%
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Nao, cancelar%C_RESET%
+echo.
+choice /c 10 /n /m "  Opcao: "
+if errorlevel 2 goto FB_CENTRAL_CANCELADO
+echo.
+call :FB_APPS_ZERAR
+call :FB_APPS_INSTALAR "%FB_C_NOME%" "%FB_C_ID%" ""
+echo.
+pause
+goto FB_CENTRAL_LOOP
+
+:FB_CENTRAL_VAZIO
+call :LOG_MSG "WARN" "Nenhum aplicativo encontrado com esse nome."
+echo.
+echo   %C_CINZA%Tente escrever de outra forma ou use apenas parte do nome.%C_RESET%
+echo   %C_CINZA%Nenhuma alteracao foi realizada.%C_RESET%
+echo.
+echo    %C_CIANO%[P]%C_RESET%  %C_TEXTO%Nova pesquisa%C_RESET%
+echo    %C_CINZA%[V]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+:: Mesma tecla fixa da tela de resultados, para a Central inteira responder do
+:: mesmo jeito. O CHOICE ja aceita maiuscula e minuscula: P e a primeira tecla
+:: da lista (errorlevel 1) e V a segunda (errorlevel 2).
+choice /c PV /n /m "  Opcao: "
+if errorlevel 2 goto :EOF
+goto FB_CENTRAL_LOOP
+
+:FB_CENTRAL_INVALIDO
+call :LOG_MSG "WARN" "Opcao invalida. Informe o numero de um resultado, [P] para nova pesquisa ou [V] para voltar."
+echo.
+pause
+goto FB_CENTRAL_LOOP
+
+:FB_CENTRAL_NAO_CONFIRMADO
+call :LOG_MSG "ERR" "Nao foi possivel confirmar este pacote na fonte oficial do WinGet."
+echo.
+echo   %C_CINZA%Nenhuma alteracao foi realizada.%C_RESET%
+echo.
+pause
+goto FB_CENTRAL_LOOP
+
+:FB_CENTRAL_JA_INSTALADO
+call :LOG_MSG "OK" "%FB_C_NOME% - ja instalado neste computador."
+echo.
+echo   %C_CINZA%Para atualizar o que ja esta instalado, use a opcao [3] Atualizar%C_RESET%
+echo   %C_CINZA%aplicativos (WinGet), no menu Aplicativos.%C_RESET%
+echo.
+pause
+goto FB_CENTRAL_LOOP
+
+:FB_CENTRAL_CANCELADO
+call :LOG_MSG "INFO" "Instalacao cancelada pelo operador. Nada foi alterado."
+echo.
+pause
+goto FB_CENTRAL_LOOP
+
+:: --- leitura da tabela devolvida pelo winget ---------------------------------
+:FB_CENTRAL_LINHA
+:: %~1 = uma linha de "winget search". Os rotulos do cabecalho mudam com o idioma
+:: do Windows; a regua de tracos que separa cabecalho de dados, nao. Por isso os
+:: dados so comecam depois dela.
+set "FB_L=%~1"
+if not defined FB_L goto :EOF
+if "%FB_C_DADOS%"=="1" goto FB_CENTRAL_LINHA_DADOS
+if "%FB_L:~0,3%"=="---" set "FB_C_DADOS=1"
+goto :EOF
+
+:FB_CENTRAL_LINHA_DADOS
+if %FB_C_N% GEQ 9 goto :EOF
+set "FB_C_ID_TMP="
+set "FB_C_NOME_TMP="
+for /f "tokens=1-9 delims= " %%a in ("%FB_L%") do call :FB_CENTRAL_CAMPOS "%%a" "%%b" "%%c" "%%d" "%%e" "%%f" "%%g" "%%h" "%%i"
+if not defined FB_C_ID_TMP goto :EOF
+if not defined FB_C_NOME_TMP set "FB_C_NOME_TMP= %FB_C_ID_TMP%"
+set "FB_C_NOME_TMP=%FB_C_NOME_TMP:~1%"
+set /a FB_C_N+=1
+set "FB_C_ID%FB_C_N%=%FB_C_ID_TMP%"
+set "FB_C_NOME%FB_C_N%=%FB_C_NOME_TMP%"
+echo    %C_CIANO%[%FB_C_N%]%C_RESET%  %C_TEXTO%%FB_C_NOME_TMP%%C_RESET%
+echo         %C_CINZA%%FB_C_ID_TMP%%C_RESET%
+goto :EOF
+
+:FB_CENTRAL_CAMPOS
+:: Percorre os campos da linha ate acabarem. SHIFT evita depender de %10 em
+:: diante, que o Batch nao possui.
+if "%~1"=="" goto :EOF
+call :FB_CENTRAL_TOKEN "%~1"
+shift
+goto FB_CENTRAL_CAMPOS
+
+:FB_CENTRAL_TOKEN
+:: O identificador e o primeiro campo depois do nome com forma "Editor.Pacote":
+:: tem ponto E tem letra. Numero de versao tem ponto e nao tem letra, por isso e
+:: recusado. Campo com metacaractere de CMD tambem e recusado: identificador
+:: publicado nunca tem um.
+set "FB_T=%~1"
+if not defined FB_T goto :EOF
+if defined FB_C_ID_TMP goto :EOF
+if "%FB_T:~0,1%"=="%%" goto :EOF
+if not defined FB_C_NOME_TMP goto FB_CENTRAL_TOKEN_NOME
+set "FB_T2=%FB_T:&=%"
+set "FB_T2=%FB_T2:|=%"
+set "FB_T2=%FB_T2:<=%"
+set "FB_T2=%FB_T2:>=%"
+if not "%FB_T2%"=="%FB_T%" goto FB_CENTRAL_TOKEN_NOME
+set "FB_T2=%FB_T:.=%"
+if "%FB_T2%"=="%FB_T%" goto FB_CENTRAL_TOKEN_NOME
+set "FB_T3=%FB_T2:0=%"
+set "FB_T3=%FB_T3:1=%"
+set "FB_T3=%FB_T3:2=%"
+set "FB_T3=%FB_T3:3=%"
+set "FB_T3=%FB_T3:4=%"
+set "FB_T3=%FB_T3:5=%"
+set "FB_T3=%FB_T3:6=%"
+set "FB_T3=%FB_T3:7=%"
+set "FB_T3=%FB_T3:8=%"
+set "FB_T3=%FB_T3:9=%"
+if not defined FB_T3 goto FB_CENTRAL_TOKEN_NOME
+set "FB_C_ID_TMP=%FB_T%"
+goto :EOF
+
+:FB_CENTRAL_TOKEN_NOME
+:: O nome vem da saida do winget e sera ecoado: a mesma higienizacao de
+:: :LOG_MSG evita que um "&" no nome do pacote vire operador do CMD.
+set "FB_T=%FB_T:|=/%"
+set "FB_T=%FB_T:&=+%"
+set "FB_T=%FB_T:<=(%"
+set "FB_T=%FB_T:>=)%"
+set "FB_C_NOME_TMP=%FB_C_NOME_TMP% %FB_T%"
+goto :EOF
+
+:FB_CENTRAL_ESCOLHER
+:: %~1 = numero de 1 a 9 ja validado. "call set" resolve a variavel indexada sem
+:: exigir expansao atrasada, que este Launcher mantem desligada de proposito.
+call set "FB_C_ID=%%FB_C_ID%~1%%"
+call set "FB_C_NOME=%%FB_C_NOME%~1%%"
+goto :EOF
+
+:FB_CENTRAL_APELIDO
+:: Traduz apelidos, abreviacoes e erros de digitacao comuns para o nome que a
+:: fonte oficial reconhece. Muda apenas o TEXTO da consulta: o pacote continua
+:: vindo do winget, e um termo desconhecido simplesmente nao muda nada.
+:: Acrescentar um aplicativo popular aqui = acrescentar uma linha.
+:: Os mesmos apelidos vivem em $script:ApelidosCentral, em Modules\Apps.ps1.
+set "FB_CN=%FB_CT: =%"
+set "FB_CN=%FB_CN:-=%"
+set "FB_CN=%FB_CN:.=%"
+set "FB_CN=%FB_CN:_=%"
+if /i "%FB_CN%"=="chrome" set "FB_C_CONSULTA=Google Chrome"
+if /i "%FB_CN%"=="crome" set "FB_C_CONSULTA=Google Chrome"
+if /i "%FB_CN%"=="chorme" set "FB_C_CONSULTA=Google Chrome"
+if /i "%FB_CN%"=="chrom" set "FB_C_CONSULTA=Google Chrome"
+if /i "%FB_CN%"=="chr" set "FB_C_CONSULTA=Google Chrome"
+if /i "%FB_CN%"=="googlechrome" set "FB_C_CONSULTA=Google Chrome"
+if /i "%FB_CN%"=="firefox" set "FB_C_CONSULTA=Mozilla Firefox"
+if /i "%FB_CN%"=="firefx" set "FB_C_CONSULTA=Mozilla Firefox"
+if /i "%FB_CN%"=="mozilla" set "FB_C_CONSULTA=Mozilla Firefox"
+if /i "%FB_CN%"=="brave" set "FB_C_CONSULTA=Brave Browser"
+if /i "%FB_CN%"=="7zip" set "FB_C_CONSULTA=7-Zip"
+if /i "%FB_CN%"=="sevenzip" set "FB_C_CONSULTA=7-Zip"
+if /i "%FB_CN%"=="zip" set "FB_C_CONSULTA=7-Zip"
+if /i "%FB_CN%"=="winrar" set "FB_C_CONSULTA=WinRAR"
+if /i "%FB_CN%"=="rar" set "FB_C_CONSULTA=WinRAR"
+if /i "%FB_CN%"=="vlc" set "FB_C_CONSULTA=VLC media player"
+if /i "%FB_CN%"=="videolan" set "FB_C_CONSULTA=VLC media player"
+if /i "%FB_CN%"=="vlcplayer" set "FB_C_CONSULTA=VLC media player"
+if /i "%FB_CN%"=="vscode" set "FB_C_CONSULTA=Visual Studio Code"
+if /i "%FB_CN%"=="code" set "FB_C_CONSULTA=Visual Studio Code"
+if /i "%FB_CN%"=="visualcode" set "FB_C_CONSULTA=Visual Studio Code"
+if /i "%FB_CN%"=="visualstudiocode" set "FB_C_CONSULTA=Visual Studio Code"
+if /i "%FB_CN%"=="notepad" set "FB_C_CONSULTA=Notepad++"
+if /i "%FB_CN%"=="notepad++" set "FB_C_CONSULTA=Notepad++"
+if /i "%FB_CN%"=="npp" set "FB_C_CONSULTA=Notepad++"
+if /i "%FB_CN%"=="acrobat" set "FB_C_CONSULTA=Adobe Acrobat Reader"
+if /i "%FB_CN%"=="adobereader" set "FB_C_CONSULTA=Adobe Acrobat Reader"
+if /i "%FB_CN%"=="adobeacrobat" set "FB_C_CONSULTA=Adobe Acrobat Reader"
+if /i "%FB_CN%"=="powertoys" set "FB_C_CONSULTA=Microsoft PowerToys"
+if /i "%FB_CN%"=="everything" set "FB_C_CONSULTA=Everything"
+if /i "%FB_CN%"=="teams" set "FB_C_CONSULTA=Microsoft Teams"
+if /i "%FB_CN%"=="anydesk" set "FB_C_CONSULTA=AnyDesk"
+if /i "%FB_CN%"=="teamviewer" set "FB_C_CONSULTA=TeamViewer"
+if /i "%FB_CN%"=="nodejs" set "FB_C_CONSULTA=Node.js"
+if /i "%FB_CN%"=="libreoffice" set "FB_C_CONSULTA=LibreOffice"
+if /i "%FB_CN%"=="obs" set "FB_C_CONSULTA=OBS Studio"
+if /i "%FB_CN%"=="obsstudio" set "FB_C_CONSULTA=OBS Studio"
+if /i "%FB_CN%"=="qbit" set "FB_C_CONSULTA=qBittorrent"
+if /i "%FB_CN%"=="handbrake" set "FB_C_CONSULTA=HandBrake"
+if /i "%FB_CN%"=="malwarebytes" set "FB_C_CONSULTA=Malwarebytes"
+if /i "%FB_CN%"=="cpuz" set "FB_C_CONSULTA=CPU-Z"
+if /i "%FB_CN%"=="hwinfo" set "FB_C_CONSULTA=HWiNFO"
+if /i "%FB_CN%"=="crystaldisk" set "FB_C_CONSULTA=CrystalDiskInfo"
+if /i "%FB_CN%"=="winscp" set "FB_C_CONSULTA=WinSCP"
+if /i "%FB_CN%"=="wireshark" set "FB_C_CONSULTA=Wireshark"
+:: Termos genericos: sem classificacao por relevancia, o Batch depende ainda
+:: mais da traducao para chegar ao pacote que o operador espera.
+if /i "%FB_CN%"=="office" set "FB_C_CONSULTA=Microsoft 365"
+if /i "%FB_CN%"=="microsoftoffice" set "FB_C_CONSULTA=Microsoft 365"
+if /i "%FB_CN%"=="msoffice" set "FB_C_CONSULTA=Microsoft 365"
+if /i "%FB_CN%"=="pacoteoffice" set "FB_C_CONSULTA=Microsoft 365"
+if /i "%FB_CN%"=="office365" set "FB_C_CONSULTA=Microsoft 365"
+if /i "%FB_CN%"=="microsoft365" set "FB_C_CONSULTA=Microsoft 365"
+if /i "%FB_CN%"=="word" set "FB_C_CONSULTA=Microsoft 365"
+if /i "%FB_CN%"=="excel" set "FB_C_CONSULTA=Microsoft 365"
+if /i "%FB_CN%"=="powerpoint" set "FB_C_CONSULTA=Microsoft 365"
+if /i "%FB_CN%"=="libreoffice" set "FB_C_CONSULTA=LibreOffice"
+if /i "%FB_CN%"=="navegador" set "FB_C_CONSULTA=Google Chrome"
+if /i "%FB_CN%"=="browser" set "FB_C_CONSULTA=Google Chrome"
+if /i "%FB_CN%"=="acessoremoto" set "FB_C_CONSULTA=AnyDesk"
+if /i "%FB_CN%"=="suporteremoto" set "FB_C_CONSULTA=AnyDesk"
 goto :EOF
 
 :: ------------------------------------------------------------------------------

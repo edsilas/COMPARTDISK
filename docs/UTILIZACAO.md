@@ -1,6 +1,6 @@
 # Guia de Utilização
 
-**COMPARTDISK 1.4.4** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.5** · Desenvolvido por Edsilas
 
 Como usar a ferramenta no dia a dia. Se você quer a explicação de cada opção
 individualmente, vá para o [Manual do Usuário](MANUAL-DO-USUARIO.md).
@@ -9,8 +9,10 @@ individualmente, vá para o [Manual do Usuário](MANUAL-DO-USUARIO.md).
 
 ## Como navegar
 
-A ferramenta funciona inteiramente por **teclas numéricas**. Não há mouse, não há
-campos para preencher.
+A ferramenta funciona por **teclas numéricas**. Não há mouse, não há campos para
+preencher. A única exceção é a **Central de Aplicativos**, onde os números são dos
+aplicativos encontrados e a navegação tem tecla fixa em todas as telas: `P` pesquisa
+de novo e `V` volta.
 
 1. A tela mostra uma lista de opções numeradas.
 2. Você aperta o número desejado.
@@ -18,7 +20,8 @@ campos para preencher.
 
 Em todas as telas:
 
-- **`0`** volta para a tela anterior (no menu principal, encerra o programa).
+- **`0`** volta para a tela anterior (no menu principal, encerra o programa; na
+  Central de Aplicativos, quem volta é `V`).
 - Ao terminar uma operação, aperte qualquer tecla para voltar ao menu.
 
 ## As três cores das mensagens
