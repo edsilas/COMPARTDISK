@@ -221,6 +221,21 @@ function Get-CompartDiskVolumeInfo {
     return @($rows)
 }
 
+function Get-CompartDiskIPFamily {
+    <# Classifica um endereco como IPv4, IPv6 ou Invalido usando apenas .NET.
+       Existe porque Win32_NetworkAdapterConfiguration devolve as duas familias
+       misturadas no mesmo vetor (IPAddress, DefaultIPGateway) e o inventario
+       precisa separa-las sem adivinhar pelo formato do texto. #>
+    param([AllowNull()][object]$Endereco)
+    $t = "$Endereco".Trim()
+    if (-not $t) { return 'Invalido' }
+    $ip = [System.Net.IPAddress]::Any
+    if (-not [System.Net.IPAddress]::TryParse($t, [ref]$ip)) { return 'Invalido' }
+    if ($ip.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork)   { return 'IPv4' }
+    if ($ip.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetworkV6) { return 'IPv6' }
+    return 'Invalido'
+}
+
 function Get-CompartDiskNetworkInfo {
     [CmdletBinding()] param()
     $rows = New-Object System.Collections.ArrayList
@@ -230,16 +245,35 @@ function Get-CompartDiskNetworkInfo {
     # antigos nao percebe diferenca.
     $ipif = @{}
     if (Test-CompartDiskCommand 'Get-NetIPInterface') {
-        try {
-            foreach ($i in (Get-NetIPInterface -AddressFamily IPv4 -ErrorAction Stop)) {
-                $ipif[[int]$i.InterfaceIndex] = $i
-            }
-        } catch { Write-Log DEBUG "Get-NetIPInterface: $($_.Exception.Message)" -NoConsole }
+        # Consumo tolerante. Com -ErrorAction Stop sobre expressao entre
+        # parenteses, a saida e materializada ANTES do laco: um unico erro do
+        # cmdlet descartava tudo o que ja havia sido emitido, e DHCP/MTU
+        # ficavam 'N/A' em TODAS as interfaces por causa de uma so.
+        $ifs = @(); $ifErr = @()
+        try { $ifs = @(Get-NetIPInterface -AddressFamily IPv4 -ErrorAction SilentlyContinue -ErrorVariable ifErr) }
+        catch { Write-Log DEBUG "Get-NetIPInterface: $($_.Exception.Message)" -NoConsole }
+        foreach ($e in @($ifErr)) {
+            Write-Log WARN ("Get-NetIPInterface nao descreveu uma interface (DHCP/MTU podem sair como N/A): {0}" -f $e.Exception.Message) -NoConsole
+        }
+        foreach ($i in $ifs) {
+            try { $ipif[[int]$i.InterfaceIndex] = $i }
+            catch { Write-Log WARN ("Indice de interface ilegivel, DHCP/MTU indisponiveis para ela: {0}" -f $_.Exception.Message) -NoConsole }
+        }
     }
 
     if (Test-CompartDiskCommand 'Get-NetIPConfiguration') {
+        # Mesma correcao: uma interface que o Windows nao consegue descrever
+        # (sem perfil de rede, em negociacao, adaptador de tunel) nao pode
+        # eliminar as interfaces integras. O erro e registrado, nunca ocultado.
+        $cfgs = @(); $cfgErr = @()
+        try { $cfgs = @(Get-NetIPConfiguration -Detailed -ErrorAction SilentlyContinue -ErrorVariable cfgErr) }
+        catch { Write-Log DEBUG "Get-NetIPConfiguration: $($_.Exception.Message)" -NoConsole }
+        foreach ($e in @($cfgErr)) {
+            Write-Log WARN ("Interface nao descrita pelo Windows e ausente do inventario IP: {0}" -f $e.Exception.Message) -NoConsole
+        }
         try {
-            foreach ($c in (Get-NetIPConfiguration -Detailed -ErrorAction Stop)) {
+            foreach ($c in $cfgs) {
+              try {
                 $idx = $(try { [int]$c.InterfaceIndex } catch { -1 })
                 $i   = $(if ($ipif.ContainsKey($idx)) { $ipif[$idx] } else { $null })
                 [void]$rows.Add([pscustomobject]@{
@@ -256,21 +290,45 @@ function Get-CompartDiskNetworkInfo {
                     MTU       = $(if ($i -and $i.NlMtu) { "$($i.NlMtu)" } else { 'N/A' })
                     Perfil    = "$($c.NetProfile.NetworkCategory)"
                 })
+              } catch {
+                Write-Log WARN ("Interface '{0}' ignorada no inventario IP: {1}" -f "$($c.InterfaceAlias)", $_.Exception.Message) -NoConsole
+              }
             }
         } catch { Write-Log DEBUG "Get-NetIPConfiguration: $($_.Exception.Message)" -NoConsole }
     }
 
     if ($rows.Count -eq 0) {
-        foreach ($n in (Get-CompartDiskCim -Class Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=True')) {
+        # O filtro WQL 'IPEnabled=True' foi observado devolvendo ZERO em maquina
+        # com WMI saudavel: a mesma classe sem filtro devolvia 10 instancias e
+        # uma delas tinha IPEnabled verdadeiro. O criterio passa a ser avaliado
+        # no cliente - mesmo objetivo funcional, sem depender do provedor.
+        foreach ($n in (@(Get-CompartDiskCim -Class Win32_NetworkAdapterConfiguration) | Where-Object { $_.IPEnabled })) {
+          try {
+            # Win32_NetworkAdapterConfiguration devolve IPv4 e IPv6 misturados
+            # no MESMO vetor IPAddress (e em DefaultIPGateway). Sem separar, um
+            # endereco fe80:: caia no campo IPv4 e era classificado como
+            # invalido pelo diagnostico.
+            $v4 = @(); $v6 = @(); $gw4 = @()
+            foreach ($e in @($n.IPAddress)) {
+                switch (Get-CompartDiskIPFamily $e) { 'IPv4' { $v4 += "$e" } 'IPv6' { $v6 += "$e" } }
+            }
+            # Gateway espelha o caminho moderno, que popula este campo a partir
+            # de IPv4DefaultGateway: mesmo nome, mesma semantica nos dois caminhos.
+            foreach ($e in @($n.DefaultIPGateway)) {
+                if ((Get-CompartDiskIPFamily $e) -eq 'IPv4') { $gw4 += "$e" }
+            }
             [void]$rows.Add([pscustomobject]@{
                 Interface = $n.Description; Descricao = $n.Description; Estado = 'Ativo'
                 MAC = $n.MACAddress; Velocidade = 'n/d'
-                IPv4 = ($n.IPAddress -join ', '); IPv6 = ''
-                Gateway = ($n.DefaultIPGateway -join ', '); DNS = ($n.DNSServerSearchOrder -join ', ')
+                IPv4 = ($v4 -join ', '); IPv6 = ($v6 -join ', ')
+                Gateway = ($gw4 -join ', '); DNS = ($n.DNSServerSearchOrder -join ', ')
                 DHCP = $(if ($null -ne $n.DHCPEnabled) { $(if ([bool]$n.DHCPEnabled) { 'Enabled' } else { 'Disabled' }) } else { 'N/A' })
                 MTU  = $(if ($n.MTU) { "$($n.MTU)" } else { 'N/A' })
                 Perfil = 'n/d'
             })
+          } catch {
+            Write-Log WARN ("Adaptador '{0}' ignorado no inventario IP de contingencia: {1}" -f "$($n.Description)", $_.Exception.Message) -NoConsole
+          }
         }
     }
     return @($rows)

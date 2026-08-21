@@ -228,6 +228,33 @@ criar um a cada execução. Publicação em
   `choice /c 12340` virou `choice /c 1230`: a tecla `4` deixou de existir e não executa
   mais nada.
 
+- **`Diagnóstico de Adaptadores, DNS, DHCP, MTU e Rotas` (`3` › `4`) reorganizado.** A
+  saída passa a ser agrupada em blocos nomeados — **Adaptadores de rede**,
+  **Conectividade IPv4**, **Interfaces (detalhe)**, **Protocolos**, **Rotas**,
+  **Firewall do Windows** e **Resumo** —, na mesma gramática visual do restante da
+  ferramenta.
+
+  As **rotas padrão** já eram coletadas e enviadas ao relatório, mas nunca chegavam ao
+  console; passam a ser exibidas com destino, família, gateway, interface e métrica. O
+  mesmo vale para **DHCP e MTU por interface** e para o perfil de rede ativo, a gestão
+  por diretiva de grupo e o firewall de terceiros, que existiam apenas no relatório.
+
+  O bloco **Conectividade IPv4** reúne, para cada interface com gateway, o gateway
+  padrão, o DNS primário e o secundário, o estado do DHCP e a rota padrão
+  correspondente — tudo derivado dos dados já coletados, sem nenhuma consulta adicional
+  ao sistema.
+
+  Valores devolvidos pelo Windows passam a ser apresentados em português e sem
+  ambiguidade: `NotConfigured` nos perfis de firewall aparece como `Não configurado`,
+  acompanhado da nota de que é o padrão do Windows e não um defeito, e a MTU
+  `4294967295` da interface de loopback recebe nota equivalente. O **Resumo** final
+  sintetiza adaptadores, configuração IP, endereço, gateway, DNS, MTU/DHCP, rota padrão
+  e firewall com `[ OK ]`, `[ AVISO ]` ou `[ ERRO ]` — e apenas quando o dado coletado
+  sustenta o veredito; consulta que não concluiu é apresentada como não verificada.
+
+  O diagnóstico permanece **estritamente somente leitura**: nenhuma configuração do
+  Windows é alterada.
+
 ### Removido
 
 - **Opção `Instalar aplicativos (catálogo de suporte técnico)` do menu Aplicativos.**
@@ -248,6 +275,48 @@ criar um a cada execução. Publicação em
   `-Action List`) e documentado em [Funcionalidades](docs/FUNCIONALIDADES.md).
 
 ### Corrigido
+
+- **`Diagnóstico de Rede` (`3` › `4`) informava `Nenhuma interface com configuração IP`
+  em máquina com endereço, gateway e DNS válidos.** Afetava o **Windows PowerShell 5.1**
+  quando havia **exatamente uma** interface configurada. `ConvertTo-NetArray`, de
+  `Modules/Network.ps1`, é o ponto único de conversão de retorno para coleção, mas o
+  PowerShell desenrola coleções no retorno: com um único elemento, o chamador recebia um
+  objeto solto em vez de coleção. Sobre esse objeto, `.Count` devolve `$null` no 5.1 — no
+  PowerShell 7 devolve `1` —, de modo que `Get-NetworkInventory` calculava
+  `Total = $null`, o total nunca era maior que zero e o diagnóstico negava a configuração
+  IP que estava intacta nas suas próprias linhas.
+
+  A função passa a preservar a coleção em todos os casos, inclusive vazio e elemento
+  único. A contagem volta a ser correta nos dois motores suportados e a mesma classe de
+  defeito desaparece nos demais consumidores. O relatório consolidado e a auditoria já
+  recebiam as linhas corretamente e não eram afetados.
+
+- **Inventário de configuração IP ficava vazio quando o Windows não conseguia descrever
+  alguma interface.** Em `Modules/Collectors.ps1`, `Get-CompartDiskNetworkInfo` percorria
+  o resultado de `Get-NetIPConfiguration` numa expressão materializada sob
+  `-ErrorAction Stop`: bastava **uma** interface sem perfil de rede, em negociação ou de
+  túnel para que a consulta terminasse em erro e **todas** as interfaces já obtidas
+  fossem descartadas.
+
+  A coleta passa a ser tolerante e isolada por interface: uma interface com defeito é
+  ignorada e registrada no log da sessão, e as íntegras permanecem no inventário. O mesmo
+  tratamento foi aplicado à leitura de DHCP e MTU, que antes podia zerar esses campos em
+  todas as interfaces por causa de uma só.
+
+- **A rota de contingência do inventário IP não retornava nada.** Ainda em
+  `Get-CompartDiskNetworkInfo`, a consulta de reserva a
+  `Win32_NetworkAdapterConfiguration` usava o filtro `IPEnabled=True`, observado
+  devolvendo **zero** instâncias em máquina com WMI íntegro — a mesma classe sem filtro
+  devolvia todos os adaptadores, um deles com `IPEnabled` verdadeiro. O critério passa a
+  ser avaliado no próprio módulo, com o mesmo objetivo funcional e sem depender do
+  provedor.
+
+- **Endereços IPv6 apareciam no campo IPv4 na rota de contingência.**
+  `Win32_NetworkAdapterConfiguration` devolve as duas famílias no mesmo vetor de
+  endereços e de gateways. Sem separação, um endereço `fe80::` caía no campo IPv4 e era
+  classificado como inválido pelo diagnóstico. As famílias passam a ser separadas por
+  verificação real do endereço, e o campo de gateway mantém a mesma semântica nas duas
+  rotas de coleta.
 
 - **`Aplicar Perfil Desempenho Máximo` (`3` › `3`) criava um plano de energia a cada
   execução.** `Modules/Performance.ps1` só reconhecia o plano pelo GUID canônico

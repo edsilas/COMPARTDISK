@@ -77,11 +77,23 @@ function Get-NetWorstSeverity {
 }
 
 function ConvertTo-NetArray {
-    <# Funcao que devolve @() entrega $null ao chamador, e @($null) tem Count 1.
-       Ponto unico de conversao de retorno para colecao. #>
+    <# Ponto unico de conversao de retorno para colecao: SEMPRE devolve array.
+
+       O PowerShell desenrola arrays no retorno. Sem o operador virgula, este
+       ponto quebrava justamente nos extremos: 'return @()' entregava $null ao
+       chamador, e um resultado de UM elemento chegava como objeto nu.
+
+       O segundo caso era o mais grave, porque so aparece no Windows PowerShell
+       5.1: ali .Count sobre um PSCustomObject devolve $null (no PowerShell 7
+       devolve 1). Com uma unica interface configurada, Get-NetworkInventory
+       calculava Total = $null, e o diagnostico afirmava 'Nenhuma interface com
+       configuracao IP' com a interface intacta em Rows.
+
+       A virgula envolve o array num array de um elemento; o desenrolamento
+       consome o externo e entrega o interno intacto. #>
     param([AllowNull()][object]$Value)
-    if ($null -eq $Value) { return @() }
-    return @(@($Value) | Where-Object { $null -ne $_ })
+    if ($null -eq $Value) { return ,@() }
+    return ,@(@($Value) | Where-Object { $null -ne $_ })
 }
 
 function Get-NetSafeText {
@@ -195,6 +207,191 @@ function Write-NetPair {
     Write-CompartDiskKeyValue $Key $Value -Color $Color
 }
 
+# ------------------------------------------------------------------------------
+# APRESENTACAO DO DIAGNOSTICO (acao Info)
+# Camada estritamente cosmetica: nenhuma funcao abaixo consulta o sistema,
+# altera dado coletado ou influencia severidade, achado, secao ou codigo de
+# saida. Valor desconhecido pelo tradutor e devolvido intacto, para que uma
+# cadeia nova do Windows apareca como veio em vez de virar rotulo errado.
+# ------------------------------------------------------------------------------
+function Write-NetSecao {
+    <# Cabecalho de bloco na gramatica visual ja usada pela ferramenta: margem
+       de 2 espacos, titulo em maiusculas e branco. O titulo chega pronto e nao
+       e convertido, para que siglas como IPv4 nao virem IPV4. #>
+    param([Parameter(Mandatory)][string]$Titulo)
+    if ($script:Quiet) { return }
+    Write-Color ''
+    Write-Color ("  {0}" -f $Titulo) -Color White
+}
+
+function Write-NetNota {
+    param([Parameter(Mandatory)][string]$Texto)
+    if ($script:Quiet) { return }
+    Write-Color ("  {0}" -f $Texto) -Color DarkGray
+}
+
+function Get-NetSimNao {
+    <# Booleano do Windows. 'N/A' e vazio viram ausencia declarada, nunca 'Nao'. #>
+    param([AllowNull()][object]$Valor)
+    $t = "$Valor".Trim()
+    if (-not $t) { return 'Nao informado' }
+    switch -Regex ($t) {
+        '(?i)^(true|1)$'    { return 'Sim' }
+        '(?i)^(false|0)$'   { return 'Nao' }
+        '(?i)^(n/a|n/d)$'   { return 'Nao informado' }
+        default             { return $t }
+    }
+}
+
+function Get-NetAcaoFirewall {
+    <# DefaultInboundAction / DefaultOutboundAction. 'NotConfigured' significa
+       que o perfil nao define a acao e o Windows aplica o proprio padrao: nao e
+       erro, nao e falha de coleta e nao altera severidade. Traduzido apenas
+       para leitura, preservando o significado original. #>
+    param([AllowNull()][object]$Valor)
+    $t = "$Valor".Trim()
+    if (-not $t) { return 'Nao informado' }
+    switch -Regex ($t) {
+        '(?i)^allow$'         { return 'Permitir' }
+        '(?i)^block$'         { return 'Bloquear' }
+        '(?i)^notconfigured$' { return 'Nao configurado' }
+        '(?i)^(n/a|n/d)$'     { return 'Nao informado' }
+        default               { return $t }
+    }
+}
+
+function Get-NetDhcpTexto {
+    <# Dhcp de Get-NetIPInterface e DHCPEnabled do CIM, ja normalizados pelo
+       coletor para Enabled | Disabled | N/A. #>
+    param([AllowNull()][object]$Valor)
+    $t = "$Valor".Trim()
+    if (-not $t) { return 'Nao informado' }
+    switch -Regex ($t) {
+        '(?i)^enabled$'   { return 'Habilitado' }
+        '(?i)^disabled$'  { return 'Desabilitado' }
+        '(?i)^(n/a|n/d)$' { return 'Nao informado' }
+        default           { return $t }
+    }
+}
+
+function Get-NetEstadoTexto {
+    <# Vocabulario de Get-NetEstadoNormalizado e ConnectionState, apenas para
+       leitura. O valor normalizado usado nas decisoes continua inalterado. #>
+    param([AllowNull()][object]$Valor)
+    $t = "$Valor".Trim()
+    if (-not $t) { return 'Nao informado' }
+    switch -Regex ($t) {
+        '(?i)^(healthy|up|connected)$'  { return 'Conectado' }
+        '(?i)^(disconnected|down)$'     { return 'Desconectado' }
+        '(?i)^disabled$'                { return 'Desabilitado' }
+        '(?i)^notpresent$'              { return 'Ausente' }
+        '(?i)^error$'                   { return 'Com falha' }
+        '(?i)^unknown$'                 { return 'Indeterminado' }
+        default                         { return $t }
+    }
+}
+
+function Get-NetSituacaoTexto {
+    <# Coluna Situacao da avaliacao IP. Vocabulario proprio: 'Healthy' significa
+       configuracao sem pendencia e 'Warning' significa pendencia registrada -
+       nao sao estados de conexao. Quando a interface nao esta conectada, a
+       avaliacao reaproveita o estado normalizado, tambem tratado aqui. #>
+    param([AllowNull()][object]$Valor)
+    $t = "$Valor".Trim()
+    if (-not $t) { return 'Nao informado' }
+    switch -Regex ($t) {
+        '(?i)^healthy$'       { return 'Normal' }
+        '(?i)^warning$'       { return 'Atencao' }
+        '(?i)^disconnected$'  { return 'Desconectada' }
+        '(?i)^disabled$'      { return 'Desabilitada' }
+        '(?i)^notpresent$'    { return 'Ausente' }
+        '(?i)^error$'         { return 'Com falha' }
+        '(?i)^unknown$'       { return 'Indeterminada' }
+        default               { return $t }
+    }
+}
+
+function Test-NetMtuLoopback {
+    <# 4294967295 (0xFFFFFFFF) e o valor que o Windows reporta na interface de
+       loopback. E leitura real e legitima, nao defeito: serve unicamente para
+       acrescentar a nota explicativa, jamais para alterar severidade. #>
+    param([AllowNull()][object]$Valor)
+    return ("$Valor".Trim() -eq '4294967295')
+}
+
+function Get-NetNomesDaInterface {
+    <# Nomes sob os quais uma interface do inventario IP pode aparecer nas
+       rotas. O caminho moderno ja entrega o InterfaceAlias, que casa direto
+       com Get-NetRoute; o caminho de contingencia (Win32_NetworkAdapterConfiguration)
+       entrega a DESCRICAO do adaptador, que nunca casa - e a rota padrao
+       existente era relatada como 'Nao encontrada'.
+
+       A correspondencia usa o inventario de adaptadores JA coletado, que traz
+       alias e descricao lado a lado: nenhuma consulta adicional ao sistema. #>
+    param([AllowNull()][string]$Nome, [AllowNull()][object]$Facts)
+    $nomes = New-Object System.Collections.ArrayList
+    $n = "$Nome".Trim()
+    if ($n) { [void]$nomes.Add($n) }
+    foreach ($r in (ConvertTo-NetArray $Facts.Rows)) {
+        $alias = "$($r.Interface)".Trim()
+        if (-not $alias) { continue }
+        # Casa por descricao (contingencia) ou por alias (caminho moderno).
+        if (("$($r.Descricao)".Trim() -eq $n -or $alias -eq $n) -and ($nomes -notcontains $alias)) {
+            [void]$nomes.Add($alias)
+        }
+    }
+    return @($nomes)
+}
+
+function Get-NetItemLista {
+    <# Elemento N de uma lista JA coletada, com ausencia declarada em vez de
+       valor inventado. #>
+    param([AllowNull()][object[]]$Lista, [int]$Indice, [string]$Ausente = 'Nao configurado')
+    $l = @($Lista)
+    if ($Indice -lt 0 -or $Indice -ge $l.Count) { return $Ausente }
+    $t = "$($l[$Indice])".Trim()
+    if (-not $t) { return $Ausente }
+    return $t
+}
+
+# ------------------------------------------------------------------------------
+# Sintese do diagnostico. Cada bloco registra o proprio veredito no ponto em que
+# o dado ja esta confirmado; nada e recalculado no fim. Consulta que nao
+# concluiu entra sem tag, como 'Nao verificado'.
+# ------------------------------------------------------------------------------
+$script:Sintese = New-Object System.Collections.ArrayList
+
+function Add-NetSintese {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Item,
+        [Parameter(Mandatory)][ValidateSet('OK', 'AVISO', 'ERRO', 'NENHUM')][string]$Tag,
+        [Parameter(Mandatory)][string]$Texto
+    )
+    [void]$script:Sintese.Add([pscustomobject]@{ Item = $Item; Tag = $Tag; Texto = $Texto })
+}
+
+function Write-NetSintese {
+    if ($script:Quiet) { return }
+    if (@($script:Sintese).Count -eq 0) { return }
+    Write-NetSecao 'RESUMO'
+    foreach ($s in $script:Sintese) {
+        $tag = switch ($s.Tag) {
+            'OK'    { '[ OK ]' }
+            'AVISO' { '[ AVISO ]' }
+            'ERRO'  { '[ ERRO ]' }
+            default { '' }
+        }
+        $cor = switch ($s.Tag) {
+            'OK'    { [ConsoleColor]::Green }
+            'AVISO' { [ConsoleColor]::Yellow }
+            'ERRO'  { [ConsoleColor]::Red }
+            default { [ConsoleColor]::DarkGray }
+        }
+        Write-Color ("  {0} {1} : {2}" -f $tag.PadRight(9), $s.Item.PadRight(22), $s.Texto) -Color $cor
+    }
+}
+
 # ==============================================================================
 # EXECUCAO DE COMANDOS EXTERNOS
 # Cada comando declara os codigos de retorno aceitaveis: nao existe regra
@@ -292,6 +489,7 @@ function Test-NetRebootPending {
 $script:AdapterCache  = $null
 $script:NetInfoCache  = $null
 $script:FirewallCache = $null
+$script:RouteCache    = $null
 
 function Reset-NetCaches {
     <# Chamado apos operacoes que alteram o estado real da rede, para que a
@@ -299,6 +497,7 @@ function Reset-NetCaches {
     $script:AdapterCache  = $null
     $script:NetInfoCache  = $null
     $script:FirewallCache = $null
+    $script:RouteCache    = $null
 }
 
 function Get-NetworkInventory {
@@ -397,7 +596,9 @@ function Get-NetAdapterFacts {
         # seja, aparecer em Conexoes de Rede - isso inclui os virtuais reais e
         # continua excluindo miniportas WAN e adaptadores de tunel internos.
         $cim = Get-CompartDiskCim -Class Win32_NetworkAdapter -Filter 'NetConnectionID IS NOT NULL'
-        if (@(ConvertTo-NetArray $cim).Count -eq 0) {
+        # Sem o @() redundante: ConvertTo-NetArray ja garante colecao, e envolver
+        # a CHAMADA em @() faz o array chegar como item unico (Count sempre 1).
+        if ((ConvertTo-NetArray $cim).Count -eq 0) {
             $cim = Get-CompartDiskCim -Class Win32_NetworkAdapter -Filter 'PhysicalAdapter=True'
         }
         $cfg = Get-CompartDiskCim -Class Win32_NetworkAdapterConfiguration
@@ -452,6 +653,51 @@ function Get-NetAdapterFacts {
     $out.Indeterminados= @($linhas | Where-Object { $_.ConfigIPv4 -eq 'Indeterminado' -and $_.EstadoNorm -eq 'Healthy' } | ForEach-Object { $_.Interface })
 
     $script:AdapterCache = $out
+    return $out
+}
+
+function Get-NetDefaultRoutes {
+    <# Rotas padrao IPv4 e IPv6. E exatamente a consulta que o diagnostico ja
+       fazia, agora com cache proprio para que a MESMA leitura sirva ao bloco de
+       conectividade e ao bloco de rotas: o numero de chamadas a Get-NetRoute
+       permanece o de antes (uma por familia).
+
+       Destino vem do proprio prefixo consultado, que ja estava em escopo: nao
+       ha consulta adicional nem valor deduzido.
+
+       Devolve { Suportado, Falhou, Rows }. 'Suportado = $false' preserva o
+       comportamento anterior de nao registrar secao alguma quando o cmdlet
+       Get-NetRoute nao existe nesta instalacao. #>
+    [CmdletBinding()] param()
+    if ($script:RouteCache) { return $script:RouteCache }
+
+    $out = [pscustomobject]@{ Suportado = $false; Falhou = $false; Rows = @() }
+    if (-not (Test-CompartDiskCommand 'Get-NetRoute')) {
+        $script:RouteCache = $out
+        return $out
+    }
+    $out.Suportado = $true
+
+    $rotas = New-Object System.Collections.ArrayList
+    $familias = @(
+        @{ Pref = '0.0.0.0/0'; Fam = 'IPv4' }
+        @{ Pref = '::/0';      Fam = 'IPv6' }
+    )
+    foreach ($f in $familias) {
+        $rt = Invoke-SafeCommand { Get-NetRoute -DestinationPrefix $f.Pref -ErrorAction Stop } -Activity ("Get-NetRoute {0}" -f $f.Fam) -Silent
+        if (-not $rt.Success) { $out.Falhou = $true; continue }
+        foreach ($x in (ConvertTo-NetArray $rt.Value)) {
+            [void]$rotas.Add([pscustomobject]@{
+                Familia      = $f.Fam
+                Destino      = $f.Pref
+                Interface    = (Get-NetSafeText $x.InterfaceAlias)
+                ProximoSalto = (Get-NetSafeText $x.NextHop)
+                Metrica      = (Get-NetSafeText $x.RouteMetric)
+            })
+        }
+    }
+    $out.Rows = @($rotas)
+    $script:RouteCache = $out
     return $out
 }
 
@@ -545,12 +791,29 @@ function Show-NetworkInfo {
             -Message ('Nao foi possivel enumerar os adaptadores de rede: {0}' -f (Get-NetSafeText $facts.Detalhe $inv.Detalhe)) `
             -Recommendation 'Validar o servico WMI (winmgmt) e os cmdlets NetTCPIP antes de qualquer intervencao.'
         Set-NetResult 'ERROR' 'inventario de adaptadores indisponivel'
+        Add-NetSintese -Item 'Adaptadores' -Tag 'ERRO' -Texto 'Inventario de adaptadores indisponivel'
+        Write-NetSintese
         return
     }
 
     if ($facts.Ok) {
-        Write-NetLine ''
-        Write-NetTable -Rows $facts.Rows -Property @('Interface', 'Indice', 'EstadoNorm', 'ConfigIPv4', 'Velocidade', 'MTU', 'Virtual')
+        # Projecao SOMENTE de exibicao. $facts.Rows continua intacto: e ele que
+        # alimenta a secao do relatorio e as decisoes que usam EstadoNorm.
+        $adapDisplay = @($facts.Rows | ForEach-Object {
+            [pscustomobject]@{
+                Interface  = $_.Interface
+                Indice     = $_.Indice
+                Estado     = (Get-NetEstadoTexto $_.EstadoNorm)
+                ConfigIPv4 = $_.ConfigIPv4
+                Velocidade = $_.Velocidade
+                MTU        = $_.MTU
+                Virtual    = $_.Virtual
+            }
+        })
+        Write-NetSecao 'ADAPTADORES DE REDE'
+        Write-NetTable -Rows $adapDisplay -Property @('Interface', 'Indice', 'Estado', 'ConfigIPv4', 'Velocidade', 'MTU', 'Virtual')
+        Write-NetNota ("Fonte: {0}  |  {1} instalado(s), {2} conectado(s), {3} desconectado(s), {4} desabilitado(s), {5} virtual(is)" -f `
+            $facts.Fonte, $facts.Instalados, $facts.Conectados, $facts.Desconectados, $facts.Desabilitados, $facts.Virtuais)
         $st = 'OK'
         $resumo = ("{0} instalado(s): {1} conectado(s), {2} desconectado(s), {3} desabilitado(s)" -f `
             $facts.Instalados, $facts.Conectados, $facts.Desconectados, $facts.Desabilitados)
@@ -583,6 +846,14 @@ function Show-NetworkInfo {
                 -Recommendation 'Confirmar cabo, rede sem fio ou se a interface foi desabilitada administrativamente.'
             [void]$niveis.Add('WARN')
         }
+
+        if ($facts.Instalados -eq 0) {
+            Add-NetSintese -Item 'Adaptadores' -Tag 'AVISO' -Texto 'Nenhum adaptador de rede encontrado'
+        } elseif ($facts.Conectados -eq 0) {
+            Add-NetSintese -Item 'Adaptadores' -Tag 'AVISO' -Texto ("Nenhum adaptador conectado ({0} instalado(s))" -f $facts.Instalados)
+        } else {
+            Add-NetSintese -Item 'Adaptadores' -Tag 'OK' -Texto ("{0} de {1} adaptador(es) conectado(s)" -f $facts.Conectados, $facts.Instalados)
+        }
     }
 
     # ------------------------------------------------- configuracao IP detalhada
@@ -594,9 +865,51 @@ function Show-NetworkInfo {
         $avaliacao = New-Object System.Collections.ArrayList
         $sevsIp = New-Object System.Collections.ArrayList
 
+        # ------------------------------------------------- conectividade IPv4
+        # Sintese do caminho efetivo de saida, montada exclusivamente com dados
+        # JA coletados: gateway, DNS e DHCP vem de $inv.Rows (o campo DHCP era
+        # coletado e nunca exibido) e a rota padrao vem da mesma leitura de
+        # Get-NetRoute usada adiante pelo bloco de rotas.
+        $rotasCon = Get-NetDefaultRoutes
+        $comGateway = @($inv.Rows | Where-Object {
+            @(("$($_.Gateway)" -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne 'n/d' }).Count -gt 0
+        })
+        Write-NetSecao 'CONECTIVIDADE IPv4'
+        if (@($comGateway).Count -eq 0) {
+            Write-NetPair 'Gateway padrao'  'Nao configurado'
+            Write-NetPair 'DNS primario'    'Nao configurado'
+            Write-NetPair 'DNS secundario'  'Nao configurado'
+            Write-NetPair 'DHCP'            'Nao informado'
+            Write-NetPair 'Rota padrao'     $(if (-not $rotasCon.Suportado) { 'Nao verificado' } elseif ($rotasCon.Falhou) { 'Nao verificado' } else { 'Nao encontrada' })
+            Write-NetNota 'Nenhuma interface com gateway padrao IPv4: sem saida da rede local por rota padrao.'
+        } else {
+            foreach ($g in $comGateway) {
+                $gws  = @(("$($g.Gateway)" -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne 'n/d' })
+                $dnss = @(("$($g.DNS)"     -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne 'n/d' })
+                $ifn  = Get-NetSafeText $g.Interface
+                $alvos = Get-NetNomesDaInterface -Nome $ifn -Facts $facts
+                $rp   = @($rotasCon.Rows | Where-Object { $_.Familia -eq 'IPv4' -and $alvos -contains "$($_.Interface)" }) | Select-Object -First 1
+                $rpTexto = $(
+                    if ($rp) { ("{0} via {1} (metrica {2})" -f $rp.Destino, $rp.ProximoSalto, $rp.Metrica) }
+                    elseif (-not $rotasCon.Suportado -or $rotasCon.Falhou) { 'Nao verificado' }
+                    else { 'Nao encontrada' }
+                )
+                Write-NetLine ''
+                Write-NetPair 'Interface'      $ifn
+                Write-NetPair 'Gateway padrao' (Get-NetItemLista $gws 0)
+                Write-NetPair 'DNS primario'   (Get-NetItemLista $dnss 0)
+                Write-NetPair 'DNS secundario' (Get-NetItemLista $dnss 1)
+                if (@($dnss).Count -gt 2) { Write-NetPair 'DNS adicionais' ((@($dnss) | Select-Object -Skip 2) -join ', ') }
+                Write-NetPair 'DHCP'           (Get-NetDhcpTexto $g.DHCP)
+                Write-NetPair 'Rota padrao'    $rpTexto
+            }
+        }
+
+        # ------------------------------------------------ detalhe por interface
+        Write-NetSecao 'INTERFACES (DETALHE)'
         foreach ($a in $inv.Rows) {
             Write-NetLine ''
-            Write-NetLine ("  [{0}]  {1}" -f (Get-NetSafeText $a.Estado), (Get-NetSafeText $a.Interface)) 'White'
+            Write-NetLine ("  [{0}]  {1}" -f (Get-NetEstadoTexto (Get-NetEstadoNormalizado $a.Estado)), (Get-NetSafeText $a.Interface)) 'White'
             Write-NetPair 'Descricao'  (Get-NetSafeText $a.Descricao)
             Write-NetPair 'MAC'        (Get-NetSafeText $a.MAC)
             Write-NetPair 'Velocidade' (Get-NetSafeText $a.Velocidade)
@@ -604,6 +917,9 @@ function Show-NetworkInfo {
             Write-NetPair 'IPv6'       (Get-NetSafeText $a.IPv6)
             Write-NetPair 'Gateway'    (Get-NetSafeText $a.Gateway)
             Write-NetPair 'DNS'        (Get-NetSafeText $a.DNS)
+            # DHCP e MTU ja vinham do coletor e nao eram apresentados.
+            Write-NetPair 'DHCP'       (Get-NetDhcpTexto $a.DHCP)
+            Write-NetPair 'MTU'        (Get-NetSafeText $a.MTU)
             Write-NetPair 'Perfil'     (Get-NetSafeText $a.Perfil)
 
             $iface   = Get-NetSafeText $a.Interface
@@ -685,8 +1001,19 @@ function Show-NetworkInfo {
         }
 
         $statusIp = Get-NetWorstSeverity @($sevsIp)
+        $avalDisplay = @($avaliacao | ForEach-Object {
+            [pscustomobject]@{
+                Interface = $_.Interface
+                Estado    = (Get-NetEstadoTexto $_.Estado)
+                IPv4      = $_.IPv4
+                Classe    = $_.Classe
+                Gateway   = $_.Gateway
+                DNS       = $_.DNS
+                Situacao  = (Get-NetSituacaoTexto $_.Situacao)
+            }
+        })
         Write-NetLine ''
-        Write-NetTable -Rows @($avaliacao) -Property @('Interface', 'Estado', 'IPv4', 'Classe', 'Gateway', 'DNS', 'Situacao')
+        Write-NetTable -Rows $avalDisplay -Property @('Interface', 'Estado', 'IPv4', 'Classe', 'Gateway', 'DNS', 'Situacao')
         Add-CompartDiskSection -Title 'Configuracao IP por interface' -Status $statusIp -Rows @($avaliacao) `
             -Summary ("{0} interface(s) com configuracao IP" -f $inv.Total) `
             -Pairs ([ordered]@{
@@ -697,14 +1024,36 @@ function Show-NetworkInfo {
                 'Sem DNS'                 = @($avaliacao | Where-Object { $_.DNS -eq 'nenhum' }).Count
             })
         if (@($sevsIp).Count -gt 0) { [void]$niveis.Add('WARN') }
+
+        Add-NetSintese -Item 'Configuracao IP' -Tag 'OK' -Texto ("{0} interface(s) com configuracao IP" -f $inv.Total)
+        $comRoteavel = @($avaliacao | Where-Object { $_.Classe -match 'Privado|Publico|CGNAT' }).Count
+        $semGw       = @($avaliacao | Where-Object { $_.Gateway -eq 'nenhum' }).Count
+        $semDns      = @($avaliacao | Where-Object { $_.DNS -eq 'nenhum' }).Count
+        if ($comRoteavel -gt 0) {
+            Add-NetSintese -Item 'Endereco IPv4' -Tag 'OK' -Texto ("{0} interface(s) com endereco roteavel" -f $comRoteavel)
+        } else {
+            Add-NetSintese -Item 'Endereco IPv4' -Tag 'AVISO' -Texto 'Nenhuma interface com endereco IPv4 roteavel'
+        }
+        if ($semGw -lt $inv.Total) {
+            Add-NetSintese -Item 'Gateway padrao' -Tag 'OK' -Texto ("Configurado em {0} interface(s)" -f ($inv.Total - $semGw))
+        } else {
+            Add-NetSintese -Item 'Gateway padrao' -Tag 'AVISO' -Texto 'Nenhuma interface com gateway padrao'
+        }
+        if ($semDns -lt $inv.Total) {
+            Add-NetSintese -Item 'DNS' -Tag 'OK' -Texto ("Configurado em {0} interface(s)" -f ($inv.Total - $semDns))
+        } else {
+            Add-NetSintese -Item 'DNS' -Tag 'AVISO' -Texto 'Nenhuma interface com servidor DNS configurado'
+        }
     } elseif ($inv.Ok) {
         Add-CompartDiskSection -Title 'Configuracao IP por interface' -Status WARN -Summary 'Nenhuma interface com configuracao IP'
+        Add-NetSintese -Item 'Configuracao IP' -Tag 'AVISO' -Texto 'Nenhuma interface com configuracao IP'
     } else {
         Add-CompartDiskSection -Title 'Configuracao IP por interface' -Status WARN -Summary 'Consulta nao concluida'
         Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
             -Message ('A configuracao IP detalhada nao pode ser coletada: {0}' -f $inv.Detalhe) `
             -Recommendation 'O restante do diagnostico permanece valido; revalidar os cmdlets NetTCPIP.'
         [void]$niveis.Add('WARN')
+        Add-NetSintese -Item 'Configuracao IP' -Tag 'NENHUM' -Texto 'Nao verificado: a consulta nao concluiu'
     }
 
     # ------------------------------------------------------------- MTU por familia
@@ -725,53 +1074,81 @@ function Show-NetworkInfo {
             if ($rows.Count -gt 0) {
                 Add-CompartDiskSection -Title 'MTU e DHCP por familia' -Status INFO -Rows $rows `
                     -Summary ("{0} interface(s) conectada(s); MTU e apenas diagnostico e nao e alterada por este modulo" -f $rows.Count)
-                Write-NetLine ''
-                Write-NetTable -Rows $rows
+                $protoDisplay = @($rows | ForEach-Object {
+                    [pscustomobject]@{
+                        Interface = $_.Interface
+                        Familia   = $_.Familia
+                        MTU       = $_.MTU
+                        DHCP      = (Get-NetDhcpTexto $_.DHCP)
+                        Estado    = (Get-NetEstadoTexto $_.Estado)
+                    }
+                })
+                Write-NetSecao 'PROTOCOLOS'
+                Write-NetTable -Rows $protoDisplay -Property @('Interface', 'Familia', 'MTU', 'DHCP', 'Estado')
+                Write-NetNota 'MTU e exibida apenas como diagnostico: este modulo nao altera MTU.'
+                if (@($rows | Where-Object { Test-NetMtuLoopback $_.MTU }).Count -gt 0) {
+                    Write-NetNota 'MTU 4294967295 e o valor que o Windows reporta na interface de loopback. Nao indica erro.'
+                }
+                Add-NetSintese -Item 'MTU e DHCP' -Tag 'OK' -Texto ("{0} interface(s) conectada(s) consultada(s)" -f $rows.Count)
             }
         } else {
             Add-CompartDiskSection -Title 'MTU e DHCP por familia' -Status WARN -Summary 'Consulta nao concluida'
             Write-Log WARN 'Nao foi possivel consultar MTU/DHCP por familia de endereco.'
             [void]$niveis.Add('WARN')
+            Add-NetSintese -Item 'MTU e DHCP' -Tag 'NENHUM' -Texto 'Nao verificado: a consulta nao concluiu'
         }
     } else {
         Add-CompartDiskSection -Title 'MTU e DHCP por familia' -Status INFO -Summary 'Cmdlet Get-NetIPInterface indisponivel nesta instalacao'
+        Add-NetSintese -Item 'MTU e DHCP' -Tag 'NENHUM' -Texto 'Nao verificado: Get-NetIPInterface indisponivel'
     }
 
     # --------------------------------------------------------------------- rotas
-    if (Test-CompartDiskCommand 'Get-NetRoute') {
-        $rotas = New-Object System.Collections.ArrayList
-        $familias = @(
-            @{ Pref = '0.0.0.0/0'; Fam = 'IPv4' }
-            @{ Pref = '::/0';      Fam = 'IPv6' }
-        )
-        $falhouRota = $false
-        foreach ($f in $familias) {
-            $rt = Invoke-SafeCommand { Get-NetRoute -DestinationPrefix $f.Pref -ErrorAction Stop } -Activity ("Get-NetRoute {0}" -f $f.Fam) -Silent
-            if (-not $rt.Success) { $falhouRota = $true; continue }
-            foreach ($x in (ConvertTo-NetArray $rt.Value)) {
-                [void]$rotas.Add([pscustomobject]@{
-                    Familia    = $f.Fam
-                    Interface  = (Get-NetSafeText $x.InterfaceAlias)
-                    ProximoSalto = (Get-NetSafeText $x.NextHop)
-                    Metrica    = (Get-NetSafeText $x.RouteMetric)
-                })
-            }
-        }
+    # A leitura vem do cache preenchido pelo bloco de conectividade: mesma
+    # consulta, mesma quantidade de chamadas a Get-NetRoute que antes.
+    $rt = Get-NetDefaultRoutes
+    if ($rt.Suportado) {
+        $rotas      = @($rt.Rows)
+        $falhouRota = $rt.Falhou
         $titulo = 'Rotas padrao (IPv4 e IPv6)'
         if (@($rotas).Count -gt 0) {
+            # As rotas ja eram coletadas e iam para o relatorio, mas nunca eram
+            # apresentadas no console. Passam a ser exibidas com os campos que a
+            # propria consulta ja devolvia.
+            $rotasDisplay = @($rotas | ForEach-Object {
+                [pscustomobject]@{
+                    Destino   = $_.Destino
+                    Familia   = $_.Familia
+                    Gateway   = $_.ProximoSalto
+                    Interface = $_.Interface
+                    Metrica   = $_.Metrica
+                }
+            })
+            Write-NetSecao 'ROTAS'
+            Write-NetTable -Rows $rotasDisplay -Property @('Destino', 'Familia', 'Gateway', 'Interface', 'Metrica')
             # Multiplas rotas padrao sao normais com VPN ou interfaces virtuais.
+            if (@($rotas).Count -gt 1) { Write-NetNota 'Multiplas rotas padrao sao esperadas com VPN ou interfaces virtuais.' }
+            if ($falhouRota) { Write-NetNota 'Uma das familias de endereco nao pode ser consultada: a lista pode estar incompleta.' }
             Add-CompartDiskSection -Title $titulo -Status INFO -Rows @($rotas) `
                 -Summary ("{0} rota(s) padrao; multiplas rotas sao esperadas com VPN ou interfaces virtuais" -f @($rotas).Count)
+            Add-NetSintese -Item 'Rota padrao' -Tag 'OK' -Texto ("{0} rota(s) padrao configurada(s)" -f @($rotas).Count)
         } elseif ($falhouRota) {
+            Write-NetSecao 'ROTAS'
+            Write-NetNota 'Consulta de rotas nao concluida: a existencia de rota padrao nao pode ser confirmada.'
             Add-CompartDiskSection -Title $titulo -Status WARN -Summary 'Consulta de rotas nao concluida'
             [void]$niveis.Add('WARN')
+            Add-NetSintese -Item 'Rota padrao' -Tag 'NENHUM' -Texto 'Nao verificado: a consulta nao concluiu'
         } else {
+            Write-NetSecao 'ROTAS'
+            Write-NetNota 'Nenhuma rota padrao (IPv4 ou IPv6) configurada.'
             Add-CompartDiskSection -Title $titulo -Status WARN -Summary 'Nenhuma rota padrao configurada'
             Add-CompartDiskFinding -Severity WARN -Area 'Rede' `
                 -Message 'Nenhuma rota padrao (IPv4 ou IPv6) esta configurada.' `
                 -Recommendation 'Sem rota padrao nao ha saida para fora da rede local: verificar gateway e concessao DHCP.'
             [void]$niveis.Add('WARN')
+            Add-NetSintese -Item 'Rota padrao' -Tag 'AVISO' -Texto 'Nenhuma rota padrao configurada'
         }
+    } else {
+        Add-NetSintese -Item 'Rota padrao' -Tag 'NENHUM' -Texto 'Nao verificado: Get-NetRoute indisponivel'
     }
 
     # ----------------------------------------------------------- compartilhamentos
@@ -823,11 +1200,32 @@ function Show-NetworkInfo {
         $statusFw = Get-NetWorstSeverity @($sevs)
         Add-CompartDiskSection -Title 'Firewall do Windows' -Status $statusFw -Rows $fw.Perfis -Pairs $pares `
             -Summary ("{0} perfil(is); {1} desabilitado(s)" -f @($fw.Perfis).Count, @($fw.Desabilitados).Count)
-        Write-NetLine ''
-        Write-NetTable -Rows $fw.Perfis
+
+        # Projecao SOMENTE de exibicao: $fw.Perfis, que alimenta a secao do
+        # relatorio e a avaliacao de severidade acima, permanece intacto.
+        $fwDisplay = @($fw.Perfis | ForEach-Object {
+            [pscustomobject]@{
+                Perfil      = (Get-NetSafeText $_.Perfil)
+                Habilitado  = (Get-NetSimNao $_.Habilitado)
+                EmUso       = (Get-NetSimNao $_.PerfilAtivo)
+                Entrada     = (Get-NetAcaoFirewall $_.EntradaPadrao)
+                Saida       = (Get-NetAcaoFirewall $_.SaidaPadrao)
+                Notificacao = (Get-NetSimNao $_.NotificarBloqueio)
+            }
+        })
+        Write-NetSecao 'FIREWALL DO WINDOWS'
+        Write-NetTable -Rows $fwDisplay -Property @('Perfil', 'Habilitado', 'EmUso', 'Entrada', 'Saida', 'Notificacao')
+        foreach ($k in $pares.Keys) { Write-NetPair $k $pares[$k] }
+        if (@($fwDisplay | Where-Object { $_.Entrada -eq 'Nao configurado' -or $_.Saida -eq 'Nao configurado' }).Count -gt 0) {
+            Write-NetNota "'Nao configurado' e o valor NotConfigured do Windows: o perfil nao define a acao e o proprio Windows aplica o padrao. Nao e erro."
+        }
         if (@($sevs).Count -gt 0) { [void]$niveis.Add('WARN') }
         if (@($fw.Desabilitados).Count -eq 0) {
             Add-CompartDiskFinding -Severity OK -Area 'Firewall' -Message 'Todos os perfis do firewall do Windows estao habilitados.'
+            Add-NetSintese -Item 'Firewall' -Tag 'OK' -Texto ("{0} perfil(is), todos habilitados" -f @($fw.Perfis).Count)
+        } else {
+            $tagFw = $(if ($statusFw -eq 'CRIT') { 'ERRO' } else { 'AVISO' })
+            Add-NetSintese -Item 'Firewall' -Tag $tagFw -Texto ("{0} perfil(is) desabilitado(s): {1}" -f @($fw.Desabilitados).Count, (@($fw.Desabilitados) -join ', '))
         }
     } else {
         Add-CompartDiskSection -Title 'Firewall do Windows' -Status WARN -Summary 'Estado dos perfis nao pode ser confirmado'
@@ -835,7 +1233,12 @@ function Show-NetworkInfo {
             -Message ('O estado dos perfis do firewall nao pode ser confirmado: {0}' -f $fw.Detalhe) `
             -Recommendation 'Sem essa leitura nao e possivel afirmar que o firewall esta ativo nem que esta inativo.'
         [void]$niveis.Add('WARN')
+        Write-NetSecao 'FIREWALL DO WINDOWS'
+        Write-NetNota ('Estado dos perfis nao pode ser confirmado: {0}' -f (Get-NetSafeText $fw.Detalhe 'consulta nao concluida'))
+        Add-NetSintese -Item 'Firewall' -Tag 'NENHUM' -Texto 'Nao verificado: o estado dos perfis nao pode ser confirmado'
     }
+
+    Write-NetSintese
 
     if (@($niveis) -contains 'WARN') { Set-NetResult 'WARN' 'diagnostico de rede com pendencias' }
     Write-Log OK 'Diagnostico de rede coletado (nenhuma alteracao aplicada).'
