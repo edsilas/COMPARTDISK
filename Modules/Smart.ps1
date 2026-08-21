@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.5 - Smart.ps1
+ COMPARTDISK 1.4.6 - Smart.ps1
  Desenvolvido por Edsilas
  Acoes: Status | Detail | Volumes | Shadow | Spaces
 #>

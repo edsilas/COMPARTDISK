@@ -1,6 +1,6 @@
 # Guia de Instalação
 
-**COMPARTDISK 1.4.5** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.6** · Desenvolvido por Edsilas
 
 O COMPARTDISK **não tem instalador**. Você baixa, descompacta e executa. Nada é
 gravado permanentemente no sistema, e para remover basta apagar a pasta.
@@ -18,7 +18,7 @@ Acesse https://github.com/edsilas/compartdisk e clique no botão verde **Code**,
 depois em **Download ZIP**.
 
 Se preferir — e é o método recomendado — use a página oficial de *Releases* e baixe o
-pacote da versão 1.4.5:
+pacote da versão 1.4.6:
 
 **https://github.com/edsilas/COMPARTDISK/releases**
 

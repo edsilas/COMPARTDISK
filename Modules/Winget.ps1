@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.5 - Winget.ps1
+ COMPARTDISK 1.4.6 - Winget.ps1
  Desenvolvido por Edsilas
  Diagnostico e preparacao do ambiente WinGet (App Installer).
  Acoes: Menu | Status | Prepare | Repair

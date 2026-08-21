@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.5 - Users.ps1
+ COMPARTDISK 1.4.6 - Users.ps1
  Desenvolvido por Edsilas
  Acoes: List | Groups | Audit | ClearPassword | SetPassword | EnableAdmin | DisableAdmin
  Toda alteracao de conta e registrada no log como evento de seguranca.

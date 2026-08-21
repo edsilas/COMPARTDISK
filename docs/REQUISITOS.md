@@ -1,6 +1,6 @@
 # Requisitos do Sistema
 
-**COMPARTDISK 1.4.5** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.6** · Desenvolvido por Edsilas
 
 ---
 
