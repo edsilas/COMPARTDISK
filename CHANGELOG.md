@@ -9,6 +9,12 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+Sem alterações pendentes.
+
+---
+
+## [1.4.8] — 2026-08-26
+
 Revisão da apresentação em tela da opção **`7` — Discos, Drivers e Auditoria de Hardware**.
 Nenhuma mudança de menu, de fluxo, de parâmetro de automação, de código de saída, de
 esquema de relatório ou de lógica de diagnóstico: muda o que a ferramenta **mostra** do
@@ -69,6 +75,32 @@ Executadas as nove opções da função `7` nos cenários de resultado positivo,
 informação indisponível, item não encontrado e grande volume de dados. Códigos de saída
 inalterados, saída de `-Quiet` idêntica à anterior, relatórios TXT/CSV/JSON/HTML gerados
 normalmente e nenhuma alteração de comportamento fora da função `7`.
+
+### Versão
+
+A numeração passa de `1.4.7` para `1.4.8` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
+`README.md`, no cabeçalho de todos os módulos e de todos os documentos.
+
+`remote.ps1` passa a apontar para a tag `v1.4.8`, com o SHA-256 do pacote publicado fixado
+no próprio script em commit seguinte ao da release — o mesmo procedimento adotado em
+1.4.3, 1.4.4, 1.4.5, 1.4.6 e 1.4.7. Enquanto estiver vazio, o script recorre ao SHA-256
+publicado nas notas da release. Repositório, URLs, endpoints da API e demais validações
+permanecem como estavam: apenas a tag e o hash são atrelados à versão.
+
+A release `v1.4.7` e o pacote publicado nela permanecem **intactos**: a numeração anterior
+continua válida como registro histórico.
+
+O pacote é gerado a partir da própria tag, o que torna o valor reproduzível por qualquer
+pessoa:
+
+```text
+git archive --format=zip --prefix=COMPARTDISK-1.4.8/ v1.4.8 > COMPARTDISK-1.4.8.zip
+```
+
+```text
+COMPARTDISK-1.4.8.zip
+SHA-256: (fixado em commit seguinte ao da release)
+```
 
 ---
 

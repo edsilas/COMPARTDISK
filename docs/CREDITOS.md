@@ -1,6 +1,6 @@
 # Créditos
 
-**COMPARTDISK 1.4.7**
+**COMPARTDISK 1.4.8**
 
 ---
 
@@ -87,6 +87,6 @@ https://github.com/edsilas/compartdisk/issues.
 
 <div align="center">
 
-**COMPARTDISK 1.4.7** — Desenvolvido por Edsilas
+**COMPARTDISK 1.4.8** — Desenvolvido por Edsilas
 
 </div>

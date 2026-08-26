@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.7 - Telemetry.ps1
+ COMPARTDISK 1.4.8 - Telemetry.ps1
  Desenvolvido por Edsilas
  Acoes: Status | Disable | Enable
  Alteracoes reversiveis: a acao Enable restaura o comportamento padrao do Windows.
