@@ -105,7 +105,7 @@ git archive --format=zip --prefix=COMPARTDISK-1.4.7/ v1.4.7 > COMPARTDISK-1.4.7.
 
 ```text
 COMPARTDISK-1.4.7.zip
-SHA-256: (fixado em commit seguinte ao da release)
+SHA-256: 5e3f8daae3ee2aa512c73d9506cc6807ff277f48b0bb54a6cd290dd0b3f524a2
 ```
 
 ---
