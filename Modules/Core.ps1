@@ -1,6 +1,6 @@
 ﻿<#
 ================================================================================
- COMPARTDISK 1.4.6 - Core.ps1
+ COMPARTDISK 1.4.7 - Core.ps1
  Desenvolvido por Edsilas
  Biblioteca central de funcoes reutilizaveis.
  Compativel com Windows PowerShell 5.1 e PowerShell 7.x (pwsh).
@@ -26,7 +26,7 @@ if (-not $Global:CompartDisk) { $Global:CompartDisk = @{} }
 
 $Global:CompartDisk.CoreDir    = $__CompartDiskCoreDir
 $Global:CompartDisk.Root       = Split-Path -Parent $__CompartDiskCoreDir
-$Global:CompartDisk.Version    = '1.4.6'
+$Global:CompartDisk.Version    = '1.4.7'
 $Global:CompartDisk.Product    = 'COMPARTDISK'
 $Global:CompartDisk.Author     = 'Edsilas'
 $Global:CompartDisk.Signature  = 'DESENVOLVIDO POR EDSILAS'
@@ -850,7 +850,12 @@ function Test-WingetAvailability {
     # --- 7. fontes e conectividade -----------------------------------------
     if ($Completo -and ($r.State -eq 'Available' -or $r.State -eq 'Outdated')) {
         try {
-            $src = Invoke-NativeCommand -FilePath $r.Executable -Arguments @('source', 'list', '--accept-source-agreements') -TimeoutSeconds 60
+            # "winget source list" e consulta puramente LOCAL: lista as fontes
+            # configuradas, nao consulta nenhuma delas e por isso nao aceita
+            # --accept-source-agreements. Passa-lo faz o winget recusar a linha
+            # de comando inteira (0x8A150002) e a fonte oficial era dada como
+            # indisponivel em qualquer computador, inclusive nos saudaveis.
+            $src = Invoke-NativeCommand -FilePath $r.Executable -Arguments @('source', 'list') -TimeoutSeconds 60
             $r.SourcesOk = ($src.ExitCode -eq 0 -and $src.StdOut -match '(?im)^\s*winget\s')
             if (-not $r.SourcesOk) { & $anota 'A fonte oficial "winget" nao respondeu a consulta local de fontes.' }
         } catch { $r.SourcesOk = $false; & $anota ('Consulta de fontes falhou: {0}' -f $_.Exception.Message) }

@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.6 - Apps.ps1
+ COMPARTDISK 1.4.7 - Apps.ps1
  Desenvolvido por Edsilas
  Instalacao de aplicativos de suporte tecnico pelo gerenciador de pacotes do
  Windows (winget), a partir de um catalogo declarativo.
@@ -393,6 +393,13 @@ $script:CachePacote  = @{}
 $script:CacheInternet = $null
 $script:Registros    = New-Object System.Collections.ArrayList
 
+# Ultima FALHA de consulta a fonte oficial na pesquisa corrente ($null = nenhuma).
+# Existe para separar "a fonte nao respondeu" de "a fonte respondeu e nao ha
+# pacote com esse nome": as duas coisas produzem lista vazia e nao podem ser
+# contadas ao operador da mesma forma. Get-AppsPesquisa zera no inicio de cada
+# pesquisa; so a tela de "nenhum resultado" consulta.
+$script:CentralFalha = $null
+
 # ------------------------------------------------------------------------------
 # CAMADA WINGET
 # ------------------------------------------------------------------------------
@@ -425,10 +432,17 @@ function Get-WingetContexto {
 function Get-WingetArgsComuns {
     <# Argumentos aplicados a toda invocacao: nunca perguntam nada ao operador e
        nunca aceitam contrato de pacote em nome dele sem que ele tenha escolhido
-       instalar (estes aceites valem para a fonte e para o pacote escolhido). #>
-    [CmdletBinding()] param()
+       instalar (estes aceites valem para a fonte e para o pacote escolhido).
+
+       -SemContratoFonte: "winget source list" e consulta puramente LOCAL - lista
+       as fontes configuradas, nao consulta nenhuma delas e por isso NAO aceita
+       --accept-source-agreements. Passa-lo faz o winget recusar a linha de
+       comando inteira (0x8A150002). Os demais comandos usados aqui (search,
+       list, show, install) aceitam o argumento normalmente. #>
+    [CmdletBinding()] param([switch]$SemContratoFonte)
     $ctx  = Get-WingetContexto
-    $argumentos = @('--accept-source-agreements')
+    $argumentos = @()
+    if (-not $SemContratoFonte) { $argumentos += '--accept-source-agreements' }
     if ($ctx.SemInteracao) { $argumentos += '--disable-interactivity' }
     return $argumentos
 }
@@ -459,7 +473,7 @@ function Test-WingetFonte {
     if (-not $ctx.Available) { return $false }
     if ($null -ne $ctx.SourceOk) { return $ctx.SourceOk }
 
-    $r  = Invoke-WingetComando -Arguments (@('source', 'list') + (Get-WingetArgsComuns)) -TimeoutSeconds 60
+    $r  = Invoke-WingetComando -Arguments (@('source', 'list') + (Get-WingetArgsComuns -SemContratoFonte)) -TimeoutSeconds 60
     $ok = ($r.ExitCode -eq 0 -and $r.StdOut -match '(?im)^\s*winget\s')
     $ctx.SourceOk = $ok
     if (-not $ok) { Write-Log WARN 'A fonte oficial "winget" nao respondeu a consulta local de fontes.' }
@@ -495,19 +509,137 @@ function Get-WingetInstalledVersion {
     return $dados.Version
 }
 
+function ConvertFrom-AppsTabela {
+    <# LEITOR UNICO das tabelas do winget ("search" e "list"). Devolve uma linha
+       por registro, ja dividida em celulas.
+
+       COMO O WINGET DESENHA A TABELA - e o que isto corrige:
+       cada coluna e alinhada a esquerda, preenchida ate a largura da celula mais
+       larga daquela coluna, e separada da seguinte por UM UNICO espaco. Logo, a
+       linha cuja celula preenche a coluna inteira - sempre existe pelo menos
+       uma, e num resultado unico e a unica linha - nao tem nenhuma sequencia de
+       dois espacos entre as colunas:
+
+           Nome                         ID                         Versao
+           ------------------------------------------------------------
+           Microsoft Visual Studio Code Microsoft.VisualStudioCode 1.134.0
+
+       Dividir por "dois ou mais espacos" descartava exatamente essas linhas, em
+       silencio: a pesquisa que devolvia UM pacote devolvia ZERO resultados.
+
+       COMO A DIVISAO E FEITA AGORA - por POSICAO, nunca por rotulo:
+       os rotulos do cabecalho sao traduzidos pelo idioma do Windows, mas a
+       POSICAO em que cada um comeca e a posicao em que a coluna comeca. A regua
+       de tracos separa cabecalho de dados e tambem nao depende de idioma.
+
+       Cada limite ainda e conferido na propria linha: o caractere anterior ao
+       inicio da coluna tem de ser o espaco separador. Nome escrito com caractere
+       de LARGURA DUPLA ("115浏览器") desloca a linha, porque o winget preenche
+       por largura de exibicao e nao por contagem de caracteres - nesse caso a
+       conferencia reprova e a linha cai na divisao por espaco, que nao depende
+       de alinhamento nenhum.
+
+       Alinhada = $true diz ao chamador que as celulas vieram das colunas reais.
+       Com $false as celulas sao palavras soltas, e so o que tiver forma propria
+       (identificador, versao) pode ser afirmado. #>
+    [CmdletBinding()] param([AllowNull()][string]$Texto)
+
+    $linhas = New-Object System.Collections.ArrayList
+    if ([string]::IsNullOrWhiteSpace($Texto)) { return @() }
+
+    $cabecalho = ''
+    $inicios   = @()
+    $dados     = $false
+
+    foreach ($bruta in ($Texto -split "`r?`n")) {
+        $linha = $bruta.TrimEnd()
+        if (-not $dados) {
+            # Texto antes da tabela (contrato de fonte, aviso) nao e cabecalho:
+            # cabecalho e a ultima linha nao vazia antes da regua de tracos.
+            if ($linha.Trim() -match '^-{3,}$') {
+                $dados   = $true
+                $inicios = @(Get-AppsInicioColunas -Cabecalho $cabecalho)
+            } elseif (-not [string]::IsNullOrWhiteSpace($linha)) {
+                $cabecalho = $linha
+            }
+            continue
+        }
+        if ([string]::IsNullOrWhiteSpace($linha)) { continue }
+
+        $celulas   = $null
+        $alinhada  = $false
+        if ($inicios.Count -ge 2 -and (Test-AppsLinhaAlinhada -Linha $linha -Inicios $inicios)) {
+            $celulas  = @(Split-AppsLinhaPorColuna -Linha $linha -Inicios $inicios)
+            $alinhada = $true
+        }
+        if (-not $alinhada) {
+            $celulas = @($linha.Trim() -split '\s+' | Where-Object { $_ -ne '' })
+        }
+        if ($celulas.Count -lt 2) { continue }
+        [void]$linhas.Add([pscustomobject]@{ Campos = $celulas; Alinhada = $alinhada })
+    }
+    return @($linhas)
+}
+
+function Get-AppsInicioColunas {
+    <# Posicao inicial de cada coluna, lida do cabecalho. E a posicao que conta,
+       nunca o texto: "Nome/ID/Versao" e "Name/Id/Version" produzem os mesmos
+       limites. #>
+    [CmdletBinding()] param([AllowNull()][string]$Cabecalho)
+
+    $inicios = New-Object System.Collections.ArrayList
+    if ([string]::IsNullOrWhiteSpace($Cabecalho)) { return @() }
+    for ($i = 0; $i -lt $Cabecalho.Length; $i++) {
+        if ($Cabecalho[$i] -eq ' ') { continue }
+        if ($i -eq 0 -or $Cabecalho[$i - 1] -eq ' ') { [void]$inicios.Add($i) }
+    }
+    return @($inicios)
+}
+
+function Test-AppsLinhaAlinhada {
+    <# $true quando TODOS os limites de coluna caem sobre o espaco separador
+       desta linha. E o que impede aplicar um alinhamento que nao vale para ela -
+       rotulo de cabecalho com espaco no meio, nome de largura dupla, celula
+       truncada pelo console. #>
+    [CmdletBinding()] param([string]$Linha, [int[]]$Inicios)
+
+    for ($k = 1; $k -lt $Inicios.Count; $k++) {
+        $p = $Inicios[$k]
+        if ($p -ge $Linha.Length) { break }   # colunas finais vazias: nada a conferir
+        if ($Linha[$p - 1] -ne ' ') { return $false }
+    }
+    return $true
+}
+
+function Split-AppsLinhaPorColuna {
+    <# Recorta a linha nos limites de coluna. A celula vai do inicio da coluna
+       ate o espaco separador da seguinte. #>
+    [CmdletBinding()] param([string]$Linha, [int[]]$Inicios)
+
+    $celulas = New-Object System.Collections.ArrayList
+    for ($k = 0; $k -lt $Inicios.Count; $k++) {
+        # A primeira celula comeca sempre no inicio da linha: se o cabecalho
+        # vier recuado, nenhum caractere do nome pode ficar de fora.
+        $ini = $(if ($k -eq 0) { 0 } else { $Inicios[$k] })
+        if ($ini -ge $Linha.Length) { [void]$celulas.Add(''); continue }
+        $fim = $(if (($k + 1) -lt $Inicios.Count) { [math]::Min($Inicios[$k + 1] - 1, $Linha.Length) } else { $Linha.Length })
+        if ($fim -le $ini) { [void]$celulas.Add(''); continue }
+        [void]$celulas.Add($Linha.Substring($ini, $fim - $ini).Trim())
+    }
+    return @($celulas)
+}
+
 function Get-WingetLinhaPacote {
     <# Extrai Versao e Disponivel da saida de "winget list". Colunas:
        Nome | Id | Versao | Disponivel (opcional) | Fonte (opcional).
+       A divisao em celulas e do leitor unico (ConvertFrom-AppsTabela).
        Em console estreito o winget trunca celulas com reticencias, entao o ID e
        reconhecido tambem por prefixo truncado. #>
     [CmdletBinding()] param([string]$Texto, [string]$Id)
     if ([string]::IsNullOrWhiteSpace($Texto)) { return $null }
 
-    foreach ($linha in ($Texto -split "`r?`n")) {
-        $l = $linha.Trim()
-        if ([string]::IsNullOrWhiteSpace($l)) { continue }
-        $campos = @([regex]::Split($l, '\s{2,}') | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
-        if ($campos.Count -lt 2) { continue }
+    foreach ($linha in (ConvertFrom-AppsTabela -Texto $Texto)) {
+        $campos = @($linha.Campos)
 
         $idx = -1
         for ($i = 0; $i -lt $campos.Count; $i++) {
@@ -1084,6 +1216,12 @@ function Test-AppsIdentificadorPacote {
     if ($Texto -notmatch '^[A-Za-z0-9][A-Za-z0-9_\+\-\.]*$') { return $false }
     if ($Texto -notmatch '\.') { return $false }
     if ($Texto -notmatch '[A-Za-z]') { return $false }
+    # Versao com sufixo textual ("4.0.0.0-nightly20260509", "8.5.0-1"): tem ponto
+    # e tem letra, mas comeca por segmentos numericos e nunca e um identificador
+    # publicado. Sem esta regra, a coluna de versao passava por identificador
+    # quando o nome preenchia a coluna inteira. Identificador que apenas COMECA
+    # por digitos continua valendo ("7zip.7zip", "115.115Chrome").
+    if ($Texto -match '^\d+(\.\d+)+([\.\-\+].*)?$') { return $false }
     # Celula truncada pelo winget: reticencias em ponto a ponto ('Editor.Pac...')
     # ou o caractere de reticencias, que o regex acima ja recusa.
     if ($Texto -match '\.\.' -or $Texto.EndsWith('.')) { return $false }
@@ -1091,59 +1229,48 @@ function Test-AppsIdentificadorPacote {
 }
 
 function ConvertFrom-AppsTabelaWinget {
-    <# Converte a tabela do "winget search" em itens. Os rotulos do cabecalho sao
-       traduzidos pelo idioma do Windows; a regua de tracos que separa cabecalho
-       de dados, nao. Por isso os dados comecam depois da regua e os campos sao
-       lidos por POSICAO - a mesma regra ja aplicada a "winget list". #>
+    <# Converte a tabela do "winget search" em itens. A divisao em celulas e do
+       leitor unico (ConvertFrom-AppsTabela), que le por POSICAO de coluna e nao
+       depende de rotulo traduzido.
+
+       O identificador e o primeiro campo DEPOIS do nome com forma de
+       identificador, e o nome e tudo o que vem antes dele - a mesma regra da
+       rotina de contingencia em Batch (:FB_CENTRAL_TOKEN, no Launcher). Com as
+       celulas alinhadas isso e apenas confirmar a coluna; sem alinhamento, os
+       campos sao palavras soltas e a forma do identificador e o unico criterio
+       que continua valendo. #>
     [CmdletBinding()] param([AllowNull()][string]$Texto)
 
     $itens = New-Object System.Collections.ArrayList
     if ([string]::IsNullOrWhiteSpace($Texto)) { return @() }
 
     $vistos = @{}
-    $dados  = $false
     $ordem  = 0
-    foreach ($linha in ($Texto -split "`r?`n")) {
-        $l = $linha.Trim()
-        if (-not $dados) {
-            if ($l -match '^-{3,}$') { $dados = $true }
-            continue
-        }
-        if ([string]::IsNullOrWhiteSpace($l)) { continue }
+    foreach ($linha in (ConvertFrom-AppsTabela -Texto $Texto)) {
+        $campos = @($linha.Campos)
 
-        $campos = @([regex]::Split($l, '\s{2,}') | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
-        if ($campos.Count -lt 2) { continue }
-
-        # O primeiro campo e sempre o nome; o identificador e o primeiro campo
-        # seguinte com forma de identificador.
-        $nome = $campos[0]
-        $id   = $null
-        $pos  = -1
+        $pos = -1
         for ($i = 1; $i -lt $campos.Count; $i++) {
-            if (Test-AppsIdentificadorPacote $campos[$i]) { $id = $campos[$i]; $pos = $i; break }
+            if (Test-AppsIdentificadorPacote $campos[$i]) { $pos = $i; break }
         }
+        if ($pos -lt 0) { continue }
 
-        # Quando o nome preenche a coluna inteira, sobra UM espaco entre ele e o
-        # identificador e os dois chegam no mesmo campo. Recuperar o ultimo termo
-        # do campo evita descartar um pacote legitimo - foi o que escondia o
-        # "Microsoft 365 Apps for enterprise" numa pesquisa por "office".
-        if (-not $id) {
-            $partes = @($nome -split '\s+' | Where-Object { $_ -ne '' })
-            if ($partes.Count -ge 2 -and (Test-AppsIdentificadorPacote $partes[-1])) {
-                $id   = $partes[-1]
-                $nome = ($partes[0..($partes.Count - 2)] -join ' ')
-                $pos  = 0
-            }
-        }
-        if (-not $id) { continue }
+        $id   = $campos[$pos]
+        $nome = (@($campos[0..($pos - 1)]) -join ' ').Trim()
+        if ([string]::IsNullOrWhiteSpace($nome)) { $nome = $id }
 
         # Colunas seguintes ao identificador: a versao e, na ultima posicao, a
         # fonte. Sao informativas - a classificacao usa nome, pacote e editor -,
-        # entao campo ausente ou fora do lugar nunca invalida o resultado.
+        # entao campo ausente ou fora do lugar nunca invalida o resultado. A
+        # fonte so e afirmada com as colunas alinhadas: em palavras soltas, o
+        # ultimo termo pode ser o valor da coluna de correspondencia
+        # ("Tag: chrome") e nao um nome de fonte.
         $versao = ''
         $fonte  = ''
-        $ultimo = $campos[$campos.Count - 1]
-        if ($campos.Count -gt ($pos + 2) -and $ultimo -match '^[A-Za-z][A-Za-z0-9\-]*$') { $fonte = $ultimo }
+        if ($linha.Alinhada -and $campos.Count -gt ($pos + 2)) {
+            $ultimo = $campos[$campos.Count - 1]
+            if ($ultimo -match '^[A-Za-z][A-Za-z0-9\-]*$') { $fonte = $ultimo }
+        }
         if ($campos.Count -gt ($pos + 1)) {
             $candidato = $campos[$pos + 1]
             if ($candidato -ne $fonte -and $candidato -notmatch '\s') { $versao = $candidato }
@@ -1192,8 +1319,21 @@ function Search-AppsWinget {
 
     $r = Invoke-WingetComando -Arguments $argumentos -TimeoutSeconds 120
     if ($r.ExitCode -ne 0) {
-        # "Nenhum pacote encontrado" tambem chega aqui: e resultado vazio, nao
-        # falha. O motivo fica no log para quem for investigar.
+        # Duas coisas muito diferentes chegam aqui, e uma nao pode ser contada
+        # como a outra: "a fonte respondeu e nao ha pacote com esse nome"
+        # (0x8A150014) e resultado vazio; qualquer outro codigo e FALHA da
+        # consulta, e dizer ao operador que o aplicativo nao existe seria falso.
+        # A traducao do codigo e a mesma da instalacao (Get-WingetResult).
+        if ($r.ExitCode -eq -1) {
+            # Nao houve codigo do winget: o processo nao executou ou nao terminou
+            # (indisponivel, tempo limite). A mensagem do proprio erro e o dado
+            # mais util que existe.
+            $script:CentralFalha = New-AppsResultado 'ERRO' '' $(
+                if ($r.StdErr) { [string]$r.StdErr } else { 'Nao foi possivel executar o winget.' })
+        } else {
+            $res = Get-WingetResult -ExitCode $r.ExitCode
+            if ($res.Status -ne 'NAO ENCONTRADO') { $script:CentralFalha = $res }
+        }
         Write-Log DEBUG ("Central: winget {0} -> codigo {1}" -f ($argumentos -join ' '), $r.ExitCode) -NoConsole
         return @()
     }
@@ -1393,6 +1533,9 @@ function Get-AppsPesquisa {
        terceira so quando a primeira nao trouxe absolutamente nada. #>
     [CmdletBinding()] param([Parameter(Mandatory)][string]$Termo, [int]$Maximo = 0)
 
+    # Cada pesquisa comeca sem falha herdada da anterior.
+    $script:CentralFalha = $null
+
     $t = Get-AppsTermoNormalizado $Termo
     if ($t.Length -eq 0) { return @() }
     $palavras = @(Get-AppsPalavras -Texto $Termo)
@@ -1409,6 +1552,11 @@ function Get-AppsPesquisa {
     # A palavra do operador e SEMPRE pesquisada: um apelido nunca sequestra a
     # intencao de quem digitou.
     $itens = @(Search-AppsWinget -Consulta $Termo)
+    # O que decide a terceira consulta e o resultado da PRIMEIRA, nao o do
+    # conjunto: a sondagem por identificador traz um pacote so, e "7 zip" nao
+    # pode deixar de mostrar as demais ferramentas de compactacao apenas porque
+    # o pacote principal ja foi confirmado.
+    $achouPeloNome = ($itens.Count -gt 0)
 
     if ($apelido) {
         # Uma sondagem no maximo, sempre no identificador principal: as demais
@@ -1417,8 +1565,8 @@ function Get-AppsPesquisa {
         if (-not (@($itens) | Where-Object { $_.Id -eq $principal })) {
             $itens = @($itens) + @(Search-AppsWinget -IdExato $principal)
         }
-        if (@($itens).Count -eq 0) {
-            $itens = @(Search-AppsWinget -Consulta $apelido.Entrada.Nome)
+        if (-not $achouPeloNome) {
+            $itens = @($itens) + @(Search-AppsWinget -Consulta $apelido.Entrada.Nome)
         }
     }
 
@@ -2203,17 +2351,41 @@ function Write-CentralItem {
 }
 
 function Show-CentralSemResultado {
-    <# Nenhum resultado. Distingue "nao existe com esse nome" de "nao deu para
-       consultar": sem rede a fonte oficial nao responde, e dizer que o
-       aplicativo nao existe seria falso. Devolve $true para pesquisar de novo. #>
-    param([string]$Termo)
+    <# Lista vazia. Sao TRES desfechos diferentes, e nenhum pode ser contado como
+       o outro:
+         - a fonte respondeu e nao ha pacote com esse nome  -> pesquisa sem resultado
+         - a consulta a fonte falhou ($Falha)               -> erro de pesquisa
+         - o computador esta sem conectividade              -> nao deu para consultar
+       Dizer "esse aplicativo nao existe" quando a fonte nao respondeu seria
+       falso. Devolve $true para pesquisar de novo. #>
+    param([string]$Termo, [object]$Falha)
 
     Write-AppsCabecalho 'CENTRAL DE APLICATIVOS'
     Write-Color ("  Pesquisa: {0}" -f $Termo) -Color Gray
     Write-Color ''
     $net = $null
     try { $net = Test-InternetCache } catch { }
-    if ($net -and -not $net.Online) {
+    if ($Falha) {
+        Write-Log ERR ("Nao foi possivel consultar a fonte oficial do WinGet: {0}" -f $Falha.Message)
+        switch ($Falha.Status) {
+            'FONTE INDISPONIVEL' {
+                Write-Color '  A fonte oficial do WinGet não respondeu neste computador.' -Color DarkGray
+                Write-Color '  No menu Aplicativos, a opção [1] Verificar / preparar WinGet diagnostica' -Color DarkGray
+                Write-Color '  e prepara o ambiente.' -Color DarkGray
+            }
+            'SEM INTERNET' {
+                Write-Color '  Verifique a conexão com a internet e tente novamente.' -Color DarkGray
+            }
+            'ACESSO NEGADO' {
+                Write-Color '  A consulta foi recusada por permissão ou por política deste computador.' -Color DarkGray
+            }
+            default {
+                Write-Color '  A pesquisa não chegou a ser concluída. Tente novamente; se continuar,' -Color DarkGray
+                Write-Color '  use a opção [1] Verificar / preparar WinGet, no menu Aplicativos.' -Color DarkGray
+            }
+        }
+        if ($Falha.Code) { Write-Color ("  Codigo do winget: {0}" -f $Falha.Code) -Color DarkGray }
+    } elseif ($net -and -not $net.Online) {
         Write-Log WARN 'Nao foi possivel consultar a fonte oficial: sem conectividade.'
         Write-Color '  Verifique a conexão com a internet e tente novamente.' -Color DarkGray
     } else {
@@ -2393,11 +2565,20 @@ function Show-CentralAplicativos {
         } catch {
             Write-Log ERR 'Nao foi possivel concluir a pesquisa de aplicativos.' -ErrorRecord $_ -NoConsole
             $encontrados = @()
+            # Excecao na pesquisa e FALHA, nunca "nenhum resultado". Uma falha de
+            # consulta ja registrada e mais especifica e continua valendo.
+            if (-not $script:CentralFalha) { $script:CentralFalha = New-AppsResultado 'ERRO' '' $_.Exception.Message }
         }
 
         if ($encontrados.Count -eq 0) {
-            Write-Log INFO ("Central: nenhum resultado para '{0}'." -f $termo) -NoConsole
-            if (-not (Show-CentralSemResultado -Termo $termo)) { return }
+            $falha = $script:CentralFalha
+            if ($falha) {
+                Write-Log INFO ("Central: pesquisa de '{0}' nao concluida - {1} {2} {3}" -f `
+                    $termo, $falha.Status, $falha.Code, $falha.Message) -NoConsole
+            } else {
+                Write-Log INFO ("Central: nenhum resultado para '{0}'." -f $termo) -NoConsole
+            }
+            if (-not (Show-CentralSemResultado -Termo $termo -Falha $falha)) { return }
             continue
         }
 

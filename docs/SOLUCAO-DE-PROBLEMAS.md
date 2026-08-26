@@ -1,6 +1,6 @@
 # Guia de Solução de Problemas
 
-**COMPARTDISK 1.4.6** · Desenvolvido por Edsilas
+**COMPARTDISK 1.4.7** · Desenvolvido por Edsilas
 
 Problemas organizados por sintoma. Comece pelo que você está vendo.
 

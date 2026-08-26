@@ -13,6 +13,103 @@ Sem alterações pendentes.
 
 ---
 
+## [1.4.7] — 2026-08-26
+
+Correções na **Central de Aplicativos** (`2` › `2`) e no diagnóstico da fonte oficial do
+Winget. Nenhuma mudança de menu, de fluxo, de contrato de automação ou de código de saída.
+
+### Corrigido
+
+- **A pesquisa da Central não retornava resultados.** A consulta que devolvia poucos
+  pacotes — o caso normal de quem procura um programa pelo nome — chegava vazia à tela, e
+  a busca pelo identificador exato devolvia zero itens em qualquer computador.
+
+  O Winget separa as colunas da tabela por **um único espaço** quando a célula preenche a
+  largura da coluna, e o leitor da Central exigia dois. Essas linhas eram descartadas em
+  silêncio: numa pesquisa ampla sumia uma; numa pesquisa precisa não sobrava nenhuma, e a
+  Central informava *nenhum aplicativo encontrado* com a fonte respondendo normalmente.
+  Era o que escondia o Visual Studio Code de uma pesquisa por `vs code`, um dos exemplos
+  oferecidos na própria tela.
+
+  A tabela passa a ser lida por **posição de coluna**, declarada pelo cabeçalho — posição,
+  nunca rótulo traduzido —, com conferência do alinhamento em cada linha e recurso à
+  divisão por espaço quando ele não vale, como em nome escrito com caractere de largura
+  dupla. `winget list` usa o mesmo leitor: a versão instalada deixa de ser exibida como
+  `n/d` em pacote consultado individualmente, no catálogo e na Central.
+
+- **Número de versão podia ser oferecido como identificador de pacote.** Uma versão com
+  sufixo textual (`4.0.0.0-nightly20260509`) tem ponto e tem letra e passava na validação
+  de identificador, levando a instalação a um pacote que não existe. A forma passa a ser
+  recusada; identificador que apenas começa por dígitos continua válido (`7zip.7zip`).
+
+- **A fonte oficial do Winget era relatada como indisponível em qualquer computador.**
+  `winget source list` é consulta local e não aceita `--accept-source-agreements`: com o
+  argumento, o Winget recusa a linha de comando inteira. Em consequência, o diagnóstico e
+  o relatório mostravam `Fonte oficial: indisponível` em máquina saudável, o menu de
+  aplicativos registrava o aviso a cada execução, e a etapa **Fontes disponíveis** da
+  bateria de validação nunca passava — o que impedia a preparação do Winget de confirmar
+  sucesso mesmo após um reparo bem-sucedido.
+
+- **Pesquisa sem resultado e falha de pesquisa eram tratadas como a mesma coisa.** Apenas
+  `0x8A150014` significa “nenhum pacote com esse nome”; fonte indisponível, ausência de
+  conectividade, recusa por permissão, tempo limite e falha de execução passam a ser
+  apresentados como falha da consulta, com o código do Winget e a orientação
+  correspondente. Nenhuma instalação é registrada nesses casos.
+
+- **A consulta de reserva da pesquisa deixara de ser feita.** Com apelido reconhecido, a
+  busca pelo nome do apelido volta a ocorrer sempre que a primeira consulta — a palavra
+  digitada — não traz nada, somando-se ao resultado em vez de substituí-lo. `7 zip` volta
+  a mostrar as demais ferramentas de compactação ao lado do 7-Zip.
+
+### Validação
+
+Executada em Windows 11 Pro 22631, Windows PowerShell 5.1, `pt-BR`, com Winget v1.29.290
+e sem elevação:
+
+- 14 pesquisas reais na fonte oficial: **805 de 805 linhas** devolvidas pelo Winget viram
+  resultado, e todo identificador oferecido é aprovado na validação anterior à instalação;
+- busca por identificador exato de cinco pacotes, que antes devolvia zero;
+- pesquisa sem resultado distinguida de falha de consulta;
+- instalação real pelo fluxo da Central, confirmada depois com `winget list`, com remoção
+  do pacote ao final do teste;
+- dez classes de código de saída do Winget, incluindo código desconhecido, tempo limite e
+  cancelamento — nenhuma delas produz falso sucesso;
+- ações `List`, `Install`, `InstallCategory` e `Central` de `Apps.ps1`, e `Status` e
+  `Menu` de `Winget.ps1`, com os códigos de saída inalterados;
+- bateria `Test-WingetHealth` completa.
+
+Não foram exercitados neste ambiente: Windows recém-instalado, Winget anterior à 1.4,
+fontes ainda não inicializadas, execução elevada e a rotina Batch de contingência
+completa.
+
+### Versão
+
+A numeração passa de `1.4.6` para `1.4.7` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
+`README.md`, no cabeçalho de todos os módulos e de todos os documentos.
+
+`remote.ps1` passa a apontar para a tag `v1.4.7`, com o SHA-256 do pacote publicado fixado
+no próprio script em commit seguinte ao da release — o mesmo procedimento adotado em
+1.4.3, 1.4.4, 1.4.5 e 1.4.6. Enquanto estiver vazio, o script recorre ao SHA-256 publicado
+nas notas da release. Repositório, URLs, endpoints da API e demais validações permanecem
+como estavam: apenas a tag e o hash são atrelados à versão.
+
+A release `v1.4.6` e o pacote publicado nela permanecem **intactos**: a numeração anterior
+continua válida como registro histórico.
+
+O pacote é gerado a partir da própria tag, o que torna o valor reproduzível por qualquer
+pessoa:
+
+```text
+git archive --format=zip --prefix=COMPARTDISK-1.4.7/ v1.4.7 > COMPARTDISK-1.4.7.zip
+```
+
+```text
+COMPARTDISK-1.4.7.zip
+SHA-256: (fixado em commit seguinte ao da release)
+```
+
+---
+
 ## [1.4.6] — 2026-08-21
 
 Correções no **Diagnóstico de Adaptadores, DNS, DHCP, MTU e Rotas** (`3` › `4`), que em
