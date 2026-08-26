@@ -170,8 +170,8 @@ function Show-Memoria {
     # Projecao para exibicao: as colunas numericas cruas existem para o calculo e
     # para a validacao, nao para poluir a tabela do relatorio.
     $vis = @($mods | Select-Object Slot, Capacidade, Velocidade, VelocidadeConfigurada, Tipo, Fabricante, PartNumber, NumeroSerie)
-    Write-Color ''
-    $vis | Format-Table -AutoSize | Out-String -Width 180 | Write-Output
+    Write-CompartDiskTitulo 'MODULOS DE MEMORIA'
+    Write-CompartDiskTable -Rows $vis
 
     $resumo = "$($mods.Count) modulo(s) instalado(s)"
     if ($bytes -gt 0) { $resumo += " | $(ConvertTo-CompartDiskSize $bytes) somados nos modulos" }
@@ -248,8 +248,8 @@ function Show-Gpu {
                 Status      = $(if ("$($a.Status)" -ne '') { $a.Status } else { 'n/d' })
             })
         }
-        Write-Color ''
-        $rows | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+        Write-CompartDiskTitulo 'ADAPTADORES GRAFICOS'
+        Write-CompartDiskTable -Rows @($rows)
 
         $fisicas = @($rows | Where-Object { $_.Tipo -eq 'Fisico (PCI)' }).Count
         Add-CompartDiskSection -Title 'Adaptadores graficos' -Status OK -Rows @($rows) `
@@ -272,8 +272,8 @@ function Show-Gpu {
     if (-not $rm.Ok) {
         Add-HwLimitacao -Area 'GPU' -Mensagem 'Monitores nao enumerados: WmiMonitorID indisponivel.' -Recomendacao 'Classe exposta apenas por alguns drivers de video; ausencia nao indica defeito.'
     } elseif ($m.Count -gt 0) {
-        Write-Color ''
-        $m | Format-Table -AutoSize | Out-String -Width 180 | Write-Output
+        Write-CompartDiskTitulo 'MONITORES'
+        Write-CompartDiskTable -Rows $m
         Add-CompartDiskSection -Title 'Monitores' -Status INFO -Rows $m
     } else {
         Add-CompartDiskSection -Title 'Monitores' -Status INFO -Summary 'Nenhum monitor publicado por WmiMonitorID'
@@ -330,11 +330,17 @@ function Show-Dispositivos {
         })
     }
     if ($usb.Count -gt 0) {
-        Add-CompartDiskSection -Title 'Dispositivos USB' -Status INFO -Rows @($usb | Select-Object -First 40) `
+        # Antes, so a CONTAGEM ia para a tela e a secao levava apenas os 40
+        # primeiros: nome, fabricante, VID/PID, estado e DeviceID de cada
+        # dispositivo existiam, iam para o relatorio truncados e nunca eram
+        # exibidos. A opcao [7][6] do menu promete o inventario de USB e PCI.
+        Add-CompartDiskSection -Title 'Dispositivos USB' -Status INFO -Rows @($usb) `
             -Summary ("{0} dispositivo(s) | metodo: Win32_PnPEntity (DeviceID USB)" -f $usb.Count)
-        Write-Color ("`n  Dispositivos USB: {0}" -f $usb.Count) -Color White
+        Write-CompartDiskTitulo ("DISPOSITIVOS USB ({0})" -f $usb.Count)
+        Write-CompartDiskTable -Rows @($usb)
     } else {
         Add-CompartDiskSection -Title 'Dispositivos USB' -Status INFO -Summary 'Nenhum dispositivo USB enumerado'
+        Write-Log INFO 'Nenhum dispositivo USB enumerado.'
     }
 
     # ---------------------------------------------------------------- PCI
@@ -348,8 +354,12 @@ function Show-Dispositivos {
         })
     }
     if ($pci.Count -gt 0) {
-        Add-CompartDiskSection -Title 'Dispositivos PCI' -Status INFO -Rows @($pci | Select-Object -First 40) -Summary "$($pci.Count) dispositivo(s)"
-        Write-Color ("  Dispositivos PCI: {0}" -f $pci.Count) -Color White
+        Add-CompartDiskSection -Title 'Dispositivos PCI' -Status INFO -Rows @($pci) -Summary "$($pci.Count) dispositivo(s)"
+        Write-CompartDiskTitulo ("DISPOSITIVOS PCI ({0})" -f $pci.Count)
+        Write-CompartDiskTable -Rows @($pci)
+    } else {
+        Add-CompartDiskSection -Title 'Dispositivos PCI' -Status INFO -Summary 'Nenhum dispositivo PCI enumerado'
+        Write-Log INFO 'Nenhum dispositivo PCI enumerado.'
     }
 
     # -------------------------------------------------------- Controladoras
@@ -375,7 +385,15 @@ function Show-Dispositivos {
         })
     }
     if ($ctrl.Count -gt 0) {
-        Add-CompartDiskSection -Title 'Controladoras e barramentos' -Status INFO -Rows @($ctrl | Select-Object -First 40) -Summary "$($ctrl.Count) controladora(s)"
+        # Estas nunca chegaram a tela: eram coletadas, truncadas em 40 e enviadas
+        # apenas ao relatorio.
+        Add-CompartDiskSection -Title 'Controladoras e barramentos' -Status INFO -Rows @($ctrl) `
+            -Summary ("{0} controladora(s) - classificacao por funcao dos dispositivos PCI ja listados, nao hardware adicional" -f $ctrl.Count)
+        Write-CompartDiskTitulo ("CONTROLADORAS E BARRAMENTOS ({0})" -f $ctrl.Count)
+        # Sao os MESMOS dispositivos PCI acima, classificados por funcao. Sem esta
+        # linha, as duas tabelas somadas sugerem o dobro de equipamento instalado.
+        Write-Color '  Classificacao por funcao dos dispositivos PCI ja listados; nao sao dispositivos adicionais.' -Color DarkGray
+        Write-CompartDiskTable -Rows @($ctrl)
     }
 
     # ------------------------------------------------- Dispositivos com erro
@@ -402,44 +420,68 @@ function Show-Dispositivos {
 
     if ($prob.Count -eq 0) {
         Write-Log OK 'Nenhum dispositivo com erro no Gerenciador de Dispositivos.'
-        Add-CompartDiskFinding -Severity OK -Area 'Dispositivos' -Message 'Nenhum dispositivo com codigo de erro.'
-        return
+        Add-CompartDiskSection -Title 'Dispositivos com problema' -Status OK `
+            -Summary 'Nenhum dispositivo com codigo de erro' `
+            -Pairs ([ordered]@{
+                'Dispositivos examinados'         = $todos.Count
+                'Com codigo de erro'              = 0
+                'Base da verificacao'             = 'Win32_PnPEntity (ConfigManagerErrorCode)'
+            })
+        Add-CompartDiskFinding -Severity OK -Area 'Dispositivos' -Message 'Nenhum dispositivo com codigo de erro.' `
+            -Recommendation 'A ausencia de codigo de erro nao garante que todos os drivers estejam na versao ideal, apenas que nenhum dispositivo esta sinalizando falha.'
+    }
+    else {
+        # Severidade POR CODIGO, alinhada a classificacao canonica do Drivers.ps1.
+        # Antes, todo codigo diferente de zero virava CRIT com a recomendacao
+        # "reinstalar o driver": um dispositivo deliberadamente desabilitado (22) ou
+        # simplesmente desconectado (45) - situacoes normais - eram publicados como
+        # falha critica, e o mesmo equipamento recebia severidades contraditorias de
+        # Hardware.ps1 e Drivers.ps1.
+        $ordem = @($prob | Sort-Object -Property @{ Expression = { $script:PesoSeveridade["$($_.Severidade)"] }; Descending = $true }, Dispositivo)
+        Write-CompartDiskTitulo ("DISPOSITIVOS COM PROBLEMA ({0})" -f $ordem.Count)
+        Write-CompartDiskTable -Rows @($ordem)
+
+        $criticos = @($ordem | Where-Object { $_.Severidade -eq 'CRIT' })
+        $avisos   = @($ordem | Where-Object { $_.Severidade -eq 'WARN' })
+        $infos    = @($ordem | Where-Object { $_.Severidade -eq 'INFO' })
+
+        $statusSecao = if ($criticos.Count -gt 0) { 'CRIT' } elseif ($avisos.Count -gt 0) { 'WARN' } else { 'INFO' }
+        Add-CompartDiskSection -Title 'Dispositivos com problema' -Status $statusSecao -Rows @($ordem) `
+            -Summary ("{0} com codigo de erro | {1} critico(s), {2} aviso(s), {3} informativo(s)" -f $prob.Count, $criticos.Count, $avisos.Count, $infos.Count)
+
+        $acionaveis = @(@($criticos) + @($avisos))
+        foreach ($p in ($acionaveis | Select-Object -First 10)) {
+            Add-CompartDiskFinding -Severity $p.Severidade -Area 'Dispositivos' `
+                -Message ("{0}: {1} (codigo {2}) | ID: {3}" -f $p.Dispositivo, $p.Problema, $p.CodigoErro, $p.DeviceID) `
+                -Recommendation 'Diagnostico detalhado e acao no modulo de drivers (Drivers.ps1 -Action Problems).'
+        }
+        # O corte de 10 achados era silencioso: quem lesse o resumo concluiria que
+        # existiam 10 dispositivos acionaveis. A tabela acima ja traz todos.
+        if ($acionaveis.Count -gt 10) {
+            Add-CompartDiskFinding -Severity INFO -Area 'Dispositivos' `
+                -Message ("Detalhados os 10 primeiros de {0} dispositivos acionaveis; todos constam da tabela em tela e da secao do relatorio." -f $acionaveis.Count)
+        }
+        if ($infos.Count -gt 0) {
+            Add-CompartDiskFinding -Severity INFO -Area 'Dispositivos' `
+                -Message ("{0} dispositivo(s) desabilitado(s) ou nao conectado(s): {1}." -f $infos.Count, ((@($infos | Select-Object -First 5).Dispositivo) -join ', ')) `
+                -Recommendation 'Condicao normal quando a desativacao ou a remocao foi intencional.'
+        }
+        if ($criticos.Count -gt 0 -or $avisos.Count -gt 0) { Set-HwResultado 'WARN' }
     }
 
-    # Severidade POR CODIGO, alinhada a classificacao canonica do Drivers.ps1.
-    # Antes, todo codigo diferente de zero virava CRIT com a recomendacao
-    # "reinstalar o driver": um dispositivo deliberadamente desabilitado (22) ou
-    # simplesmente desconectado (45) - situacoes normais - eram publicados como
-    # falha critica, e o mesmo equipamento recebia severidades contraditorias de
-    # Hardware.ps1 e Drivers.ps1.
-    $ordem = @($prob | Sort-Object -Property @{ Expression = { $script:PesoSeveridade["$($_.Severidade)"] }; Descending = $true }, Dispositivo)
-    Write-Color ''
-    $ordem | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
-
-    $criticos = @($ordem | Where-Object { $_.Severidade -eq 'CRIT' })
-    $avisos   = @($ordem | Where-Object { $_.Severidade -eq 'WARN' })
-    $infos    = @($ordem | Where-Object { $_.Severidade -eq 'INFO' })
-
-    $statusSecao = if ($criticos.Count -gt 0) { 'CRIT' } elseif ($avisos.Count -gt 0) { 'WARN' } else { 'INFO' }
-    Add-CompartDiskSection -Title 'Dispositivos com problema' -Status $statusSecao -Rows @($ordem) `
-        -Summary ("{0} com codigo de erro | {1} critico(s), {2} aviso(s), {3} informativo(s)" -f $prob.Count, $criticos.Count, $avisos.Count, $infos.Count)
-
-    foreach ($p in (@($criticos) + @($avisos) | Select-Object -First 10)) {
-        Add-CompartDiskFinding -Severity $p.Severidade -Area 'Dispositivos' `
-            -Message ("{0}: {1} (codigo {2}) | ID: {3}" -f $p.Dispositivo, $p.Problema, $p.CodigoErro, $p.DeviceID) `
-            -Recommendation 'Diagnostico detalhado e acao no modulo de drivers (Drivers.ps1 -Action Problems).'
-    }
-    if ($infos.Count -gt 0) {
-        Add-CompartDiskFinding -Severity INFO -Area 'Dispositivos' `
-            -Message ("{0} dispositivo(s) desabilitado(s) ou nao conectado(s): {1}." -f $infos.Count, ((@($infos | Select-Object -First 5).Dispositivo) -join ', ')) `
-            -Recommendation 'Condicao normal quando a desativacao ou a remocao foi intencional.'
-    }
-    if ($criticos.Count -gt 0 -or $avisos.Count -gt 0) { Set-HwResultado 'WARN' }
-
-    # Impressoras
+    # Impressoras. Ficavam depois de um "return" que disparava sempre que nao
+    # havia dispositivo com erro: no caso mais comum - maquina sadia - elas eram
+    # coletadas e descartadas sem chegar nem a tela nem ao relatorio.
     $ri = Get-HwDado 'Printers' { Get-CompartDiskPrinters }
-    if ($ri.Ok -and (ConvertTo-HwArray $ri.Valor).Count -gt 0) {
-        Add-CompartDiskSection -Title 'Impressoras' -Status INFO -Rows (ConvertTo-HwArray $ri.Valor)
+    $imp = (ConvertTo-HwArray $ri.Valor)
+    if (-not $ri.Ok) {
+        Add-HwLimitacao -Area 'Dispositivos' -Mensagem 'Impressoras nao enumeradas: a consulta falhou.' -Recomendacao 'Validar o servico de spool de impressao (spooler) e o repositorio WMI.'
+    } elseif ($imp.Count -gt 0) {
+        Add-CompartDiskSection -Title 'Impressoras' -Status INFO -Rows $imp -Summary "$($imp.Count) impressora(s)"
+        Write-CompartDiskTitulo ("IMPRESSORAS ({0})" -f $imp.Count)
+        Write-CompartDiskTable -Rows $imp
+    } else {
+        Add-CompartDiskSection -Title 'Impressoras' -Status INFO -Summary 'Nenhuma impressora instalada'
     }
 }
 
@@ -500,7 +542,8 @@ function Show-Temperatura {
         $script:result = 'UNSUPPORTED'
         return
     }
-    $rows | Format-Table -AutoSize | Out-String -Width 160 | Write-Output
+    Write-CompartDiskTitulo ('SENSORES TERMICOS ({0})' -f $rows.Count)
+    Write-CompartDiskTable -Rows @($rows)
     Add-CompartDiskSection -Title 'Sensores termicos' -Status OK -Rows @($rows) `
         -Summary ("{0} leitura(s) valida(s){1}" -f $rows.Count, $(if ($descartadas -gt 0) { " | $descartadas descartada(s) fora de faixa" } else { '' }))
     Write-Log OK "$($rows.Count) leitura(s) termica(s) obtida(s)."
@@ -542,6 +585,8 @@ function Show-Plataforma {
         'Hyper-V presente'  = $hyperv
         'Bateria'           = $bateria
     }
+    Write-Color ''
+    Write-Color '  PLATAFORMA E SEGURANCA' -Color White
     foreach ($k in $pares.Keys) { Write-CompartDiskKeyValue $k $pares[$k] -Pad 20 }
     Add-CompartDiskSection -Title 'Plataforma e virtualizacao' -Status OK -Pairs $pares
 }
@@ -570,8 +615,8 @@ function Show-Armazenamento {
     } else {
         $discos = (ConvertTo-HwArray $rd.Valor)
         if ($discos.Count -gt 0) {
-            Write-Color ''
-            $discos | Format-Table -AutoSize | Out-String -Width 220 | Write-Output
+            Write-CompartDiskTitulo ('DISCOS FISICOS ({0})' -f $discos.Count)
+            Write-CompartDiskTable -Rows $discos
             Add-CompartDiskSection -Title 'Discos fisicos' -Status OK -Rows $discos -Summary "$($discos.Count) disco(s) fisico(s)"
         } else {
             Add-HwLimitacao -Area 'Armazenamento' -Mensagem 'Nenhum disco fisico enumerado.' -Recomendacao 'Resultado atipico: validar o subsistema de armazenamento.'
@@ -579,9 +624,13 @@ function Show-Armazenamento {
         }
     }
 
+    # A secao de volumes existia so no relatorio: a tela nunca a mostrava.
     $rv = Get-HwDado 'VolumeInfo' { Get-CompartDiskVolumeInfo }
-    if ($rv.Ok -and (ConvertTo-HwArray $rv.Valor).Count -gt 0) {
-        Add-CompartDiskSection -Title 'Volumes' -Status OK -Rows (ConvertTo-HwArray $rv.Valor) -Summary "$((ConvertTo-HwArray $rv.Valor).Count) volume(s) fixo(s)"
+    $vols = (ConvertTo-HwArray $rv.Valor)
+    if ($rv.Ok -and $vols.Count -gt 0) {
+        Add-CompartDiskSection -Title 'Volumes' -Status OK -Rows $vols -Summary "$($vols.Count) volume(s) fixo(s)"
+        Write-CompartDiskTitulo ('VOLUMES FIXOS ({0})' -f $vols.Count)
+        Write-CompartDiskTable -Rows $vols
     } elseif (-not $rv.Ok) {
         Add-HwLimitacao -Area 'Armazenamento' -Mensagem 'Volumes nao enumerados: a consulta falhou.'
     }
@@ -620,6 +669,19 @@ try {
     Write-Log ERR "Falha nao tratada no modulo Hardware (Acao=$Action)." -ErrorRecord $_
     Add-CompartDiskFinding -Severity CRIT -Area 'Hardware' -Message "Excecao no modulo: $($_.Exception.Message)"
 } finally {
+    # Resumo antes do encerramento: publica em tela os achados e as secoes que
+    # ate aqui so chegavam ao state_*.json e aos relatorios. Nao altera
+    # resultado, codigo de saida nem o conteudo persistido.
+    $oQue = switch ($Action) {
+        'Info'        { 'Identificacao do sistema, hardware principal e plataforma' }
+        'Full'        { 'Inventario completo: sistema, plataforma, memoria, video, dispositivos e armazenamento' }
+        'Memory'      { 'Modulos de memoria fisica instalados' }
+        'Gpu'         { 'Adaptadores graficos e monitores' }
+        'Devices'     { 'Dispositivos USB, PCI, controladoras, impressoras e codigos de erro' }
+        'Temperature' { 'Sensores termicos expostos pelo firmware e pelos discos' }
+        default       { '' }
+    }
+    Write-CompartDiskSummary -Result $result -Verificacao $oQue
     $codigo = Stop-CompartDiskModule -Result $result -Quiet:$Quiet
 }
 exit $codigo

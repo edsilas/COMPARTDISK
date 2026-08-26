@@ -43,20 +43,16 @@ function Write-SmartTable {
 
        Antes, as tabelas eram emitidas com "| Out-String | Write-Output", o que
        coloca texto no stream de sucesso do script e ignora completamente o
-       -Quiet: o modo silencioso continuava despejando tabelas no console. #>
+       -Quiet: o modo silencioso continuava despejando tabelas no console.
+
+       Agora delega ao Core, que confere o cabecalho renderizado contra as
+       propriedades reais: Format-Table -AutoSize descartava em silencio as
+       colunas que nao cabiam na largura pedida e, em -Action Status,
+       'HorasLigado' e 'Desgaste' chegavam ao relatorio sem nunca aparecer na
+       tela. #>
     param([object[]]$Rows, [switch]$Lista)
     if ($script:Quiet) { return }
-    $dados = @($Rows | Where-Object { $null -ne $_ })
-    if ($dados.Count -eq 0) { return }
-    try {
-        $texto = $(if ($Lista) { $dados | Format-List | Out-String -Width 200 }
-                   else        { $dados | Format-Table -AutoSize | Out-String -Width 240 })
-        foreach ($linha in ($texto -split "`r?`n")) {
-            if ($linha.Trim()) { Write-Color ("  " + $linha) }
-        }
-    } catch {
-        Write-Log DEBUG "Falha ao formatar tabela para exibicao: $($_.Exception.Message)" -NoConsole
-    }
+    Write-CompartDiskTable -Rows $Rows -Lista:$Lista
 }
 
 function ConvertTo-SmartPercent {
@@ -260,7 +256,7 @@ function Show-DiskHealth {
         })
     }
 
-    Write-Color ''
+    Write-CompartDiskTitulo 'DISCOS FISICOS'
     Write-SmartTable -Rows @($linhas)
     Add-CompartDiskSection -Title 'Discos fisicos' -Status $piorStatus -Rows @($linhas) `
         -Summary ("{0} disco(s); {1} sem leitura SMART" -f $discos.Count, $semSuporte) `
@@ -329,7 +325,7 @@ function Show-Detail {
     }
 
     if ($rows.Count -gt 0) {
-        Write-Color ''
+        Write-CompartDiskTitulo 'CONTADORES DE CONFIABILIDADE POR DISCO'
         Write-SmartTable -Rows @($rows) -Lista
 
         foreach ($r in $rows) {
@@ -355,6 +351,7 @@ function Show-Detail {
     if ($falhas.Count -gt 0) {
         if ($piorStatus -eq 'OK') { $piorStatus = 'WARN' }
         Write-Log WARN ("{0} disco(s) nao devolveram contadores de confiabilidade." -f $falhas.Count)
+        Write-CompartDiskTitulo 'DISCOS SEM CONTADORES DE CONFIABILIDADE'
         Write-SmartTable -Rows @($falhas)
         Add-CompartDiskFinding -Severity WARN -Area 'Disco' `
             -Message ("{0} disco(s) nao devolveram contadores de confiabilidade: o detalhamento desses dispositivos esta incompleto." -f $falhas.Count) `
@@ -395,7 +392,7 @@ function Show-Volumes {
         return
     }
 
-    Write-Color ''
+    Write-CompartDiskTitulo 'VOLUMES LOGICOS'
     Write-SmartTable -Rows $vols
 
     $piorStatus = 'OK'
@@ -449,6 +446,8 @@ function Show-Volumes {
             })
         }
         if ($rows.Count -gt 0) {
+            Write-CompartDiskTitulo 'ESTADO DOS VOLUMES (SUBSISTEMA DE ARMAZENAMENTO)'
+            Write-SmartTable -Rows @($rows)
             # Saude por volume: 'Healthy' e o unico estado que nao exige atencao.
             $piorVol = 'OK'
             foreach ($rv in $rows) {
@@ -474,6 +473,7 @@ function Show-Shadow {
         Add-CompartDiskFinding -Severity INFO -Area 'Disco' -Message 'Nenhum ponto de restauracao/shadow copy encontrado.' -Recommendation 'Considerar habilitar a Protecao do Sistema para recuperacao rapida.'
         return
     }
+    Write-CompartDiskTitulo 'COPIAS DE SOMBRA'
     Write-SmartTable -Rows $s
     Add-CompartDiskSection -Title 'Copias de sombra' -Status INFO -Rows $s -Summary "$($s.Count) copia(s)"
     Write-Log OK "$($s.Count) copia(s) de sombra listada(s)."
@@ -521,6 +521,7 @@ function Show-Spaces {
             $piorPool = 'WARN'
         }
     }
+    Write-CompartDiskTitulo 'STORAGE SPACES'
     Write-SmartTable -Rows $rows
     Add-CompartDiskSection -Title 'Storage Spaces' -Status $piorPool -Rows $rows -Summary ("{0} pool(s)" -f $rows.Count)
 }
@@ -547,6 +548,18 @@ try {
     Add-CompartDiskFinding -Severity CRIT -Area 'Disco' -Message "Excecao no modulo: $($_.Exception.Message)" `
         -Recommendation 'Consultar o log detalhado da sessao. Os discos ja analisados antes da falha constam do relatorio.'
 } finally {
+    # Resumo antes do encerramento: publica em tela os achados e as secoes que
+    # ate aqui so chegavam ao state_*.json e aos relatorios. Nao altera
+    # resultado, codigo de saida nem o conteudo persistido.
+    $oQue = switch ($Action) {
+        'Status'  { 'Saude fisica dos discos e evidencia SMART disponivel' }
+        'Detail'  { 'Contadores de confiabilidade e desgaste dos discos' }
+        'Volumes' { 'Volumes logicos, espaco livre e estado do sistema de arquivos' }
+        'Shadow'  { 'Copias de sombra e pontos de restauracao presentes' }
+        'Spaces'  { 'Pools de armazenamento (Storage Spaces)' }
+        default   { '' }
+    }
+    Write-CompartDiskSummary -Result $script:result -Verificacao $oQue
     $codigo = Stop-CompartDiskModule -Result $script:result -Quiet:$Quiet
     if ($null -eq $codigo) { $codigo = $Global:CompartDisk.Exit[$script:result] }
 }

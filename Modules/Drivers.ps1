@@ -118,16 +118,10 @@ function Write-DriverTable {
     if ($script:Quiet) { return }
     $dados = ConvertTo-DriverArray $Rows
     if ($dados.Count -eq 0) { return }
-    if ($First -gt 0) { $dados = @($dados | Select-Object -First $First) }
-    try {
-        if ($Property) { $texto = $dados | Select-Object -Property $Property | Format-Table -AutoSize | Out-String -Width 220 }
-        else           { $texto = $dados | Format-Table -AutoSize | Out-String -Width 220 }
-        foreach ($linha in ($texto -split "`r?`n")) {
-            if ($linha.Trim()) { Write-Color ("  " + $linha) }
-        }
-    } catch {
-        Write-Log DEBUG "Falha ao formatar tabela para exibicao: $($_.Exception.Message)" -NoConsole
-    }
+    # Delegado ao Core: Format-Table -AutoSize descarta em silencio as colunas
+    # que nao cabem na largura do console, e o corte de -First passa a ser
+    # declarado em tela em vez de silencioso.
+    Write-CompartDiskTable -Rows $dados -Property $Property -First $First -Largura 220
 }
 
 function Write-DriverInfo {
@@ -3557,6 +3551,23 @@ try {
         -Recommendation 'Consultar o log detalhado da sessao para a etapa exata e o codigo do erro. Operacoes ja concluidas antes da falha permanecem no destino.'
 } finally {
     Write-Log DEBUG ("Estado operacional final: {0} | Resultado: {1}" -f $script:Fase, $script:result) -NoConsole
+    # Resumo antes do encerramento: publica em tela os achados e as secoes que
+    # ate aqui so chegavam ao state_*.json e aos relatorios. Nao altera
+    # resultado, codigo de saida nem o conteudo persistido.
+    $oQue = switch ($Action) {
+        'List'     { 'Inventario dos drivers instalados' }
+        'Problems' { 'Dispositivos com codigo de erro no Gerenciador de Dispositivos' }
+        'Unsigned' { 'Assinatura digital dos drivers instalados' }
+        'Export'   { 'Inventario de drivers exportado para relatorio' }
+        'Backup'   { 'Copia de seguranca dos drivers de terceiros' }
+        'Restore'  { 'Restauracao de drivers a partir de uma copia' }
+        'Diagnose' { 'Diagnostico do repositorio de drivers' }
+        'Validate' { 'Validacao de integridade de uma copia de drivers' }
+        'Last'     { 'Ultima copia de seguranca de drivers registrada' }
+        'Package'  { 'Empacotamento de drivers selecionados' }
+        default    { '' }
+    }
+    Write-CompartDiskSummary -Result $script:result -Verificacao $oQue
     $codigo = Stop-CompartDiskModule -Result $script:result -Quiet:$Quiet
     if ($null -eq $codigo) { $codigo = $Global:CompartDisk.Exit[$script:result] }
 }

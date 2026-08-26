@@ -408,6 +408,16 @@ try {
     Write-Log ERR "Falha nao tratada no modulo Battery (Acao=$Action)." -ErrorRecord $_
     Add-CompartDiskFinding -Severity CRIT -Area 'Bateria' -Message "Excecao no modulo: $($_.Exception.Message)"
 } finally {
+    # Resumo antes do encerramento: publica em tela os achados e as secoes que
+    # ate aqui so chegavam ao state_*.json e aos relatorios. Nao altera
+    # resultado, codigo de saida nem o conteudo persistido.
+    $oQue = switch ($Action) {
+        'Info'   { 'Bateria: carga, status, capacidade e saude calculada' }
+        'Report' { 'Relatorio de bateria gerado pelo Windows (powercfg /batteryreport)' }
+        'Sleep'  { 'Estados de suspensao disponiveis no equipamento' }
+        default  { '' }
+    }
+    Write-CompartDiskSummary -Result $result -Verificacao $oQue
     $codigo = Stop-CompartDiskModule -Result $result -Quiet:$Quiet
 }
 exit $codigo

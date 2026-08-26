@@ -32,12 +32,17 @@ function Show-BitlockerStatus {
         return
     }
 
-    Write-Color ''
-    $vols | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+    # '| Write-Output' colocava a tabela no stream de sucesso do script, o que
+    # ignora -Quiet e imprime sem a margem de 2 espacos do Launcher.
+    Write-CompartDiskTitulo ('VOLUMES BITLOCKER ({0})' -f $vols.Count)
+    Write-CompartDiskTable -Rows $vols
     Add-CompartDiskSection -Title 'Volumes BitLocker' -Status OK -Rows $vols -Summary "$($vols.Count) volume(s)"
 
     if ($Global:CompartDisk.BitLockerRaw) {
-        Write-Output $Global:CompartDisk.BitLockerRaw
+        # Saida bruta do manage-bde: e a unica evidencia quando o cmdlet e o WMI
+        # nao respondem. Fica identificada, nunca solta no meio da tela.
+        Write-CompartDiskTitulo 'SAIDA BRUTA DO MANAGE-BDE (evidencia da consulta)'
+        Write-CompartDiskTexto $Global:CompartDisk.BitLockerRaw
     }
 
     $sistema = $vols | Where-Object { "$($_.MountPoint)" -like "$($env:SystemDrive)*" } | Select-Object -First 1
@@ -81,7 +86,8 @@ function Show-Protectors {
         Write-Log INFO 'Nenhum protetor de chave configurado.'
         return
     }
-    $rows | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+    Write-CompartDiskTitulo ('PROTETORES DE CHAVE ({0})' -f $rows.Count)
+    Write-CompartDiskTable -Rows @($rows)
     Add-CompartDiskSection -Title 'Protetores de chave' -Status INFO -Rows @($rows) -Summary 'Chaves de recuperacao omitidas do relatorio por seguranca'
 
     # A verificacao precisa ser por volume, e sobretudo no volume do sistema: uma
@@ -111,6 +117,16 @@ try {
     Write-Log ERR "Falha nao tratada no modulo Bitlocker (Acao=$Action)." -ErrorRecord $_
     Add-CompartDiskFinding -Severity CRIT -Area 'BitLocker' -Message "Excecao no modulo: $($_.Exception.Message)"
 } finally {
+    # Resumo antes do encerramento: publica em tela os achados e as secoes que
+    # ate aqui so chegavam ao state_*.json e aos relatorios. Nao altera
+    # resultado, codigo de saida nem o conteudo persistido.
+    $oQue = switch ($Action) {
+        'Status' { 'Estado da criptografia BitLocker dos volumes' }
+        'Keys'   { 'Protetores de chave configurados por volume' }
+        'Report' { 'Estado da criptografia BitLocker e geracao do relatorio' }
+        default  { '' }
+    }
+    Write-CompartDiskSummary -Result $result -Verificacao $oQue
     $codigo = Stop-CompartDiskModule -Result $result -Quiet:$Quiet
 }
 exit $codigo

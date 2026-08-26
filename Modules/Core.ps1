@@ -135,6 +135,313 @@ function Write-CompartDiskKeyValue {
 }
 
 # ------------------------------------------------------------------------------
+# Apresentacao em tela: rotulos, tabelas integras e resumo final
+#
+# Todo modulo ja produzia tres camadas de informacao - console, achados
+# (Add-CompartDiskFinding) e secoes (Add-CompartDiskSection). Apenas a primeira
+# chegava ao operador: severidade, recomendacao, resumo e pares chave/valor
+# terminavam somente no state_*.json e nos relatorios TXT/CSV/JSON/HTML. As
+# funcoes abaixo publicam na tela o que o modulo ja calculou, sem recalcular
+# nada e sem reclassificar nada.
+# ------------------------------------------------------------------------------
+function Write-CompartDiskTitulo {
+    <# Rotulo curto de bloco. Sem ele, o inventario emitia tabelas em sequencia
+       sem dizer o que cada uma representa. #>
+    param([Parameter(Mandatory)][string]$Texto)
+    if ($Global:CompartDisk.Quiet) { return }
+    Write-Color ''
+    Write-Color ("  " + $Texto) -Color White
+}
+
+function Write-CompartDiskTable {
+    <# Tabela na gramatica visual do Launcher: margem de 2 espacos e NENHUMA
+       coluna perdida.
+
+       EVIDENCIA: Format-Table -AutoSize descarta em silencio as colunas que nao
+       cabem na LARGURA DO CONSOLE - e '-Width' de Out-String nao as recupera,
+       porque a decisao acontece antes. Em Smart.ps1 -Action Status, num console
+       de 120 colunas, 'HorasLigado' e 'Desgaste' existiam nas linhas, chegavam
+       ao state_Smart_Status.json e simplesmente nao apareciam na tela.
+
+       Aqui o cabecalho renderizado e conferido contra as propriedades reais. O
+       que sobrar e reemitido numa tabela de continuacao, repetindo a coluna
+       identificadora para que a linha continue reconhecivel. Nada e descartado
+       e o formato continua tabular mesmo com muitos itens; a lista so entra
+       quando nem uma coluna cabe, ou quando -Lista e pedido.
+
+       -First nao e mais um corte silencioso: a reducao e declarada em tela com o
+       total real e o local onde a lista completa permanece disponivel.
+
+       -Quiet reduz APENAS a saida interativa; log, achados, secoes e resultado
+       permanecem inalterados. #>
+    [CmdletBinding()]
+    param(
+        [object[]]$Rows,
+        [string[]]$Property,
+        [switch]$Lista,
+        [int]$Largura = 240,
+        [int]$First = 0
+    )
+    if ($Global:CompartDisk.Quiet) { return }
+    $dados = @($Rows | Where-Object { $null -ne $_ })
+    if ($dados.Count -eq 0) { return }
+
+    $total = $dados.Count
+    if ($First -gt 0 -and $total -gt $First) {
+        $dados = @($dados | Select-Object -First $First)
+        Write-Color ("  (exibindo {0} de {1} itens; a lista completa consta do relatorio da sessao)" -f $dados.Count, $total) -Color DarkGray
+    }
+    if ($Property) { $dados = @($dados | Select-Object -Property $Property) }
+
+    # Nomes esperados: base da deteccao de coluna omitida.
+    $nomes = @()
+    if ($Property) { $nomes = @($Property) }
+    elseif ($null -ne $dados[0]) {
+        try { $nomes = @($dados[0].PSObject.Properties | ForEach-Object { $_.Name }) } catch { $nomes = @() }
+    }
+
+    try {
+        if ($Lista -or $nomes.Count -eq 0) {
+            Write-CompartDiskTexto ($dados | Format-List | Out-String -Width $Largura)
+            return
+        }
+
+        $chave     = $nomes[0]
+        $restantes = @($nomes)
+        $parte     = 0
+
+        while ($restantes.Count -gt 0) {
+            $parte++
+            $conjunto = $(if ($parte -eq 1) { @($restantes) } else { @($chave) + @($restantes) })
+            $texto = $dados | Select-Object -Property $conjunto | Format-Table -AutoSize | Out-String -Width $Largura
+            $cab   = @(($texto -split "`r?`n") | Where-Object { $_.Trim() }) | Select-Object -First 1
+
+            # .Contains e nao -like: nome de propriedade nao e padrao curinga.
+            $exibidas = @($conjunto | Where-Object { "$cab".Contains("$_") })
+
+            # Nem a primeira coluna coube, ou a divisao parou de progredir: a
+            # lista garante a integridade quando a tabela nao consegue.
+            $faltantes = @($conjunto | Where-Object { $exibidas -notcontains $_ -and $_ -ne $chave })
+            if ($exibidas.Count -eq 0 -or $faltantes.Count -ge $restantes.Count -or $parte -gt 8) {
+                Write-CompartDiskTexto ($dados | Select-Object -Property $conjunto | Format-List | Out-String -Width $Largura)
+                return
+            }
+
+            if ($parte -gt 1) {
+                Write-Color ("  (continuacao: {0})" -f (@($conjunto | Where-Object { $_ -ne $chave }) -join ', ')) -Color DarkGray
+            }
+            Write-CompartDiskTexto $texto
+            $restantes = $faltantes
+        }
+    } catch {
+        Write-Log DEBUG "Falha ao formatar tabela para exibicao: $($_.Exception.Message)" -NoConsole
+    }
+}
+
+function Write-CompartDiskTexto {
+    <# Emite texto ja formatado com a margem de 2 espacos do Launcher. Uma linha
+       em branco separa blocos; sequencias delas so poluem a tela. #>
+    param([AllowNull()][string]$Texto)
+    if ($Global:CompartDisk.Quiet -or [string]::IsNullOrEmpty($Texto)) { return }
+    $vazia = $true
+    foreach ($linha in ($Texto -split "`r?`n")) {
+        if ($linha.Trim()) { Write-Color ("  " + $linha.TrimEnd()); $vazia = $false }
+        elseif (-not $vazia) { Write-Color ''; $vazia = $true }
+    }
+}
+
+function Get-CompartDiskTagStatus {
+    <# Marcador de largura fixa, no mesmo vocabulario ja usado por Write-Log. #>
+    param([string]$Status)
+    switch ("$Status") {
+        'OK'   { '[ OK ]' }
+        'WARN' { '[WARN]' }
+        'CRIT' { '[CRIT]' }
+        'INFO' { '[INFO]' }
+        default { '[INFO]' }
+    }
+}
+
+function Get-CompartDiskCorStatus {
+    param([string]$Status)
+    switch ("$Status") {
+        'OK'   { [ConsoleColor]::Green }
+        'WARN' { [ConsoleColor]::Yellow }
+        'CRIT' { [ConsoleColor]::Red }
+        'INFO' { [ConsoleColor]::Gray }
+        default { [ConsoleColor]::Gray }
+    }
+}
+
+function Write-CompartDiskSummary {
+    <# Bloco final do modulo. Publica em tela o que ja foi produzido e ate aqui
+       so alcancava o state_*.json e os relatorios: os achados, com severidade e
+       recomendacao, e o conteudo das secoes, com resumo e pares chave/valor.
+
+       Ordem fixa, do geral ao especifico: o que foi executado -> o que foi
+       verificado (evidencia) -> funcionando -> informacao -> nao verificado ->
+       atencao -> problema -> detalhes tecnicos.
+
+       Nada e reclassificado. A severidade exibida e exatamente a registrada pelo
+       modulo e o status de cada secao e o declarado pela propria secao. 'Nenhum
+       dado coletado' e um fato estrutural - secao sem linhas e sem pares - e nao
+       uma leitura do texto do resumo. Uma secao INFO que encontrou zero itens
+       continua sendo "verificado, nada encontrado", jamais "nao verificado". #>
+    [CmdletBinding()]
+    param(
+        [ValidateSet('OK', 'WARN', 'ERROR', 'UNSUPPORTED')][string]$Result = 'OK',
+        [string]$Verificacao = ''
+    )
+    if ($Global:CompartDisk.Quiet) { return }
+
+    try {
+        $achados = @($Global:CompartDisk.Findings)
+        $secoes  = @($Global:CompartDisk.Sections)
+        $larg    = 74
+
+        Write-Color ''
+        Write-Color ("  " + ('-' * $larg)) -Color DarkGray
+        Write-Color '  RESUMO DA VERIFICACAO' -Color White
+        Write-Color ("  " + ('-' * $larg)) -Color DarkGray
+
+        # ---------------------------------------------------- O que foi executado
+        $acao = "$($Global:CompartDisk.CurrentAction)"
+        $mod  = "$($Global:CompartDisk.CurrentModule)"
+        Write-Color ''
+        Write-Color '  O QUE FOI EXECUTADO' -Color White
+        if ($Verificacao) { Write-CompartDiskKeyValue 'Verificacao' $Verificacao -Pad 22 }
+        Write-CompartDiskKeyValue 'Modulo tecnico' ("{0}.ps1 -Action {1}" -f $mod, $(if ($acao) { $acao } else { '(padrao)' })) -Pad 22
+        $adm = $(try { if (Test-Administrator) { 'Administrador' } else { 'Usuario comum (sem elevacao)' } } catch { 'n/d' })
+        Write-CompartDiskKeyValue 'Privilegio da sessao' $adm -Pad 22
+
+        # ---------------------------------------------------- O que foi verificado
+        $semDados = New-Object System.Collections.ArrayList
+        if ($secoes.Count -gt 0) {
+            Write-Color ''
+            Write-Color '  O QUE FOI VERIFICADO' -Color White
+            foreach ($s in $secoes) {
+                $linhas = @($s.Rows | Where-Object { $null -ne $_ })
+                $pares  = $s.Pairs
+                $nPares = 0
+                if ($pares) { try { $nPares = @($pares.Keys).Count } catch { $nPares = 0 } }
+                $vazia  = ($linhas.Count -eq 0 -and $nPares -eq 0)
+
+                $tag = Get-CompartDiskTagStatus $s.Status
+                $cor = Get-CompartDiskCorStatus $s.Status
+                $tit = "$($s.Title)"
+                Write-Color ("    " + $tag) -Color $cor -NoNewLine
+                Write-Color ("  " + $tit) -Color Gray
+                if ("$($s.Summary)") { Write-Color ("            " + "$($s.Summary)") -Color DarkGray }
+
+                # Pares chave/valor: a evidencia numerica que so existia no relatorio.
+                $pad = 'Itens detalhados'.Length
+                if ($nPares -gt 0) {
+                    foreach ($k in $pares.Keys) { if ("$k".Length -gt $pad) { $pad = "$k".Length } }
+                    if ($pad -gt 30) { $pad = 30 }
+                    foreach ($k in $pares.Keys) {
+                        $v = $pares[$k]
+                        if ($null -eq $v -or "$v" -eq '') { $v = 'n/d' }
+                        Write-Color ("            {0} : {1}" -f "$k".PadRight($pad), $v) -Color DarkGray
+                    }
+                }
+                if ($linhas.Count -gt 0) {
+                    Write-Color ("            {0} : {1}" -f 'Itens detalhados'.PadRight($pad), $linhas.Count) -Color DarkGray
+                }
+                # Somente secao que o proprio modulo marcou como CRIT/WARN e ficou
+                # sem dado algum caracteriza item nao verificado. Secao INFO/OK sem
+                # linhas significa "verificado, nada encontrado" - e o proprio
+                # resumo da secao ja diz o que foi encontrado, entao repetir
+                # "nenhum dado coletado" ali confundiria as duas situacoes.
+                if ($vazia -and "$($s.Status)" -in @('CRIT', 'WARN')) {
+                    Write-Color '            (a consulta nao produziu dado algum: item nao verificado)' -Color DarkGray
+                    [void]$semDados.Add($s)
+                }
+            }
+        }
+
+        # ---------------------------------------------------- Achados por severidade
+        $blocos = @(
+            @{ Sev = 'OK';   Titulo = 'FUNCIONANDO';  Cor = [ConsoleColor]::Green },
+            @{ Sev = 'INFO'; Titulo = 'INFORMACAO';   Cor = [ConsoleColor]::Gray  }
+        )
+        foreach ($b in $blocos) {
+            $itens = @($achados | Where-Object { $_.Severity -eq $b.Sev })
+            if ($itens.Count -eq 0) { continue }
+            Write-Color ''
+            Write-Color ("  {0} ({1})" -f $b.Titulo, $itens.Count) -Color $b.Cor
+            foreach ($f in $itens) {
+                Write-Color ("    [{0}] {1}" -f $f.Area, $f.Message) -Color Gray
+                if ("$($f.Recommendation)") { Write-Color ("           {0}" -f $f.Recommendation) -Color DarkGray }
+            }
+        }
+
+        # ---------------------------------------------------- Nao verificado
+        $naoVerif = New-Object System.Collections.ArrayList
+        if ($Result -eq 'UNSUPPORTED') {
+            # Mesmo vocabulario do Launcher para o codigo 3. Nao afirma falha:
+            # cobre tanto "esta edicao nao tem o recurso" quanto "este
+            # equipamento nao possui o componente". O motivo exato esta nos
+            # achados acima, e repeti-lo aqui produziria mensagens divergentes.
+            [void]$naoVerif.Add('Recurso nao suportado ou nao aplicavel a este equipamento/edicao do Windows (codigo de saida 3). O motivo consta dos itens acima.')
+        }
+        foreach ($s in $semDados) {
+            [void]$naoVerif.Add(("{0}{1}" -f "$($s.Title)", $(if ("$($s.Summary)") { " - $($s.Summary)" } else { '' })))
+        }
+        if ($naoVerif.Count -gt 0) {
+            Write-Color ''
+            Write-Color ("  NAO VERIFICADO ({0})" -f $naoVerif.Count) -Color DarkYellow
+            Write-Color '    Itens que a ferramenta nao conseguiu conferir. Nao significam defeito nem ausencia de defeito.' -Color DarkGray
+            foreach ($t in $naoVerif) { Write-Color ("    - " + $t) -Color Gray }
+        }
+
+        # ---------------------------------------------------- Atencao e problema
+        $blocos2 = @(
+            @{ Sev = 'WARN'; Titulo = 'ATENCAO';  Cor = [ConsoleColor]::Yellow },
+            @{ Sev = 'CRIT'; Titulo = 'PROBLEMA'; Cor = [ConsoleColor]::Red }
+        )
+        foreach ($b in $blocos2) {
+            $itens = @($achados | Where-Object { $_.Severity -eq $b.Sev })
+            if ($itens.Count -eq 0) { continue }
+            Write-Color ''
+            Write-Color ("  {0} ({1})" -f $b.Titulo, $itens.Count) -Color $b.Cor
+            foreach ($f in $itens) {
+                Write-Color ("    [{0}] {1}" -f $f.Area, $f.Message) -Color Gray
+                if ("$($f.Recommendation)") { Write-Color ("           O que fazer: {0}" -f $f.Recommendation) -Color DarkGray }
+            }
+        }
+
+        # ---------------------------------------------------- Detalhes tecnicos
+        $codigo = $Global:CompartDisk.Exit[$Result]
+        $signif = switch ($Result) {
+            'OK'          { 'concluido sem problemas' }
+            'WARN'        { 'concluido com pontos de atencao' }
+            'ERROR'       { 'concluido com erro' }
+            'UNSUPPORTED' { 'recurso nao suportado ou verificacao nao executada' }
+            default       { 'n/d' }
+        }
+        $nc = @($achados | Where-Object { $_.Severity -eq 'CRIT' }).Count
+        $nw = @($achados | Where-Object { $_.Severity -eq 'WARN' }).Count
+        $no = @($achados | Where-Object { $_.Severity -eq 'OK'   }).Count
+        $ni = @($achados | Where-Object { $_.Severity -eq 'INFO' }).Count
+
+        Write-Color ''
+        Write-Color '  DETALHES TECNICOS' -Color White
+        Write-CompartDiskKeyValue 'Resultado' ("{0} - codigo de saida {1} ({2})" -f $Result, $codigo, $signif) -Pad 22
+        Write-CompartDiskKeyValue 'Achados' ("{0} problema(s), {1} atencao, {2} funcionando, {3} informativo(s)" -f $nc, $nw, $no, $ni) -Pad 22
+        Write-CompartDiskKeyValue 'Secoes registradas' ("{0} ({1} sem dado coletado)" -f $secoes.Count, $semDados.Count) -Pad 22
+        Write-CompartDiskKeyValue 'Motor' ("{0} {1}" -f $Global:CompartDisk.Engine, $Global:CompartDisk.PSVersion) -Pad 22
+        Write-CompartDiskKeyValue 'Versao' ("{0} {1}" -f $Global:CompartDisk.Product, $Global:CompartDisk.Version) -Pad 22
+        Write-CompartDiskKeyValue 'Computador / usuario' ("{0} / {1}" -f $Global:CompartDisk.Computer, $Global:CompartDisk.User) -Pad 22
+        Write-CompartDiskKeyValue 'Sessao' $Global:CompartDisk.Session -Pad 22
+        Write-CompartDiskKeyValue 'Log da sessao' $Global:CompartDisk.LogFile -Pad 22
+        Write-CompartDiskKeyValue 'Pasta de relatorios' $Global:CompartDisk.OutDir -Pad 22
+    } catch {
+        # A apresentacao nunca pode derrubar o modulo nem alterar seu resultado.
+        Write-Log DEBUG "Falha ao montar o resumo de tela: $($_.Exception.Message)" -NoConsole
+    }
+}
+
+# ------------------------------------------------------------------------------
 # Interacao numerica (compartilhada pelos modulos com menu proprio)
 # ------------------------------------------------------------------------------
 function Test-CompartDiskInterativo {
@@ -422,6 +729,10 @@ function Start-CompartDiskModule {
     $Global:CompartDisk.CurrentAction = $Action
     $Global:CompartDisk.ModuleStart   = Get-Date
     $Global:CompartDisk.ModuleResult  = $Global:CompartDisk.Exit.OK
+    # Modo silencioso no contexto: as funcoes de apresentacao do Core (tabelas,
+    # rotulos e resumo) precisam respeitar -Quiet sem que cada modulo repasse o
+    # switch em toda chamada. Nao altera log, achados, secoes nem resultado.
+    $Global:CompartDisk.Quiet         = [bool]$Quiet
 
     if (-not $Quiet) {
         $titulo = if ($Action) { "$Name :: $Action" } else { $Name }

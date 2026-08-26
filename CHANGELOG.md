@@ -9,7 +9,66 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-Sem alterações pendentes.
+Revisão da apresentação em tela da opção **`7` — Discos, Drivers e Auditoria de Hardware**.
+Nenhuma mudança de menu, de fluxo, de parâmetro de automação, de código de saída, de
+esquema de relatório ou de lógica de diagnóstico: muda o que a ferramenta **mostra** do
+que ela já apurava.
+
+### Corrigido
+
+- **Achados e seções não chegavam à tela.** Cada módulo produz três camadas de informação
+  — console, achados (`Add-CompartDiskFinding`) e seções (`Add-CompartDiskSection`) —, e
+  só a primeira era exibida. Severidade, **recomendação**, resumo e pares chave/valor
+  terminavam apenas no `state_*.json` e nos relatórios. Em um disco cujos atributos
+  S.M.A.R.T. não podem ser lidos, a tela mostrava `[ OK ]` enquanto o achado registrado
+  dizia que o estado real do disco não pode ser confirmado.
+
+- **Colunas de tabela descartadas em silêncio.** `Format-Table -AutoSize` remove as colunas
+  que não cabem na largura do console, e `-Width` do `Out-String` não as recupera. O que
+  não cabe passa a ser reemitido em tabela de continuação, repetindo a coluna
+  identificadora.
+
+- **Impressoras coletadas e descartadas.** Em `Show-Dispositivos`, o bloco de impressoras
+  estava depois de um `return` que disparava sempre que não havia dispositivo com código
+  de erro — o caso mais comum.
+
+- **Inventário de USB e PCI reduzido a duas contagens**, com truncamento silencioso de 40
+  itens no relatório; controladoras, impressoras e volumes não apareciam sequer como
+  contagem. As listas passam a ser exibidas por inteiro.
+
+- **Cortes silenciosos de achados** em `Hardware.ps1`: o detalhamento parava nos 10
+  primeiros dispositivos sem informar que havia mais. A redução passa a ser declarada.
+
+- **Tabelas fora do padrão visual.** `Hardware.ps1` e `Bitlocker.ps1` emitiam tabelas com
+  `| Out-String | Write-Output`, o que coloca texto no fluxo de sucesso do script, ignora
+  `-Quiet` e imprime sem a margem do Launcher.
+
+### Adicionado
+
+- **Bloco `RESUMO DA VERIFICAÇÃO`** ao final de cada ação, em ordem fixa: o que foi
+  executado, o que foi verificado, funcionando, informação, não verificado, atenção,
+  problema e detalhes técnicos. Cada achado aparece com a severidade que o módulo
+  registrou e com a recomendação correspondente.
+
+  Nada é reclassificado. *Verificado e nada encontrado* permanece distinto de *não
+  verificado* e de *não suportado*. Os detalhes técnicos publicam o resultado, o código de
+  saída numérico com seu significado, o motor, a versão, a sessão e os caminhos do log e
+  da pasta de relatórios.
+
+- `Write-CompartDiskTable`, `Write-CompartDiskTexto`, `Write-CompartDiskTitulo` e
+  `Write-CompartDiskSummary` em `Core.ps1`, e `.Quiet` no contexto de
+  sessão. Todas respeitam `-Quiet`.
+
+- Seções `Dispositivos com problema` (com a base da verificação e o total de dispositivos
+  examinados) e `Impressoras` passam a ser registradas no relatório em vez de o assunto
+  desaparecer quando nada é encontrado.
+
+### Validação
+
+Executadas as nove opções da função `7` nos cenários de resultado positivo, atenção, erro,
+informação indisponível, item não encontrado e grande volume de dados. Códigos de saída
+inalterados, saída de `-Quiet` idêntica à anterior, relatórios TXT/CSV/JSON/HTML gerados
+normalmente e nenhuma alteração de comportamento fora da função `7`.
 
 ---
 
