@@ -7,7 +7,7 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
-## [Não lançado]
+## [1.5.0] — 2026-08-28
 
 Auditoria do **Reparo Geral Automático** (opção `1` e `/autofix`) e das rotinas Batch de
 contingência. Nenhuma etapa foi acrescentada, removida ou reordenada; nenhum menu, código
@@ -413,8 +413,36 @@ outra alteração.
 `:MOD_SPOOLER` e `Explorer.ps1 -Action Spooler`, usados pela opção `5` e pela etapa "Fila
 de impressão" do Reparo Geral Automático; `Core.ps1`, `Collectors.ps1`, `remote.ps1`, o
 mecanismo `RUN_PS`/`AF_ETAPA`/`AF_RC`, os códigos de saída, os argumentos de automação e o
-esquema de relatórios. As opções `1` a `6` e `8` não têm uma linha alterada. A versão
-permanece `1.4.8`; o acréscimo caracteriza incremento **MINOR** no próximo lançamento.
+esquema de relatórios. As opções `1` a `6` e `8` não têm uma linha alterada.
+
+### Versão
+
+A numeração passa de `1.4.7` para `1.5.0` em `Core.ps1`, `Launcher.bat`, `remote.ps1`,
+`README.md`, no cabeçalho de todos os módulos e de todos os documentos. O incremento é
+**MINOR**: a opção `7` passa a oferecer uma capacidade que não existia, sem quebrar
+contrato algum — menus, códigos de saída, argumentos de automação e esquema de relatórios
+permanecem como estavam.
+
+`remote.ps1` passa a apontar para a tag `v1.5.0`, com o SHA-256 do pacote publicado fixado
+no próprio script em commit seguinte ao da release — o mesmo procedimento adotado em
+1.4.3, 1.4.4, 1.4.5, 1.4.6, 1.4.7 e 1.4.8. Enquanto estiver vazio, o script recorre ao
+SHA-256 publicado nas notas da release. Repositório, URLs, endpoints da API e demais
+validações permanecem como estavam: apenas a tag e o hash são atrelados à versão.
+
+A release `v1.4.8` e o pacote publicado nela permanecem **intactos**: a numeração anterior
+continua válida como registro histórico.
+
+O pacote é gerado a partir da própria tag, o que torna o valor reproduzível por qualquer
+pessoa:
+
+```text
+git archive --format=zip --prefix=COMPARTDISK-1.5.0/ v1.5.0 > COMPARTDISK-1.5.0.zip
+```
+
+```text
+COMPARTDISK-1.5.0.zip
+SHA-256: (fixado em commit seguinte ao da release)
+```
 
 ---
 

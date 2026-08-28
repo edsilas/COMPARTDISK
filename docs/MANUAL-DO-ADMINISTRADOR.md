@@ -1,6 +1,6 @@
 # Manual do Administrador
 
-**COMPARTDISK 1.4.8** · Desenvolvido por Edsilas
+**COMPARTDISK 1.5.0** · Desenvolvido por Edsilas
 
 Para quem administra parque de computadores.
 

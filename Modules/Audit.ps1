@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.4.8 - Audit.ps1  (revisao cirurgica)
+ COMPARTDISK 1.5.0 - Audit.ps1  (revisao cirurgica)
  Desenvolvido por Edsilas
  Acoes: Full | Quick | Events | Software | License
 
@@ -633,7 +633,7 @@ function Add-AuditContextSection {
     $script:IsAdmin = Test-AuditAdministrator
 
     $pares = [ordered]@{
-        'Modulo'            = 'Audit 1.4.8'
+        'Modulo'            = 'Audit 1.5.0'
         'Acao'              = $Action
         'Modo'              = $Modo
         'Janela de eventos' = ("$Days dia(s)")
