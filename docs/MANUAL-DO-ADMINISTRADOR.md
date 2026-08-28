@@ -33,8 +33,25 @@ Launcher.bat /report     :: apenas consolidação dos relatórios
 Launcher.bat /clean      :: limpeza profunda
 ```
 
-Em modo desassistido não há menus nem pausas. O processo encerra com código de saída
-`0`, o que permite encadeamento em scripts.
+Em modo desassistido não há menus nem pausas. O processo encerra com um código de
+saída semântico, no mesmo vocabulário dos módulos:
+
+| Código | Significado |
+|---|---|
+| `0` | Tudo concluído e verificado |
+| `1` | Concluído com atenção, ou execução que o Launcher não conseguiu medir |
+| `2` | Alguma etapa falhou, ou execução recusada por falta de privilégio |
+
+Para `/autofix` especificamente: `1` indica que as etapas foram desviadas para as
+rotinas Batch de contingência e o Launcher não tem como atestar o estado final; `2`
+indica etapa com falha ou sessão sem privilégio administrativo. Trate `1` como
+"verificar o relatório", não como sucesso.
+
+> **Ao montar alertas, não use `código diferente de 0`.** Em máquina em uso o `1` é o
+> resultado **esperado**: a limpeza classifica como "com atenção" qualquer arquivo que
+> estava aberto por outro processo no momento — e sempre há algum, em `%TEMP%`, no
+> cache do navegador ou no cache de ícones do Explorer. Alerte em `2`, e trate o `1`
+> como item de revisão periódica do relatório.
 
 ### Coleta centralizada
 

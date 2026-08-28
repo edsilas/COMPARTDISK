@@ -157,13 +157,19 @@ if "%IS_ADMIN%"=="1" goto ELEVACAO_OK
 
 :: --- 2.3 Ja voltamos do UAC e ainda assim nao somos administradores.
 ::     Prosseguir degradado e MUITO melhor que reelevar em laco infinito.
+::
+::     O "pause" so vale para quem esta na frente do teclado. A sentinela ja foi
+::     consumida com shift, entao %~1 aqui e o parametro original: vazio no modo
+::     interativo, /autofix, /audit, /report ou /clean no modo desassistido. Sem
+::     essa distincao, uma elevacao recusada deixava "Launcher.bat /autofix"
+::     parado para sempre esperando uma tecla em RMM, GPO ou tarefa agendada.
 if defined COMPARTDISK_GUARD (
     call :TRACE "ESTAGIO 05b - elevacao recusada ou incompleta, seguindo degradado"
     echo.
     echo   %C_AMARELO%[AVISO]%C_RESET% %C_TEXTO%A ferramenta nao esta em contexto administrativo.%C_RESET%
     echo   %C_CINZA%        Funcoes que exigem privilegio serao recusadas pelo Windows.%C_RESET%
     echo.
-    pause
+    if "%~1"=="" pause
     goto ELEVACAO_OK
 )
 
@@ -513,7 +519,7 @@ echo   %C_CINZA%COMPARTDISK %COMPARTDISK_VERSION%%C_RESET%
 echo.
 echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
 echo.
-echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Reset Completo (DNS, Winsock, TCP/IP, ARP, IPv6, proxy)%C_RESET%
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Reset Completo (DNS, Winsock, TCP/IP, ARP, IPv6)%C_RESET%
 echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Restaurar Arquivo Hosts%C_RESET%
 echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Restaurar Firewall%C_RESET%
 echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Diagnostico de Adaptadores, DNS, DHCP, MTU e Rotas%C_RESET%
@@ -858,18 +864,52 @@ if not exist "%COMPARTDISK_MODULES%\%~1" (
 )
 "%PS_EXE%" -NoProfile -NoLogo -ExecutionPolicy Bypass -File "%COMPARTDISK_MODULES%\%~1" %PS_ARGS%
 set "PS_RC=%errorlevel%"
+:: 9009 e o codigo do proprio cmd para "comando nao encontrado". O motor foi
+:: validado no arranque, mas pode ter ficado inacessivel depois - share de rede
+:: que caiu, diretiva reaplicada, executavel removido. E exatamente a condicao
+:: que 9001 ja descreve, entao entra no contrato em vez de virar um codigo solto:
+:: assim o desvio para a rotina Batch continua coerente com o resto do Launcher.
+if "%PS_RC%"=="9009" call :LOG_MSG "WARN" "Motor PowerShell ficou inacessivel durante a sessao - aplicando rotina Batch equivalente."
+if "%PS_RC%"=="9009" set "PS_RC=9001"
 if "%PS_RC%"=="2" call :LOG_MSG "ERR" "Modulo %~1 retornou erro. Consulte o log detalhado."
 if "%PS_RC%"=="3" call :LOG_MSG "WARN" "Recurso nao suportado neste hardware/edicao (%~1)."
 :RUN_PS_END
 set "PS_ARGS="
 :: Codigo 3 e os 9001/9002 significam nao executado ou substituido pelo
 :: fallback Batch: contam como pulado, nunca como erro.
-if "%PS_RC%"=="0" set /a MOD_OK+=1
-if "%PS_RC%"=="1" set /a MOD_WARN+=1
-if "%PS_RC%"=="2" set /a MOD_ERR+=1
-if "%PS_RC%"=="3" set /a MOD_SKIP+=1
-if "%PS_RC%"=="9001" set /a MOD_SKIP+=1
-if "%PS_RC%"=="9002" set /a MOD_SKIP+=1
+::
+:: A cadeia termina em um caso EXPLICITO para o que estiver fora do contrato.
+:: Antes eram seis "if" independentes e nada tratava o resto: um codigo fora de
+:: {0,1,2,3,9001,9002} nao incrementava contador nenhum, e :AF_ETAPA - que decide
+:: pela VARIACAO dos contadores - lia "nenhum contador mudou" como "etapa
+:: concluida". Um modulo interrompido pelo operador (Ctrl+C devolve
+:: -1073741510), morto pelo sistema ou terminado por falha fatal do proprio
+:: PowerShell era registrado como sucesso, justamente na etapa mais longa do
+:: Reparo Geral Automatico. Todo modulo do projeto sai em {0,1,2,3}: qualquer
+:: outro valor significa que ele NAO terminou normalmente.
+if "%PS_RC%"=="0" goto RUN_PS_CONTA_OK
+if "%PS_RC%"=="1" goto RUN_PS_CONTA_WARN
+if "%PS_RC%"=="2" goto RUN_PS_CONTA_ERR
+if "%PS_RC%"=="3" goto RUN_PS_CONTA_SKIP
+if "%PS_RC%"=="9001" goto RUN_PS_CONTA_SKIP
+if "%PS_RC%"=="9002" goto RUN_PS_CONTA_SKIP
+call :LOG_MSG "ERR" "Modulo %~1 terminou fora do contrato (codigo %PS_RC%): execucao interrompida ou encerrada de forma anormal."
+set /a MOD_ERR+=1
+goto RUN_PS_SAIDA
+
+:RUN_PS_CONTA_OK
+set /a MOD_OK+=1
+goto RUN_PS_SAIDA
+:RUN_PS_CONTA_WARN
+set /a MOD_WARN+=1
+goto RUN_PS_SAIDA
+:RUN_PS_CONTA_ERR
+set /a MOD_ERR+=1
+goto RUN_PS_SAIDA
+:RUN_PS_CONTA_SKIP
+set /a MOD_SKIP+=1
+
+:RUN_PS_SAIDA
 exit /b %PS_RC%
 
 :: ------------------------------------------------------------------------------
@@ -878,8 +918,14 @@ exit /b %PS_RC%
 :MOD_AUTO_FIX
 cls
 call :MOD_AUTO_FIX_CORE
+:: O aviso de reinicio so faz sentido se alguma etapa chegou a rodar. Quando a
+:: rotina para na pre-condicao de privilegio, AF_TOTAL fica em 0 e mandar
+:: reiniciar para "aplicar todas as alteracoes" seria afirmar uma alteracao que
+:: nao existe.
+if "%AF_TOTAL%"=="0" goto MOD_AUTO_FIX_FIM
 echo.
 echo   %C_AMARELO%Reinicie o computador para aplicar todas as alteracoes.%C_RESET%
+:MOD_AUTO_FIX_FIM
 pause & goto MENU_PRINCIPAL
 
 :MOD_AUTO_FIX_CORE
@@ -892,6 +938,13 @@ pause & goto MENU_PRINCIPAL
 :: pelo codigo de saida real de cada modulo. Uma etapa desviada para o fallback
 :: Batch conta como pulada, nao como concluida: o Launcher nao tem como afirmar
 :: que a rotina Batch atingiu o mesmo estado final.
+::
+:: AF_RC carrega o desfecho da rotina para :FIM no vocabulario ja documentado
+:: (0 concluido, 1 atencao, 2 erro). Sem ele, "Launcher.bat /autofix" numa
+:: maquina sem PowerShell devolvia 0 - sucesso - para uma execucao em que o
+:: Launcher nao mediu uma unica etapa. MOD_SKIP nao alimenta RC_FINAL, e apenas
+:: MOD_WARN/MOD_ERR o faziam.
+set "AF_RC="
 call :LOG_MSG "INFO" "=== INICIANDO ROTINA ONE-CLICK FIX ==="
 set "AF_TOTAL=0"
 set "AF_OK=0"
@@ -899,28 +952,84 @@ set "AF_WARN=0"
 set "AF_ERR=0"
 set "AF_SKIP=0"
 
+:: --- Pre-condicao: privilegio administrativo
+:: Sem elevacao, seis das sete etapas sao recusadas pelo Windows - tanto pelos
+:: modulos (-RequireAdmin) quanto pelas rotinas Batch equivalentes, que dependem
+:: de netsh, net stop, sfc e dism. A verificacao acontece ANTES de consumir de 20
+:: a 60 minutos produzindo uma parede de falhas previsiveis.
+:: Em linha de comando nao ha pergunta: /autofix e desassistido e precisa de um
+:: codigo de saida honesto. No menu, o operador decide - nada e removido dele.
+if "%IS_ADMIN%"=="1" goto AF_PRECOND_OK
+call :LOG_MSG "ERR" "Reparo Geral Automatico exige privilegios administrativos e a sessao nao esta elevada."
+call :LOG_MSG "INFO" "Feche esta janela, clique com o botao direito em Launcher.bat e escolha Executar como administrador."
+if defined CLI_MODE goto AF_FIM_SEM_PRIVILEGIO
+echo.
+echo   %C_AMARELO%A maioria das etapas sera recusada pelo Windows nesta sessao.%C_RESET%
+echo.
+choice /c SN /n /m "  Executar assim mesmo, sabendo que o reparo ficara incompleto? (S/N): "
+if errorlevel 2 goto AF_FIM_SEM_PRIVILEGIO
+:: Rede de seguranca: CHOICE interrompido (Ctrl+C) devolve 0, e choice.exe
+:: ausente devolve 9009. Nem um nem outro e um "sim" - so o 1 autoriza seguir.
+if not errorlevel 1 goto AF_FIM_SEM_PRIVILEGIO
+call :LOG_MSG "WARN" "Prosseguindo sem elevacao por escolha do operador: o reparo ficara incompleto."
+
+:AF_PRECOND_OK
 call :AF_ETAPA "Limpeza de temporarios e logs"      MOD_TEMP_LOGS_SILENT
 call :AF_ETAPA "Redefinicao da pilha de rede"       MOD_REDE_RESET
 call :AF_ETAPA "Redefinicao do Windows Update"      MOD_UPDATE_RESET
 call :AF_ETAPA "Fila de impressao"                  MOD_SPOOLER
+:: Etapa 5 usa Restart, nao ClearCache. Uma versao anterior trocou por
+:: ClearCache supondo que a etapa 1 nao conseguia apagar os arquivos de cache
+:: em uso pelo Explorer. A EXECUCAO REAL de 27/08/2026 refutou a suposicao:
+::   "Cache de miniaturas e icones: 7,01 MB liberados em 30 item(ns)"
+:: a etapa 1 removeu os 30 arquivos com o Explorer em execucao - o Explorer os
+:: mantem abertos com FILE_SHARE_DELETE, entao a remocao funciona sem encerrar
+:: o shell.
+::
+:: Pior: com ClearCache a etapa 5 passou a falhar sempre. Ela encerra o shell e
+:: espera 2 segundos, mas o Windows RECOLOCA o shell automaticamente nesse
+:: intervalo (comportamento documentado em Restart-ShellExplorer), e o Explorer
+:: recem-iniciado reabre o cache antes da remocao:
+::   "Nenhum dos 1 arquivo(s) de cache pode ser removido: todos continuam em uso"
+:: A etapa terminava em WARN em toda execucao, sem beneficio nenhum.
 call :AF_ETAPA "Reinicio do Explorer"               MOD_EXPLORER
 call :AF_ETAPA "Verificacao de integridade do sistema" MOD_SFC_DISM
 call :AF_ETAPA "Geracao dos relatorios"             MOD_RELATORIO_SILENCIOSO
 
 call :LOG_MSG "INFO" "Etapas: %AF_TOTAL% | concluidas: %AF_OK% | com atencao: %AF_WARN% | puladas: %AF_SKIP% | falhas: %AF_ERR%"
 if not "%AF_ERR%"=="0"  goto AF_FIM_ERRO
+:: Nenhuma etapa medida: o Launcher nao viu um unico modulo concluir. As rotinas
+:: Batch podem ter feito o trabalho, mas afirmar "concluido" sobre uma execucao
+:: que nao foi verificada e exatamente o defeito que esta rotina existe para
+:: evitar. Desfecho proprio, distinto de "com ressalvas".
+if "%AF_OK%"=="0" if "%AF_WARN%"=="0" if not "%AF_SKIP%"=="0" goto AF_FIM_NAO_MEDIDO
 if not "%AF_WARN%"=="0" goto AF_FIM_WARN
 if not "%AF_SKIP%"=="0" goto AF_FIM_WARN
+set "AF_RC=0"
 call :LOG_MSG "OK" "=== REPARO AUTOMATICO CONCLUIDO: as %AF_TOTAL% etapas foram concluidas ==="
 goto :EOF
 
 :AF_FIM_ERRO
+set "AF_RC=2"
 call :LOG_MSG "ERR" "=== REPARO AUTOMATICO INCOMPLETO: %AF_ERR% etapa(s) falharam de %AF_TOTAL% ==="
 call :LOG_MSG "INFO" "As etapas concluidas permanecem aplicadas. Consulte o log para a etapa exata."
 goto :EOF
 
 :AF_FIM_WARN
+set "AF_RC=1"
 call :LOG_MSG "WARN" "=== REPARO AUTOMATICO CONCLUIDO COM RESSALVAS: %AF_WARN% com atencao, %AF_SKIP% pulada(s) de %AF_TOTAL% ==="
+goto :EOF
+
+:AF_FIM_NAO_MEDIDO
+set "AF_RC=1"
+call :LOG_MSG "WARN" "=== REPARO AUTOMATICO NAO CONFIRMADO: nenhuma das %AF_TOTAL% etapas pode ser medida pelo Launcher ==="
+call :LOG_MSG "INFO" "As rotinas Batch de contingencia foram aplicadas; o Launcher nao tem como atestar o estado final."
+call :LOG_MSG "INFO" "Motor em uso: %PS_KIND%. Verifique o menu [9] Ambiente de Execucao e Capacidades."
+goto :EOF
+
+:AF_FIM_SEM_PRIVILEGIO
+set "AF_RC=2"
+call :LOG_MSG "ERR" "=== REPARO AUTOMATICO NAO EXECUTADO: sessao sem privilegios administrativos ==="
 goto :EOF
 
 :AF_ETAPA
@@ -1608,8 +1717,14 @@ if errorlevel 9000 goto FB_RELATORIO
 goto :EOF
 
 :MOD_RELATORIO_SILENCIOSO
+:: Unico chamador: a etapa 7 do Reparo Geral Automatico.
+:: O desvio para :FB_RELATORIO estava ausente aqui, e so aqui: :MOD_RELATORIO e
+:: :MOD_RELATORIO_CLI sempre o tiveram. Sem PowerShell, a ultima etapa do reparo
+:: nao produzia saida nenhuma - nem relatorio, nem o caminho do log de texto -,
+:: e o operador ficava sem nada onde esperava o resultado da manutencao.
 set "PS_ARGS=-Action Consolidate -NoOpen -Quiet"
 call :RUN_PS "Report.ps1"
+if errorlevel 9000 goto FB_RELATORIO
 goto :EOF
 
 :MOD_RELATORIO_ABRIR
@@ -1632,16 +1747,142 @@ goto :EOF
 :: ==============================================================================
 
 :FB_REDE_RESET
+:: PROTECAO DE CONFIGURACAO IP MANUAL
+:: "netsh int ip reset" e "netsh int ipv6 reset" devolvem a configuracao IP ao
+:: padrao (DHCP). Numa interface com endereco fixo isso REMOVE a configuracao
+:: manual - endereco, mascara, gateway e servidores DNS.
+::
+:: O modulo PowerShell ja recusa essas duas etapas quando detecta endereco
+:: estatico, e so as executa com -Force (Network.ps1, etapas E e F). Esta rotina
+:: executava as duas incondicionalmente: numa maquina de IP fixo SEM PowerShell -
+:: exatamente o cenario em que este fallback existe - o caminho degradado
+:: destruia a configuracao que o caminho principal protege.
+::
+:: As demais instrucoes NAO dependem do modo de enderecamento e continuam
+:: incondicionais, como no modulo: winsock reset redefine o catalogo de sockets,
+:: nao a configuracao IP; flushdns esvazia o cache local sem tocar nos servidores
+:: configurados; release/renew nao tem efeito sobre interface estatica. O reset
+:: do proxy WinHTTP saiu desta rotina - a razao esta em :FB_REDE_RESET_FIM.
+set "FB_NET_PROTEGIDO="
 call :LOG_MSG "INFO" "[Batch] Resetando sockets e caches de rede..."
 ipconfig /release >nul 2>&1
 ipconfig /flushdns >nul 2>&1
 ipconfig /renew >nul 2>&1
 netsh winsock reset >nul 2>&1
+call :FB_REDE_IP_ESTATICO "HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces"
+if not "%FB_NET_PILHA%"=="1" goto FB_REDE_RESET_SEM_PILHA
 netsh int ip reset >nul 2>&1
 netsh int ipv6 reset >nul 2>&1
-netsh winhttp reset proxy >nul 2>&1
+goto FB_REDE_RESET_FIM
+
+:FB_REDE_RESET_SEM_PILHA
+:: SKIP com o motivo exposto, nunca OK. Nao afirma que a rede foi reparada:
+:: afirma exatamente o que foi feito e o que foi deliberadamente preservado.
+call :LOG_MSG "WARN" "Reset da pilha IP nao executado - %FB_NET_MOTIVO%."
+call :LOG_MSG "INFO" "A configuracao IP manual foi preservada. Para redefinir a pilha assim mesmo, use o modulo: Network.ps1 -Action Reset -Force."
+set "FB_NET_PROTEGIDO=1"
+
+:FB_REDE_RESET_FIM
 arp -d * >nul 2>&1
+:: PROXY WINHTTP PRESERVADO
+:: "netsh winhttp reset proxy" NAO esta mais aqui. O proxy WinHTTP e a
+:: configuracao usada pelo Windows Update, pelo BITS e pelos servicos do sistema
+:: - nao pelo navegador, que le a configuracao por usuario (WinINet) -, e em
+:: parque corporativo ele costuma ser a unica rota de saida da maquina.
+::
+:: O modulo tirou essa operacao do reset padrao e a colocou atras de -ResetProxy
+:: (Network.ps1, etapa I: "fora do fluxo padrao: destruiria configuracao de proxy
+:: corporativo"). Esta rotina continuava executando-a SEMPRE: o caminho
+:: degradado era mais destrutivo que o caminho principal, e chegava a gravar "A
+:: configuracao IP manual foi preservada" na mesma execucao em que apagava o
+:: proxy da maquina.
+::
+:: A protecao nao exige deteccao nenhuma: o modulo tambem nao detecta nada, so
+:: nao executa por padrao. Nao ha parsing de saida traduzida nem heuristica.
+:: A capacidade continua alcancavel onde ela pertence: consulta em [3] [6] e
+:: redefinicao explicita por Network.ps1 -Action Reset -ResetProxy.
+call :LOG_MSG "INFO" "Proxy WinHTTP preservado: redefini-lo nao faz parte do reset de pilha. Consulte em [3] [6]; para redefinir, use Network.ps1 -Action Reset -ResetProxy."
+if defined FB_NET_PROTEGIDO goto FB_REDE_RESET_PARCIAL
 call :LOG_MSG "OK" "Rede TCP/IP e DNS redefinidos."
+goto :EOF
+
+:FB_REDE_RESET_PARCIAL
+call :LOG_MSG "WARN" "Rede redefinida parcialmente: Winsock, cache DNS e cache ARP. A pilha IP foi preservada por protecao."
+goto :EOF
+
+:FB_REDE_IP_ESTATICO
+:: %~1 = chave base das interfaces TCP/IP. Devolve:
+::   FB_NET_PILHA=1  o reset da pilha IP pode ser executado
+::   FB_NET_MOTIVO   por que nao pode, quando FB_NET_PILHA nao vier definido
+::
+:: POR QUE O REGISTRO, E NAO A SAIDA DO NETSH OU DO IPCONFIG
+:: A saida de "netsh interface ipv4 show config" e de "ipconfig /all" e
+:: TRADUZIDA: os rotulos mudam com o idioma do Windows, e procurar por "DHCP
+:: Habilitado" ou "DHCP Enabled" e uma protecao que falha em silencio no idioma
+:: que nao foi previsto - falharia justamente permitindo o reset destrutivo.
+:: Os nomes de valor do registro nao sao traduzidos: EnableDHCP, IPAddress,
+:: REG_DWORD e 0x0 sao os mesmos em qualquer idioma, e "reg query /v" faz
+:: correspondencia EXATA de nome (verificado: "/v Address" e "/v Dhcp" nao casam
+:: com IPAddress nem com DhcpServer). E a mesma propriedade ASCII em que
+:: :FB_PERF_ATIVAR e :FB_SPOOLER ja se apoiam.
+::
+:: A leitura NAO exige privilegio administrativo, entao a protecao continua
+:: valendo na sessao degradada.
+::
+:: CRITERIO: EnableDHCP=0x0 sozinho NAO basta - adaptador virtual nunca
+:: configurado tambem aparece assim. Exige tambem endereco manual gravado em
+:: IPAddress, e um IPAddress igual a 0.0.0.0 e configuracao apagada, nao
+:: configuracao fixa.
+::
+:: NA DUVIDA, PROTEGE: se a chave nao pode ser lida ou nenhuma interface
+:: devolveu EnableDHCP, o modo de enderecamento e INDETERMINADO e o reset nao e
+:: aplicado as cegas - mesma decisao do modulo PowerShell.
+::
+:: LIMITE DECLARADO: o criterio e IPv4, e ele decide as DUAS etapas, IPv4 e IPv6
+:: - exatamente como no modulo, que tambem gera a decisao a partir de
+:: EstaticoIPv4. Interface desconectada com IP fixo persistido tambem protege;
+:: aqui o fallback e mais conservador que o modulo, que so considera as
+:: conectadas, e o desvio e sempre no sentido de nao destruir configuracao.
+set "FB_NET_PILHA="
+set "FB_NET_MOTIVO="
+set "FB_NET_LIDAS=0"
+set "FB_NET_ESTATICO="
+set "FB_NET_IF="
+for /f "delims=" %%K in ('reg query "%~1" 2^>nul') do call :FB_REDE_IP_CHAVE "%%~K"
+if "%FB_NET_LIDAS%"=="0" goto FB_REDE_IP_INDETERMINADO
+if defined FB_NET_ESTATICO goto FB_REDE_IP_PROTEGIDO
+set "FB_NET_PILHA=1"
+goto :EOF
+
+:FB_REDE_IP_INDETERMINADO
+set "FB_NET_MOTIVO=nao foi possivel determinar o modo de enderecamento das interfaces e o reset nao e aplicado as cegas"
+goto :EOF
+
+:FB_REDE_IP_PROTEGIDO
+set "FB_NET_MOTIVO=interface com endereco estatico detectada (%FB_NET_IF%): o reset removeria a configuracao manual"
+goto :EOF
+
+:FB_REDE_IP_CHAVE
+:: %~1 = caminho completo de uma subchave de interface.
+:: A linha de cabecalho devolvida pelo "reg query" tem um unico campo e e
+:: descartada pela comparacao com o nome do valor.
+set "FB_IF_CHAVE=%~1"
+set "FB_IF_DHCP="
+for /f "tokens=1,3" %%A in ('reg query "%~1" /v EnableDHCP 2^>nul') do if /i "%%A"=="EnableDHCP" set "FB_IF_DHCP=%%B"
+if not defined FB_IF_DHCP goto :EOF
+set "FB_NET_LIDAS=1"
+if not "%FB_IF_DHCP%"=="0x0" goto :EOF
+for /f "tokens=1,3" %%A in ('reg query "%FB_IF_CHAVE%" /v IPAddress 2^>nul') do if /i "%%A"=="IPAddress" call :FB_REDE_IP_ENDERECO "%%B"
+goto :EOF
+
+:FB_REDE_IP_ENDERECO
+:: %~1 = dado de IPAddress. REG_MULTI_SZ com mais de um endereco chega com os
+:: enderecos separados por "\0"; o primeiro identifica a interface no log.
+if "%~1"=="" goto :EOF
+if "%~1"=="0.0.0.0" goto :EOF
+set "FB_NET_ESTATICO=1"
+if defined FB_NET_IF goto :EOF
+for /f "tokens=1 delims=\" %%E in ("%~1") do set "FB_NET_IF=%%E"
 goto :EOF
 
 :FB_REDE_HOSTS
@@ -2107,24 +2348,112 @@ goto :EOF
 net stop spooler >nul 2>&1
 del /Q /F /S "%systemroot%\System32\Spool\Printers\*.*" >nul 2>&1
 net start spooler >nul 2>&1
+:: As TRES instrucoes acima permanecem exatamente como estavam: nada deixou de
+:: ser tentado. O que muda daqui para baixo e apenas a linha que vai para o log.
+::
+:: REPRODUZIDO em 27/08/2026, sessao NAO elevada: "net stop spooler" devolveu
+:: errorlevel 2 e a fila sequer pode ser lida - as tres instrucoes falharam -, e
+:: a rotina gravava assim mesmo "[ OK ] Fila de impressao limpa (Spooler
+:: resetado)". O contador de etapas ja registrava a etapa como PULADA, e isso
+:: continua correto: o defeito nunca esteve no estado global, e sim na linha que
+:: afirmava ao operador um estado final que a rotina nunca consultou.
+::
+:: Duas condicoes sao verificaveis aqui, e nenhuma delas sozinha basta:
+::   1. o Spooler ficou em execucao - releitura por "sc query", a mesma garantia
+::      que :FB_EXPLORER da com "tasklist" e que Reset-PrintSpooler ja da no
+::      caminho PowerShell. "sc query" imprime o nome do estado em constante
+::      ASCII (RUNNING), que nao e traduzida, entao a comparacao nao depende de
+::      acentuacao nem do idioma do Windows;
+::   2. havia privilegio para limpar a fila. Sem ele o Spooler continua RUNNING
+::      justamente porque nunca chegou a parar, e a condicao 1 sozinha
+::      confirmaria uma limpeza que nao aconteceu.
+:: %IS_ADMIN% e o mesmo indicador ja usado pela pre-condicao do Reparo Geral
+:: Automatico, com a deteccao em camadas da secao 2.2.
+sc query spooler 2>nul | find "RUNNING" >nul
+if errorlevel 1 goto FB_SPOOLER_NAO_CONFIRMADO
+if not "%IS_ADMIN%"=="1" goto FB_SPOOLER_SEM_PRIVILEGIO
 call :LOG_MSG "OK" "Fila de impressao limpa (Spooler resetado)."
 goto :EOF
 
+:FB_SPOOLER_SEM_PRIVILEGIO
+:: O servico esta em execucao, mas por nunca ter sido parado: o Windows recusa
+:: "net stop", "del" na fila e "net start" a quem nao e administrador.
+call :LOG_MSG "WARN" "Fila de impressao nao redefinida: parar o Spooler e limpar a fila exigem privilegio administrativo."
+call :LOG_MSG "INFO" "Feche esta janela e reabra o Launcher.bat com Executar como administrador."
+goto :EOF
+
+:FB_SPOOLER_NAO_CONFIRMADO
+:: Nao afirma que a operacao falhou: sc.exe bloqueado por diretiva produz o mesmo
+:: silencio que um servico que nao voltou. O que se pode afirmar e que a rotina
+:: nao confirmou o estado final. Mesma distincao de :FB_EXPLORER_NAO_CONFIRMADO.
+call :LOG_MSG "WARN" "Spooler nao confirmado em execucao apos a limpeza da fila de impressao."
+call :LOG_MSG "INFO" "Se a impressao nao voltar: services.msc / Spooler de Impressao / Iniciar."
+goto :EOF
+
 :FB_EXPLORER
+:: A espera usa ping, nao timeout: sob entrada redirecionada - o caso de
+:: "Launcher.bat /autofix" em RMM, GPO ou tarefa agendada - o timeout aborta na
+:: hora com "Input redirection is not supported" e o start disputava com o
+:: taskkill ainda em curso. O ping e o mesmo recurso ja usado no handoff de
+:: elevacao e nao depende do console.
 taskkill /f /im explorer.exe >nul 2>&1
-timeout /t 2 /nobreak >nul
+ping -n 3 127.0.0.1 >nul 2>&1
 start explorer.exe
+:: Verifica o estado final em vez de declarar sucesso pela ausencia de erro: sem
+:: shell o usuario fica sem area de trabalho e sem barra de tarefas, e a rotina
+:: afirmava "reiniciada" de qualquer forma. Mesma garantia que Explorer.ps1 ja da.
+ping -n 3 127.0.0.1 >nul 2>&1
+tasklist /fi "IMAGENAME eq explorer.exe" 2>nul | find /i "explorer.exe" >nul
+if errorlevel 1 goto FB_EXPLORER_NAO_CONFIRMADO
 call :LOG_MSG "OK" "Interface do Windows reiniciada."
 goto :EOF
 
+:FB_EXPLORER_NAO_CONFIRMADO
+:: Nao afirma que o Explorer falhou: um tasklist bloqueado por diretiva produz o
+:: mesmo silencio que um shell que nao subiu. O que se pode afirmar e que a
+:: rotina nao confirmou o estado final.
+call :LOG_MSG "WARN" "Nao foi possivel confirmar o Explorer em execucao apos o reinicio do shell."
+call :LOG_MSG "INFO" "Se a area de trabalho nao voltar: Ctrl+Shift+Esc / Arquivo / Executar nova tarefa / explorer.exe"
+goto :EOF
+
 :FB_EXPLORER_CACHE
+:: Etapa 5 do Reparo Geral Automatico quando nao ha PowerShell, e tambem a
+:: opcao [5][9]. Mesmas garantias de :FB_EXPLORER: espera por ping em vez de
+:: timeout - que aborta sob entrada redirecionada, o caso de "/autofix" em RMM,
+:: GPO e tarefa agendada - e verificacao do estado final.
+::
+:: A rotina afirmava "Cache reconstruido" sempre, mesmo com todos os "del"
+:: falhando e mesmo sem o shell voltar. O "del" nao devolve codigo confiavel
+:: por padrao, entao a confirmacao e feita por RELEITURA: se ainda houver
+:: arquivo de cache no disco, a reconstrucao foi parcial ou nao aconteceu.
 taskkill /f /im explorer.exe >nul 2>&1
+ping -n 3 127.0.0.1 >nul 2>&1
 del /q /f /a "%LocalAppData%\Microsoft\Windows\Explorer\thumbcache_*.db" >nul 2>&1
 del /q /f /a "%LocalAppData%\Microsoft\Windows\Explorer\iconcache_*.db" >nul 2>&1
 del /q /f /a "%LocalAppData%\IconCache.db" >nul 2>&1
-timeout /t 2 /nobreak >nul
+
+:: Releitura: sobrou algum arquivo de cache?
+set "FB_EC_RESTOU="
+if exist "%LocalAppData%\Microsoft\Windows\Explorer\thumbcache_*.db" set "FB_EC_RESTOU=1"
+if exist "%LocalAppData%\Microsoft\Windows\Explorer\iconcache_*.db" set "FB_EC_RESTOU=1"
+if exist "%LocalAppData%\IconCache.db" set "FB_EC_RESTOU=1"
+
 start explorer.exe
-call :LOG_MSG "OK" "Cache de icones e miniaturas reconstruido."
+ping -n 3 127.0.0.1 >nul 2>&1
+tasklist /fi "IMAGENAME eq explorer.exe" 2>nul | find /i "explorer.exe" >nul
+if errorlevel 1 goto FB_EXPLORER_CACHE_SEM_SHELL
+if defined FB_EC_RESTOU goto FB_EXPLORER_CACHE_PARCIAL
+call :LOG_MSG "OK" "Cache de icones e miniaturas reconstruido e shell reiniciado."
+goto :EOF
+
+:FB_EXPLORER_CACHE_PARCIAL
+call :LOG_MSG "WARN" "Reconstrucao parcial: parte dos arquivos de cache continua em uso e permaneceu no disco."
+call :LOG_MSG "INFO" "Reiniciar o computador e repetir libera os arquivos que estavam abertos."
+goto :EOF
+
+:FB_EXPLORER_CACHE_SEM_SHELL
+call :LOG_MSG "ERR" "O Explorer nao foi confirmado em execucao apos a limpeza do cache."
+call :LOG_MSG "INFO" "Se a area de trabalho nao voltar: Ctrl+Shift+Esc / Arquivo / Executar nova tarefa / explorer.exe"
 goto :EOF
 
 :FB_GPO_RESET
@@ -3289,6 +3618,18 @@ set "RC_FINAL=0"
 if not defined CLI_MODE goto FIM_SAIDA
 if not "%MOD_WARN%"=="0" set "RC_FINAL=1"
 if not "%MOD_ERR%"=="0" set "RC_FINAL=2"
+:: Desfecho do Reparo Geral Automatico, quando a rotina foi executada.
+:: MOD_SKIP nao alimenta RC_FINAL - decisao correta para o resto do sistema, em
+:: que uma capacidade ausente nao e erro. Para /autofix ela produzia um falso
+:: sucesso: numa maquina sem PowerShell as sete etapas eram desviadas para as
+:: rotinas Batch, nada era medido e a automacao recebia 0. AF_RC so existe se
+:: :MOD_AUTO_FIX_CORE rodou, entao /audit, /clean e /report ficam intactos.
+:: Linhas planas de proposito: dentro de um bloco entre parenteses %RC_FINAL%
+:: seria expandido na analise do bloco e leria o valor anterior.
+if not defined AF_RC goto FIM_RC_PRONTO
+if "%AF_RC%"=="1" if "%RC_FINAL%"=="0" set "RC_FINAL=1"
+if "%AF_RC%"=="2" set "RC_FINAL=2"
+:FIM_RC_PRONTO
 if not "%RC_FINAL%"=="0" call :LOG_MSG "INFO" "Codigo de saida: %RC_FINAL% (0=OK 1=atencao 2=erro)"
 
 :FIM_SAIDA

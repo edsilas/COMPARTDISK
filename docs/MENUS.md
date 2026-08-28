@@ -30,6 +30,11 @@ Executa em sequência, sem perguntar nada: limpeza profunda, reset de rede, repa
 Windows Update, fila de impressão, reinício do Explorer, reparo profundo do sistema e
 relatório final. De 20 a 60 minutos. **Reinicie ao terminar.**
 
+Exige sessão administrativa. Se a elevação tiver sido recusada, a opção avisa antes de
+começar e pergunta se você quer prosseguir mesmo assim — é a única pergunta da rotina.
+Em linha de comando (`/autofix`) não há pergunta: a execução é recusada e o código de
+saída é `2`.
+
 ### `2` — Aplicativos 🟡
 
 Abre o submenu de aplicativos, com três capacidades independentes.
@@ -191,7 +196,7 @@ política alguma.
 
 | Tecla | Opção | Tipo |
 |---|---|---|
-| `1` | Reset Completo (DNS, Winsock, TCP/IP, ARP, IPv6, Proxy) | 🟡 |
+| `1` | Reset Completo (DNS, Winsock, TCP/IP, ARP, IPv6) | 🟡 |
 | `2` | Restaurar Arquivo Hosts | 🟡 |
 | `3` | Restaurar Firewall | 🟡 |
 | `4` | Diagnóstico de Adaptadores, DNS, DHCP, MTU e Rotas | 🔵 |
@@ -200,8 +205,22 @@ política alguma.
 | `7` | Diagnóstico Wi-Fi | 🔵 |
 | `0` | Voltar | — |
 
-**`1` Reset Completo** — nove passos que devolvem a rede ao estado padrão. É a opção
+**`1` Reset Completo** — oito passos que devolvem a rede ao estado padrão. É a opção
 que mais resolve problemas de internet. **Reinicie depois.**
+
+Duas coisas **não** são tocadas, e é de propósito:
+
+- **Interface com endereço IP fixo.** Redefinir a pilha devolveria a configuração ao
+  DHCP e apagaria endereço, máscara, gateway e servidores DNS digitados à mão. Quando
+  há interface estática — ou quando o modo de endereçamento não pode ser determinado —
+  os passos de redefinição da pilha são pulados, com o motivo registrado no log. Para
+  executá-los mesmo assim: `Modules\Network.ps1 -Action Reset -Force`.
+- **Proxy WinHTTP.** É a configuração usada pelo Windows Update, pelo BITS e pelos
+  serviços do sistema, e em rede corporativa costuma ser a única rota de saída da
+  máquina. Consulte-o em `[3]` › `[6]`; para redefini-lo, é preciso pedir
+  explicitamente: `Modules\Network.ps1 -Action Reset -ResetProxy`.
+
+As duas proteções valem também no modo degradado, sem PowerShell.
 
 **`2` Restaurar Arquivo Hosts** — o arquivo `hosts` pode ser usado para bloquear
 sites; programas indesejados o alteram. Esta opção o devolve ao padrão, guardando

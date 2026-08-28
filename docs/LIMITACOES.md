@@ -27,12 +27,17 @@ limites:
 Não atualiza drivers pela internet e não baixa pacotes de reparo do Windows. O backup
 de drivers salva os que já estão instalados; ele não busca versões novas.
 
-Há exatamente dois pontos em que a ferramenta contata a rede, ambos explícitos na
-interface: o **teste de conectividade** (`[3]` › `[5]`), que consulta os servidores de
-teste da Microsoft e o DNS público `8.8.8.8`; e a **atualização de definições do
-Defender** (`[6]` › `[3]`, também executada pelo Reparo Geral Automático), que baixa
-as assinaturas dos servidores da Microsoft. Nenhum dado da máquina é enviado em
-nenhum dos dois.
+São três os pontos em que a ferramenta contata a rede por conta própria, todos
+explícitos na interface: o **teste de conectividade** (`[3]` › `[5]`), que consulta os
+servidores de teste da Microsoft e o DNS público `8.8.8.8`; a **atualização de
+definições do Defender** (`[6]` › `[3]`), que baixa as assinaturas dos servidores da
+Microsoft; e o **reparo profundo da imagem** (`[5]` › `[1]`, também executado pelo
+Reparo Geral Automático), em que o `DISM /RestoreHealth` busca no Windows Update os
+arquivos que faltam no armazenamento local de componentes. Nenhum dado da máquina é
+enviado em nenhum dos três.
+
+> A atualização de definições do Defender **não** faz parte do Reparo Geral
+> Automático: ela é executada apenas quando você escolhe `[6]` › `[3]`.
 
 ### Não altera arquivos pessoais
 
@@ -65,7 +70,7 @@ Microsoft Store. Antes de aplicar qualquer nível acima de Seguro, use a simula�
 A limpeza do armazenamento de componentes também é definitiva, e com `/ResetBase`
 (nível Avançado) as atualizações já instaladas deixam de ser desinstaláveis.
 
-### O perfil usado é o de quem elevou
+### O perfil usado é o de quem elevou
 A ferramenta roda elevada. Quando a elevação é feita com **uma conta de administrador
 diferente** da que está usando o computador — cenário comum em ambiente corporativo —
 as operações que dependem do perfil do usuário atuam sobre o perfil do administrador,
@@ -95,6 +100,54 @@ completamente.
 
 Arquivos apagados pelas opções de limpeza **não vão para a lixeira**. Por isso existe
 a opção de simulação (menu `4` → `4`), que mede o espaço recuperável sem apagar nada.
+
+### Os backups do Windows Update não são apagados automaticamente
+
+**Pendência operacional — limpeza manual.**
+
+O reset do Windows Update (`[5]` › `[2]`, e a etapa 3 do Reparo Geral Automático) não
+apaga os repositórios: renomeia. A cada execução em que houve o que redefinir, ficam
+no disco:
+
+| Backup | Conteúdo | Tamanho típico |
+|---|---|---|
+| `C:\Windows\SoftwareDistribution.old[_<carimbo>]` | `DataStore.edb` (histórico de atualizações), `ReportingEvents.log`, downloads | dezenas de MB |
+| `C:\Windows\System32\catroot2.old[_<carimbo>]` | bases de catálogo do CryptSvc | dezenas de MB |
+
+O primeiro backup fica sem carimbo de data: é o estado anterior à primeira execução da
+ferramenta, e é o que se preserva de propósito. Os seguintes recebem carimbo.
+
+**A ferramenta não remove nenhum deles, e isso é deliberado.** O `DataStore.edb` guarda
+o histórico de atualizações da máquina, que não é regenerável; a própria ferramenta
+recomenda repetir o reset quando algo fica bloqueado, de modo que um backup antigo pode
+ser a única cópia do estado anterior. Exclusão automática dentro de `C:\Windows`, em
+execução desassistida, seria destrutiva por natureza — não há política de retenção
+suficientemente segura definida pelo projeto.
+
+Quando o Windows Update voltar a funcionar e o espaço fizer falta, a remoção é decisão
+do administrador, feita à mão, em sessão elevada, conferindo antes o que cada pasta
+contém. Não existe tarefa agendada, rotina automática nem opção de menu para isso.
+
+> No modo degradado, sem PowerShell, o `catroot2.old` anterior **é** removido antes de
+> um novo reset. A rotina Batch usa nome de destino fixo, e `ren` falha quando o destino
+> já existe: sem a remoção, o `catroot2` não seria redefinido a partir da segunda
+> execução. O `SoftwareDistribution.old` continua preservado também nesse caminho,
+> porque ali o nome do backup recebe o identificador da sessão.
+
+### A proteção de endereço fixo é decidida pelo IPv4
+
+O reset de rede pula a redefinição da pilha quando encontra interface com endereço IPv4
+fixo — ou quando não consegue determinar o modo de endereçamento. Esse mesmo critério
+decide as duas famílias: IPv4 **e** IPv6.
+
+A consequência é declarada: numa interface que receba IPv4 por DHCP e tenha IPv6
+configurado à mão, o reset é permitido e o `netsh int ipv6 reset` devolve também o IPv6
+ao padrão. É uma configuração incomum, e o critério é o mesmo nos dois caminhos — módulo
+PowerShell e rotina Batch —, então não há divergência entre eles. Quem mantiver IPv6
+manual deve conferir a configuração depois do reset, ou não executar a opção.
+
+Endereço IPv6 de link local (`fe80::`) não conta como configuração manual: ele é gerado
+pelo próprio Windows e recriado sozinho.
 
 ### Sem PowerShell, o diagnóstico é mais simples
 

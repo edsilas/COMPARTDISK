@@ -347,8 +347,38 @@ function Sync-UpdateServiceItem {
     <# Releitura pontual e barata de um servico apos uma alteracao. #>
     [CmdletBinding()] param([Parameter(Mandatory)][string]$Name)
     $snap = Get-UpdateServiceSnapshot
-    if (-not $snap.Contains($Name)) { return $null }
-    $item = $snap[$Name]
+    if ($snap.Contains($Name)) {
+        $item = $snap[$Name]
+    } else {
+        # Servico FORA do catalogo: e o caso dos dependentes descobertos em
+        # tempo de execucao por Get-UpdateRunningDependents (AppIDSvc depende de
+        # CryptSvc, por exemplo). Devolver $null aqui fazia
+        # Invoke-UpdateServiceTransition classificar o dependente como
+        # "Servico inexistente" e registrar ERRO na Fase 5 - e, pior que o falso
+        # diagnostico, o servico derrubado junto pelo Stop-Service -Force NAO era
+        # religado, quebrando justamente a reversibilidade que a captura dos
+        # dependentes existe para garantir.
+        # EVIDENCIA: execucao real de 27/08/2026, Fase 5,
+        # "Restaurar dependente AppIDSvc ERRO Servico inexistente".
+        $item = [pscustomobject]@{
+            Nome                  = $Name
+            Descricao             = $Name
+            Papel                 = 'Dependente'
+            Existe                = $false
+            Estado                = 'ausente'
+            Inicializacao         = 'n/d'
+            InicializacaoRegistro = 'n/d'
+            AtrasadoAutomatico    = $false
+            # Nao e gerenciado pelo modulo: so restaurado ao estado anterior.
+            Gerenciado            = $false
+            Desejado              = $null
+            EsperadoEmExecucao    = $false
+            AplicavelNestaBuild   = $true
+            ConsultaOk            = $true
+            Fonte                 = 'n/d'
+            UltimoErro            = ''
+        }
+    }
     try {
         $s = Get-Service -Name $Name -ErrorAction Stop
         $item.Existe = $true

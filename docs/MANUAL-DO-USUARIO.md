@@ -107,6 +107,10 @@ não está disponível: tudo continua funcionando, com diagnóstico mais simples
 **O que é:** o "conserte tudo". Executa sete rotinas de reparo em sequência, sem
 perguntar nada.
 
+**Precisa de quê:** de privilégio de administrador. A ferramenta já pede a elevação
+sozinha ao abrir. Se você tiver recusado, esta opção avisa antes de começar e pergunta
+se quer prosseguir assim mesmo — a maioria das etapas seria recusada pelo Windows.
+
 **Quando usar:** quando o computador está com vários problemas e você não sabe por
 onde começar.
 

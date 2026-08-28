@@ -36,9 +36,18 @@ veja o [Manual do Usuário](MANUAL-DO-USUARIO.md).
 
 ## Rede e conectividade
 
-**Reset completo** executa nove passos: liberação e renovação de endereço, limpeza do
+**Reset completo** executa oito passos: liberação e renovação de endereço, limpeza do
 cache de nomes, reinicialização do Winsock, do TCP/IP e do IPv6, limpeza da tabela
-ARP, remoção do proxy do WinHTTP e novo registro no DNS.
+ARP e novo registro no DNS.
+
+A redefinição da pilha TCP/IP e do IPv6 é **pulada** quando há interface com endereço
+fixo, ou quando o modo de endereçamento não pode ser determinado: ela devolveria a
+configuração ao DHCP e apagaria o endereço manual. `-Force` executa mesmo assim.
+
+A **remoção do proxy do WinHTTP não faz parte** do reset: é a configuração usada pelo
+Windows Update, pelo BITS e pelos serviços do sistema, e apagá-la deixa sem saída a
+máquina cuja rede depende de proxy corporativo. Ela é consultada em `[3]` › `[6]` e só
+é redefinida quando pedida por `-ResetProxy`.
 
 **Arquivo hosts** é restaurado ao conteúdo padrão da Microsoft, com cópia do anterior
 gravada antes.

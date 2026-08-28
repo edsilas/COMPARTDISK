@@ -174,21 +174,31 @@ function Enable-Uac {
 }
 
 # ------------------------------------------------------------------------------
+$codigo = $Global:CompartDisk.Exit.ERROR
 try {
     $precisaAdmin = @('GpoReset', 'Takeown', 'Uac') -contains $Action
     if (-not (Start-CompartDiskModule -Name 'Security' -Action $Action -RequireAdmin:$precisaAdmin -Quiet:$Quiet)) {
-        exit $Global:CompartDisk.Exit.ERROR
-    }
-
-    switch ($Action) {
-        'Status'   { Show-SecurityPosture }
-        'GpoReset' { Reset-LocalGpo }
-        'Takeown'  { Grant-AdminOwnership -Alvo $Path }
-        'Uac'      { Enable-Uac }
-        'Firewall' {
-            $fw = Get-CompartDiskFirewallInfo
-            $fw | Format-Table -AutoSize | Out-String -Width 160 | Write-Output
-            Add-CompartDiskSection -Title 'Perfis de firewall' -Status OK -Rows $fw
+        # Antes havia um 'exit' direto aqui. Em PowerShell o exit dispara o
+        # finally, e o finally persistia $result ainda em 'OK': GpoReset, Takeown
+        # e Uac recusadas por falta de privilegio saiam com codigo 2 enquanto
+        # gravavam Resultado=OK no state_Security_<Acao>.json.
+        # O Report.ps1 agrega TODOS os state_*.json da sessao, entao esse estado
+        # falso contaminava tambem o relatorio final do Reparo Geral Automatico
+        # quando o operador passava por [6] antes de rodar a opcao [1].
+        # Mesma correcao ja aplicada em Repair.ps1, Update.ps1, Smart.ps1 e
+        # Explorer.ps1.
+        $result = 'ERROR'
+    } else {
+        switch ($Action) {
+            'Status'   { Show-SecurityPosture }
+            'GpoReset' { Reset-LocalGpo }
+            'Takeown'  { Grant-AdminOwnership -Alvo $Path }
+            'Uac'      { Enable-Uac }
+            'Firewall' {
+                $fw = Get-CompartDiskFirewallInfo
+                $fw | Format-Table -AutoSize | Out-String -Width 160 | Write-Output
+                Add-CompartDiskSection -Title 'Perfis de firewall' -Status OK -Rows $fw
+            }
         }
     }
 } catch {
@@ -197,5 +207,6 @@ try {
     Add-CompartDiskFinding -Severity CRIT -Area 'Seguranca' -Message "Excecao no modulo: $($_.Exception.Message)"
 } finally {
     $codigo = Stop-CompartDiskModule -Result $result -Quiet:$Quiet
+    if ($null -eq $codigo) { $codigo = $Global:CompartDisk.Exit[$result] }
 }
-exit $codigo
+exit ([int]$codigo)

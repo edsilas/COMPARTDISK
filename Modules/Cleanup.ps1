@@ -268,7 +268,37 @@ function Test-CleanupTargetSafety {
         return $out
     }
 
-    if (-not (Test-Path -LiteralPath $norm)) {
+    # Test-Path devolve $false para "nao existe", mas NAO devolve $false para
+    # "acesso negado": ele emite um erro nao terminante e, sob o
+    # $ErrorActionPreference = 'Stop' declarado no topo deste modulo, esse erro
+    # vira excecao terminante.
+    #
+    # REPRODUZIDO em execucao real (27/08/2026, sessao NAO elevada):
+    #   Modules\Cleanup.ps1 -Action Analyze
+    #   [INFO] Analisando 27 alvo(s) sem remover nada...
+    #   [ERRO] Falha nao tratada no modulo Cleanup (Acao=Analyze). Acesso negado
+    #   codigo de saida 2, em 0,46 s, sem analisar um unico alvo
+    # O alvo 'Cache de fontes' (%SystemRoot%\ServiceProfiles\LocalService\
+    # AppData\Local\FontCache) nega a travessia a quem nao e administrador, a
+    # UnauthorizedAccessException subia por Invoke-CleanupAnalysis ate o catch do
+    # modulo e derrubava a opcao [4][4] inteira - justamente na acao que o
+    # despacho declara nao exigir elevacao ("sem administrador a analise apenas
+    # enxerga menos"). Com privilegio administrativo o alvo e medido
+    # normalmente e nada aqui muda.
+    #
+    # Negativa de acesso e um estado DO ALVO, nao uma falha do modulo, e nao pode
+    # virar 'inexistente': o alvo existe e continua ocupando espaco. O desfecho e
+    # o mesmo ja definido logo abaixo para a negativa de acesso do Get-Item -
+    # 'alvo inacessivel' -, que Invoke-CleanupAnalysis e Invoke-CleanupTarget ja
+    # tratam e que entra na contagem de falhas, sem estado novo no relatorio.
+    $existe = $false
+    try {
+        $existe = Test-Path -LiteralPath $norm
+    } catch {
+        $out.Motivo = ('alvo inacessivel: {0}' -f $_.Exception.Message)
+        return $out
+    }
+    if (-not $existe) {
         $out.Ok = $true; $out.Existe = $false; $out.Tipo = 'inexistente'
         $out.Motivo = 'alvo inexistente'
         return $out
@@ -826,11 +856,28 @@ function Invoke-CleanupTarget {
         return $out
     }
 
-    if ($out.Bloqueados -gt 0) {
+    # 'impedido' e 'parcial' descrevem condicoes diferentes e nao podem ficar no
+    # mesmo estado: em 'parcial' a limpeza funcionou e apenas preservou o que
+    # estava aberto; em 'impedido' havia itens elegiveis e NENHUM saiu, que e o
+    # caso digno de atencao.
+    if ($out.Bloqueados -gt 0 -and $out.Removidos -eq 0) {
+        $out.Estado = 'impedido'
+        $out.Detalhe = ("{0} item(ns) elegivel(is) e nenhum removido: todos em uso ou inacessiveis" -f $out.Bloqueados)
+    } elseif ($out.Bloqueados -gt 0) {
         $out.Estado = 'parcial'
-        $out.Detalhe = ("{0} item(ns) em uso ou inacessivel(is)" -f $out.Bloqueados)
+        $out.Detalhe = ("{0} item(ns) em uso, preservados" -f $out.Bloqueados)
     } elseif ($out.Removidos -eq 0) {
-        $out.Estado = 'nada a remover'
+        # "Nada a remover" e uma AFIRMACAO sobre o conteudo do alvo, e so pode
+        # ser feita se o alvo chegou a ser medido. Quando a medicao inicial
+        # falhou - ACL impedindo a enumeracao, por exemplo - nada foi removido
+        # porque nada pode sequer ser listado, e declarar "ja estava limpo"
+        # seria inventar um resultado.
+        if (-not $antes.Ok) {
+            $out.Estado = 'nao medido'
+            $out.Detalhe = ('nenhum item removido e o alvo nao pode ser medido: {0}' -f (Get-CleanupSafeText $antes.Detalhe 'motivo nao informado'))
+        } else {
+            $out.Estado = 'nada a remover'
+        }
     } else {
         $out.Estado = 'limpo'
     }
@@ -871,7 +918,8 @@ function Invoke-Cleanup {
         switch ($r.Estado) {
             'limpo'    { Write-Log OK ("{0}: {1} liberados em {2} item(ns)." -f $r.Alvo, (ConvertTo-CompartDiskSize $r.BytesLiberados), $r.Removidos) }
             'removido' { Write-Log OK ("{0}: {1} liberados." -f $r.Alvo, (ConvertTo-CompartDiskSize $r.BytesLiberados)) }
-            'parcial'  { Write-Log WARN ("{0}: {1} liberados, {2} item(ns) em uso ou inacessivel(is)." -f $r.Alvo, (ConvertTo-CompartDiskSize $r.BytesLiberados), $r.Bloqueados) }
+            'parcial'  { Write-Log OK ("{0}: {1} liberados; {2} item(ns) em uso, preservados." -f $r.Alvo, (ConvertTo-CompartDiskSize $r.BytesLiberados), $r.Bloqueados) }
+            'impedido' { Write-Log WARN ("{0}: {1} item(ns) elegivel(is) e nenhum removido - todos em uso ou inacessiveis." -f $r.Alvo, $r.Bloqueados) }
             'nada a remover' { Write-Log INFO ("{0}: nada a remover." -f $r.Alvo) }
             'inexistente'    { Write-Log INFO ("{0}: alvo inexistente neste sistema." -f $r.Alvo) }
             default    { Write-Log WARN ("{0}: {1} ({2})." -f $r.Alvo, $r.Estado, (Get-CleanupSafeText $r.Detalhe '')) }
@@ -883,8 +931,9 @@ function Invoke-Cleanup {
     foreach ($r in $todas) { $liberado += [long]$r.BytesLiberados; $bloqueados += [int]$r.Bloqueados; $removidos += [int]$r.Removidos }
     $limpos      = @($todas | Where-Object { $_.Estado -eq 'limpo' -or $_.Estado -eq 'removido' }).Count
     $parciais    = @($todas | Where-Object { $_.Estado -eq 'parcial' }).Count
+    $impedidos   = @($todas | Where-Object { $_.Estado -eq 'impedido' }).Count
     $inexistentes= @($todas | Where-Object { $_.Estado -eq 'inexistente' }).Count
-    $falhos      = @($todas | Where-Object { $_.Estado -eq 'falhou' -or $_.Estado -eq 'raiz removida' -or $_.Estado -eq 'recusado pelo Core' -or $_.Estado -eq 'bloqueado por protecao' -or $_.Estado -eq 'bloqueado' })
+    $falhos      = @($todas | Where-Object { $_.Estado -eq 'falhou' -or $_.Estado -eq 'raiz removida' -or $_.Estado -eq 'recusado pelo Core' -or $_.Estado -eq 'bloqueado por protecao' -or $_.Estado -eq 'bloqueado' -or $_.Estado -eq 'nao medido' })
 
     # ------------------------------------------------------------------ lixeira
     $lixeira = [pscustomobject]@{ Executada = $false; Ok = $false; Detalhe = 'nao aplicavel a esta acao' }
@@ -954,7 +1003,23 @@ function Invoke-Cleanup {
 
     # ------------------------------------------------------------------ status
     $nivel = 'OK'
-    if ($falhos.Count -gt 0 -or $parciais -gt 0 -or $bloqueados -gt 0) { $nivel = 'WARN' }
+    # Item aberto por outro processo e a condicao NORMAL de um sistema em uso: o
+    # arquivo e PRESERVADO de proposito, nao perdido, e o proprio catalogo de
+    # alvos declara isso ("downloads em andamento ficam bloqueados e sao
+    # preservados", "os em uso pelo servico permanecem bloqueados").
+    #
+    # Elevar o nivel por causa dele fazia a limpeza terminar "com atencao" em
+    # praticamente toda execucao - em %TEMP%, no INetCache, no cache de fontes e
+    # no cache de icones sempre ha algum arquivo aberto. MEDIDO nesta base: com o
+    # Explorer ativo, 8 de 30 arquivos de cache de icones ficam bloqueados. Um
+    # alerta que dispara sempre deixa de ser alerta, e o efeito chegava ate o
+    # codigo de saida de "/autofix", que devolvia 1 como resultado de rotina.
+    #
+    # O numero NAO desaparece: continua na coluna Bloqueados de cada alvo e em
+    # "Itens em uso (preservados)". O que muda de nivel e o alvo onde havia itens
+    # elegiveis e NENHUM saiu - 'impedido' -, que e a condicao realmente digna de
+    # atencao, e as falhas estruturais, que ja elevavam antes.
+    if ($falhos.Count -gt 0 -or $impedidos -gt 0) { $nivel = 'WARN' }
     if (-not $ganhoOk) { $nivel = 'WARN' }
     if ($dns.Executada -and -not $dns.Ok) { $nivel = 'WARN' }
     if ($lixeira.Executada -and -not $lixeira.Ok) { $nivel = 'WARN' }
@@ -967,6 +1032,7 @@ function Invoke-Cleanup {
         'Alvos processados'        = $todas.Count
         'Alvos limpos'             = $limpos
         'Alvos parciais'           = $parciais
+        'Alvos impedidos'          = $impedidos
         'Alvos ja limpos'          = @($todas | Where-Object { $_.Estado -eq 'nada a remover' }).Count
         'Alvos inexistentes'       = $inexistentes
         'Alvos com falha'          = $falhos.Count
@@ -986,6 +1052,7 @@ function Invoke-Cleanup {
         (ConvertTo-CompartDiskSize $liberado), $removidos, $bloqueados, $jaLimpos, $ganhoTexto)
     $rec = ''
     if ($bloqueados -gt 0) { $rec = 'Itens em uso sao preservados por seguranca: repetir apos fechar as aplicacoes que os mantem abertos.' }
+    if ($impedidos -gt 0) { $rec = ('{0} alvo(s) nao tiveram nenhum item removido apesar de haver itens elegiveis: conferir a coluna Estado e repetir apos reiniciar o computador.' -f $impedidos) }
     if ($falhos.Count -gt 0) { $rec = 'Conferir os alvos com falha na tabela da secao antes de repetir a operacao.' }
     if (-not $ganhoOk) { $rec = ('O ganho real nao pode ser medido ({0}); a soma logica permanece valida como referencia.' -f (Get-CleanupSafeText $espacoAntes.Detalhe '')) }
 
@@ -1184,7 +1251,11 @@ function Clear-EventLogs {
             default       { Write-Log WARN ("{0}: {1} ({2})." -f $r.Alvo, $r.Estado, (Get-CleanupSafeText $r.Detalhe '')) }
         }
     }
-    $dumpsFalhos = @($linhasDump | Where-Object { $_.Estado -eq 'bloqueado' -or $_.Estado -eq 'falhou' -or $_.Estado -eq 'parcial' -or $_.Estado -eq 'bloqueado por protecao' })
+    # 'impedido' entra junto com 'parcial': aqui o operador pediu explicitamente
+    # para apagar dumps e logs de eventos, entao qualquer item que sobrou conta
+    # como pendencia - inclusive o alvo em que NADA saiu, que antes da separacao
+    # dos dois estados vinha rotulado como 'parcial' e ja era contado.
+    $dumpsFalhos = @($linhasDump | Where-Object { $_.Estado -eq 'bloqueado' -or $_.Estado -eq 'falhou' -or $_.Estado -eq 'parcial' -or $_.Estado -eq 'impedido' -or $_.Estado -eq 'nao medido' -or $_.Estado -eq 'bloqueado por protecao' })
 
     # ------------------------------------------------------------------ status
     $nivel = 'OK'

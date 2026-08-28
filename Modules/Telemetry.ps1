@@ -241,15 +241,26 @@ function Set-Telemetry {
 }
 
 # ------------------------------------------------------------------------------
+$codigo = $Global:CompartDisk.Exit.ERROR
 try {
     $precisaAdmin = @('Disable', 'Enable') -contains $Action
     if (-not (Start-CompartDiskModule -Name 'Telemetry' -Action $Action -RequireAdmin:$precisaAdmin -Quiet:$Quiet)) {
-        exit $Global:CompartDisk.Exit.ERROR
-    }
-    switch ($Action) {
-        'Status'  { Show-TelemetryStatus }
-        'Disable' { Set-Telemetry -Desabilitar $true }
-        'Enable'  { Set-Telemetry -Desabilitar $false }
+        # Antes havia um 'exit' direto aqui. Em PowerShell o exit dispara o
+        # finally, e o finally persistia $result ainda em 'OK': Disable e Enable
+        # recusadas por falta de privilegio saiam com codigo 2 enquanto gravavam
+        # Resultado=OK no state_Telemetry_<Acao>.json.
+        # O Report.ps1 agrega TODOS os state_*.json da sessao, entao esse estado
+        # falso contaminava tambem o relatorio final do Reparo Geral Automatico
+        # quando o operador passava por [4] antes de rodar a opcao [1].
+        # Mesma correcao ja aplicada em Repair.ps1, Update.ps1, Smart.ps1,
+        # Explorer.ps1 e Security.ps1.
+        $result = 'ERROR'
+    } else {
+        switch ($Action) {
+            'Status'  { Show-TelemetryStatus }
+            'Disable' { Set-Telemetry -Desabilitar $true }
+            'Enable'  { Set-Telemetry -Desabilitar $false }
+        }
     }
 } catch {
     $result = 'ERROR'
@@ -257,5 +268,6 @@ try {
     Add-CompartDiskFinding -Severity CRIT -Area 'Privacidade' -Message "Excecao no modulo: $($_.Exception.Message)"
 } finally {
     $codigo = Stop-CompartDiskModule -Result $result -Quiet:$Quiet
+    if ($null -eq $codigo) { $codigo = $Global:CompartDisk.Exit[$result] }
 }
-exit $codigo
+exit ([int]$codigo)

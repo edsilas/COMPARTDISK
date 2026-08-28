@@ -9,7 +9,207 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-Sem alterações pendentes.
+Auditoria do **Reparo Geral Automático** (opção `1` e `/autofix`) e das rotinas Batch de
+contingência. Nenhuma etapa foi acrescentada, removida ou reordenada; nenhum menu, código
+de saída, argumento de automação ou esquema de relatório mudou de contrato. O que muda é
+**o que a ferramenta afirma sobre o que ela verificou** — e os casos em que uma operação
+não acontecia, ou acontecia onde não devia.
+
+### Segurança
+
+- **Fallback de rede redefinia a pilha IP de máquina com endereço fixo.** `Network.ps1`
+  recusa `netsh int ip reset` e `netsh int ipv6 reset` quando detecta interface com
+  endereço estático, e só as executa com `-Force` (etapas E e F). A rotina Batch
+  equivalente, `:FB_REDE_RESET`, executava as duas incondicionalmente: numa máquina de IP
+  fixo **sem PowerShell** — exatamente o cenário em que esse fallback existe — o caminho
+  degradado destruía endereço, máscara, gateway e servidores DNS que o caminho principal
+  protege.
+
+  A detecção passou a ser feita pelo registro
+  (`Tcpip\Parameters\Interfaces\<GUID>\EnableDHCP` e `IPAddress`), e não pela saída do
+  `netsh` ou do `ipconfig`, que é **traduzida**: procurar por "DHCP Habilitado" seria uma
+  proteção que falha em silêncio no idioma não previsto, justamente permitindo o reset
+  destrutivo. Os nomes de valor do registro não mudam com o idioma, `reg query /v` faz
+  correspondência exata de nome e a leitura não exige privilégio administrativo, então a
+  proteção continua valendo na sessão degradada.
+
+  `EnableDHCP=0x0` sozinho não basta — adaptador virtual nunca configurado também aparece
+  assim —, então é exigido endereço manual gravado em `IPAddress`, e `0.0.0.0` conta como
+  configuração apagada. Quando a chave não pode ser lida ou nenhuma interface devolve
+  `EnableDHCP`, o modo de endereçamento é indeterminado e o reset **não** é aplicado às
+  cegas, como no módulo. As demais instruções — `flushdns`, `release`/`renew`,
+  `winsock reset` e `arp -d` — não dependem do modo de endereçamento e continuam
+  incondicionais, na mesma ordem de antes. Quando a pilha é preservada, a rotina registra
+  `WARN` com o motivo, nunca `OK`.
+
+- **Fallback de rede apagava o proxy WinHTTP da máquina.** O módulo tirou
+  `netsh winhttp reset proxy` do reset padrão e o colocou atrás de `-ResetProxy`, porque a
+  operação destrói configuração de proxy corporativo e não pertence à pilha TCP/IP
+  (`Network.ps1`, etapa I). A rotina Batch continuava executando-a **sempre** — e chegava
+  a registrar "a configuração IP manual foi preservada" na mesma execução em que apagava o
+  proxy.
+
+  O proxy WinHTTP é a configuração usada pelo Windows Update, pelo BITS e pelos serviços
+  do sistema — não pelo navegador, que lê a configuração por usuário (WinINet) —, e em
+  parque corporativo costuma ser a única rota de saída da máquina. `reset proxy` a
+  substitui por acesso direto.
+
+  A proteção não exigiu detecção nenhuma: o módulo também não detecta nada, apenas não
+  executa por padrão. Sem parsing de saída traduzida e sem heurística. A capacidade
+  continua alcançável onde pertence — consulta em `[3]` › `[6]`, redefinição explícita por
+  `Network.ps1 -Action Reset -ResetProxy`.
+
+### Corrigido
+
+- **Cache legado de ícones nunca era removido** por `[5]` › `[9]`. O Windows cria
+  `%LOCALAPPDATA%\IconCache.db` com o atributo oculto, e `Get-Item` sem `-Force` recusa
+  item oculto com `IOException`. A exceção caía no `catch` **antes** do `Remove-Item`, e o
+  arquivo era contado como bloqueado: a rotina publicava "todos continuam em uso" para um
+  arquivo que nenhum processo mantinha aberto.
+
+- **Janela do Explorador aberta sem ninguém pedir**, também em `[5]` › `[9]`. O Windows
+  recoloca o shell padrão sozinho, em cerca de 200 ms — bem dentro da espera de 2 s da
+  rotina —, e com o shell já de volta o `Start-Process` final não cria processo: abre uma
+  janela na área de trabalho do operador. Passa a valer a mesma condição que
+  `Restart-ShellExplorer` já aplicava, e que faltava só aqui. A verificação final do shell
+  continua sendo feita nos dois caminhos.
+
+- **`Simular Limpeza` (`[4]` › `[4]`) abortava por inteiro em sessão não elevada.**
+  `Test-Path` não devolve `$false` para acesso negado: emite erro não terminante que, sob
+  o `$ErrorActionPreference = 'Stop'` do módulo, vira exceção. O alvo *Cache de fontes*
+  (`ServiceProfiles\LocalService\AppData\Local\FontCache`) nega a travessia a quem não é
+  administrador, e a exceção subia até o `catch` do módulo: a análise terminava com código
+  `2` sem avaliar um único alvo, justamente na ação que o despacho declara **não** exigir
+  elevação. Negativa de acesso passa a ser um estado do alvo — `alvo inacessível`, o mesmo
+  desfecho já definido para a negativa de acesso do `Get-Item` —, e a análise segue.
+
+- **Fila de impressão declarada limpa sem consulta ao estado final.** `:FB_SPOOLER`
+  gravava `[ OK ] Fila de impressao limpa (Spooler resetado)` mesmo quando `net stop`,
+  `del` e `net start` haviam sido todos recusados pelo Windows. As três instruções
+  continuam idênticas — nada deixou de ser tentado —, mas a linha do log passa a depender
+  de duas condições verificáveis: o Spooler em execução, lido por `sc query`, e privilégio
+  administrativo presente. Sem privilégio o serviço continua em execução justamente por
+  nunca ter parado, e a primeira condição sozinha confirmaria uma limpeza que não houve.
+
+- **Etapas do Reparo Geral Automático fora do contrato eram lidas como sucesso.**
+  `:RUN_PS_END` tratava `{0,1,2,3,9001,9002}` e nada mais: um módulo interrompido pelo
+  operador, morto pelo sistema ou terminado por falha fatal do PowerShell não movia
+  contador nenhum, e `:AF_ETAPA` — que decide pela variação dos contadores — lia "nenhum
+  contador mudou" como etapa concluída. Qualquer código fora do contrato passa a contar
+  como erro. O código `9009` do próprio `cmd` ("comando não encontrado") entra no contrato
+  como `9001`, que é a condição que ele descreve.
+
+- **`/autofix` devolvia `0` para execução que o Launcher não mediu.** Numa máquina sem
+  PowerShell as sete etapas eram desviadas para as rotinas Batch, nada era verificado e a
+  automação recebia sucesso. `AF_RC` carrega o desfecho da rotina para o código de saída no
+  vocabulário já documentado, com desfecho próprio para "não confirmado", distinto de
+  "com ressalvas". `AF_RC` nunca rebaixa um resultado mais grave já registrado.
+
+- **Reparo Geral Automático sem elevação consumia de 20 a 60 minutos produzindo falhas
+  previsíveis.** Seis das sete etapas são recusadas pelo Windows nessa condição. Passa a
+  haver pré-condição de privilégio: em linha de comando a execução é recusada com código
+  `2`; no menu o operador é avisado e decide.
+
+- **A etapa 7 não tinha rota de contingência.** `:MOD_RELATORIO_SILENCIOSO` — chamada
+  apenas pela etapa de geração de relatórios do Reparo Geral Automático — era a única das
+  três rotinas de relatório sem o desvio para `:FB_RELATORIO`. Sem PowerShell, a última
+  etapa do reparo não produzia saída nenhuma: nem relatório, nem o caminho do log em texto,
+  e o operador ficava sem nada exatamente onde esperava o resultado da manutenção.
+
+- **Etapa 5 voltou a ser `MOD_EXPLORER` (reinício do shell).** Uma versão anterior a trocou
+  por `ClearCache` supondo que a etapa 1 não conseguia apagar os arquivos de cache em uso
+  pelo Explorer. A execução real refutou a suposição — a etapa 1 removeu os 30 arquivos com
+  o Explorer em execução — e, com `ClearCache`, a etapa passava a terminar em `WARN` em toda
+  execução, sem benefício. A limpeza do cache permanece na etapa 1 e em `[5]` › `[9]`.
+
+- **Dependente descoberto em tempo de execução não era religado** no reset do Windows
+  Update. `Sync-UpdateServiceItem` devolvia `$null` para serviço fora do catálogo — o caso
+  do `AppIDSvc`, capturado por depender do `CryptSvc` —, o que fazia a Fase 5 registrar
+  "Serviço inexistente" e, pior que o falso diagnóstico, deixar parado o serviço derrubado
+  junto pelo `Stop-Service -Force`, quebrando a reversibilidade que a captura dos
+  dependentes existe para garantir.
+
+- **Módulos gravavam `Resultado=OK` ao serem recusados por falta de privilégio.** Em
+  PowerShell o `exit` dispara o `finally`, e o `finally` persistia o resultado ainda em
+  `OK`: a ação saía com código `2` enquanto escrevia sucesso no `state_<Modulo>_<Acao>.json`.
+  Como o `Report.ps1` agrega todos os `state_*.json` da sessão, o estado falso contaminava
+  o relatório consolidado. Corrigido em `Security.ps1`, `Telemetry.ps1` e `Explorer.ps1`,
+  alinhando-os a `Repair.ps1`, `Update.ps1` e `Smart.ps1`.
+
+- **`:FB_EXPLORER` e `:FB_EXPLORER_CACHE` afirmavam sucesso sem verificar.** As duas passam
+  a confirmar o estado final por releitura — `tasklist` para o shell, presença dos arquivos
+  no disco para o cache — e a espera usa `ping` em vez de `timeout`, que aborta sob entrada
+  redirecionada, o caso de `/autofix` em RMM, GPO e tarefa agendada.
+
+### Alterado
+
+- **Item aberto por outro processo deixou de elevar o nível da limpeza.** É a condição
+  normal de um sistema em uso: o arquivo é preservado de propósito, não perdido, e o
+  próprio catálogo de alvos declara isso. Elevar o nível por causa dele fazia a limpeza
+  terminar "com atenção" em praticamente toda execução, e o efeito chegava ao código de
+  saída de `/autofix`. O número continua na coluna `Bloqueados` de cada alvo. O que passa a
+  elevar o nível é o alvo em que havia itens elegíveis e **nenhum** saiu — estado
+  `impedido`, separado de `parcial` —, além das falhas estruturais, que já elevavam.
+
+- **"Nada a remover" deixou de ser dito sobre alvo que não pôde ser medido.** É uma
+  afirmação sobre o conteúdo do alvo, e só cabe se o alvo chegou a ser medido; quando a
+  medição inicial falha, o estado passa a ser `não medido` e conta como falha.
+
+- **Classificação de `Clear-ShellCache` passou a representar a condição, não a contagem.**
+  Diretório ausente e cache já vazio são `OK`; diretório inacessível, reconstrução parcial
+  e reconstrução impedida são `WARN`; shell que não voltou é `ERROR`. O reinício do shell
+  deixou de depender da existência do diretório de cache e acontece em todos os caminhos
+  que não sejam falha do próprio shell.
+
+- **Rótulo do reset de rede deixou de prometer o que não é feito.** O menu `[3]` › `[1]`
+  anunciava `Reset Completo (DNS, Winsock, TCP/IP, ARP, IPv6, proxy)` desde antes de o
+  proxy sair do fluxo padrão. O rótulo passa a listar só o que a opção realmente executa.
+
+### Documentação
+
+- `README.md`, `docs/MANUAL-DO-ADMINISTRADOR.md`, `docs/MANUAL-DO-USUARIO.md` e
+  `docs/MENUS.md`: códigos de saída do modo desassistido, o significado de `1` e `2` em
+  `/autofix` e a pré-condição de privilégio do Reparo Geral Automático.
+- `docs/LIMITACOES.md`: os três pontos em que a ferramenta contata a rede por conta
+  própria, e o registro explícito de que a atualização de definições do Defender **não**
+  faz parte do Reparo Geral Automático.
+- **Deriva corrigida entre o que os documentos prometiam e o que o reset de rede faz.**
+  `docs/MENUS.md` e `docs/FUNCIONALIDADES.md` descreviam "nove passos" incluindo a
+  "remoção do proxy do WinHTTP", e o `README.md` dizia que a área de rede "restaura
+  proxy": nenhum dos três correspondia ao comportamento do módulo desde que o proxy virou
+  opt-in. Passam a descrever oito passos, a preservação do proxy e a preservação de
+  endereço IP fixo, com o caminho explícito para cada operação quando ela for mesmo
+  desejada.
+- `docs/LIMITACOES.md`, duas entradas novas: **os backups do Windows Update não são
+  apagados automaticamente** (pendência operacional, limpeza manual, com o conteúdo e o
+  tamanho típico de cada pasta e a razão de não haver automação) e **a proteção de
+  endereço fixo é decidida pelo IPv4** (limitação declarada, idêntica nos dois caminhos).
+
+### Pendências registradas — sem alteração de código
+
+- **Acúmulo de `SoftwareDistribution.old*`.** O backup guarda `DataStore.edb` e
+  `ReportingEvents.log`, que são histórico não regenerável do Windows Update. Não há
+  política de retenção automática segura: apagar destrói evidência de auditoria, e a
+  própria ferramenta recomenda repetir o reset quando algo fica bloqueado, de modo que um
+  backup antigo pode ser a única cópia do estado anterior à ferramenta.
+
+- **Acúmulo de `catroot2.old*`.** Conteúdo diferente e política diferente: são apenas as
+  bases de catálogo, reconstruídas pelo `CryptSvc` a partir de `System32\CatRoot`, que não
+  é tocada. A divergência entre os caminhos — o PowerShell preserva os backups, o Batch
+  apaga `catroot2.old` antes de renomear — é consequência do nome de destino fixo da rotina
+  Batch: `ren` falha quando o destino existe, e sem a remoção o `catroot2` nunca seria
+  redefinido numa segunda execução. Decisão arquitetural do fallback, não defeito.
+
+- **Proteção de endereço fixo decidida pelo IPv4, nas duas famílias.** Interface que
+  receba IPv4 por DHCP e tenha IPv6 configurado à mão passa pelo portão, e o
+  `netsh int ipv6 reset` devolve o IPv6 ao padrão. O critério é o mesmo no módulo e na
+  rotina Batch — não há divergência entre os caminhos —, a condição não foi reproduzida em
+  máquina real e uma proteção só na rotina Batch criaria a divergência oposta. Registrado
+  como limitação declarada em `docs/LIMITACOES.md`.
+
+- **`ipconfig /registerdns` não tem equivalente na rotina Batch.** O módulo tem a etapa H;
+  o fallback não a executa. É omissão, não destruição: o registro no DNS volta a
+  acontecer sozinho na próxima renovação de concessão.
 
 ---
 

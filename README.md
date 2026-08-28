@@ -156,7 +156,7 @@ Detalhes completos em [Arquitetura](docs/ARQUITETURA.md).
 |---|---|
 | **Reparo automático** | Corrige em sequência os problemas mais comuns do Windows, com uma única tecla |
 | **Diagnóstico completo** | Gera o retrato da máquina em quatro formatos: TXT, CSV, JSON e HTML |
-| **Rede e internet** | Restaura conectividade, DNS, Winsock, firewall e proxy |
+| **Rede e internet** | Restaura conectividade, DNS, Winsock e firewall; preserva IP fixo e proxy |
 | **Limpeza de disco** | Inclui modo de simulação, que mede o espaço recuperável antes de apagar |
 | **Segurança** | Revisa Defender, firewall, contas, BitLocker, TPM e Secure Boot |
 | **Hardware e discos** | Saúde física dos discos, desgaste da bateria, drivers e inventário completo |
@@ -448,10 +448,17 @@ Launcher.bat /clean      :: limpeza profunda
 Launcher.bat /?          :: exibe a ajuda
 ```
 
-Em modo desassistido não há menus nem pausas. O processo encerra com código de saída
-`0`, o que permite encadeamento em scripts. O diagnóstico de cada execução fica no
-log de texto e nos relatórios da sessão — no JSON, o campo `Findings` traz a
-severidade de cada constatação.
+Em modo desassistido não há menus nem pausas. O processo encerra com um código de
+saída semântico, no mesmo vocabulário dos módulos: `0` tudo concluído, `1` concluído
+com atenção, `2` houve erro. O diagnóstico de cada execução fica no log de texto e nos
+relatórios da sessão — no JSON, o campo `Findings` traz a severidade de cada
+constatação.
+
+Em `/autofix`, o código `1` também cobre a execução que o Launcher **não conseguiu
+medir** — quando as etapas foram desviadas para as rotinas Batch de contingência, por
+exemplo. `2` cobre a etapa que falhou e a execução recusada por falta de privilégio
+administrativo. No modo interativo o código continua sendo `0`: ali quem encerra é o
+operador e o valor não é consumido por ninguém.
 
 ### Coleta centralizada
 
