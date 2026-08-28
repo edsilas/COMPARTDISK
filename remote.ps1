@@ -44,7 +44,7 @@ $TagFixa  = if ($env:COMPARTDISK_TAG)   { $env:COMPARTDISK_TAG }   else { 'v1.5.
 # Hash do pacote COMPARTDISK-1.5.0.zip anexado a tag acima. Fixa-lo aqui e mais forte
 # do que depender das notas da release: o valor passa a viajar com o proprio script.
 # Se ficar vazio, o script recorre ao SHA-256 publicado nas notas (Get-HashPublicado).
-$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { '' }
+$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { 'd31e195a3842b34016ca9f8e08e28690df7f1b4efc57d0888f3e126662c06d6f' }
 $Origem   = "https://github.com/$Repo"
 $ApiBase  = "https://api.github.com/repos/$Repo"
 
