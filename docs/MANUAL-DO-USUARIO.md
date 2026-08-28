@@ -66,7 +66,7 @@ Uma janela preta e azul se abre com o menu. É por ali que você trabalha.
    [4]  Otimizacao, Limpeza Profunda e Privacidade
    [5]  Reparo do Sistema, Windows Update e Explorer
    [6]  Contas, Permissoes e Seguranca
-   [7]  Discos, Drivers e Auditoria de Hardware
+   [7]  Diagnostico e Reparo de Impressao
    [8]  Diagnostico Avancado e Relatorios (TXT/CSV/JSON/HTML)
    [9]  Ambiente de Execucao e Capacidades
 

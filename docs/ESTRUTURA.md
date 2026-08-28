@@ -15,7 +15,7 @@ compartdisk/
 ├── LICENSE                           Licença MIT
 ├── .gitignore                        Arquivos ignorados pelo controle de versão
 │
-├── Modules/                          Motor PowerShell (19 arquivos)
+├── Modules/                          Motor PowerShell (23 arquivos)
 │   ├── Core.ps1                      Biblioteca central
 │   ├── Collectors.ps1                Coletores de dados (somente leitura)
 │   ├── Network.ps1                   Rede e conectividade
@@ -33,7 +33,8 @@ compartdisk/
 │   ├── Smart.ps1                     Saúde de discos e volumes
 │   ├── Battery.ps1                   Bateria e energia
 │   ├── Bitlocker.ps1                 Criptografia de disco
-│   ├── Explorer.ps1                  Explorer, ícones e impressão
+│   ├── Explorer.ps1                  Explorer, ícones e fila de impressão
+│   ├── Printer.ps1                   Diagnóstico e reparo de impressão (opção [7])
 │   ├── Apps.ps1                      Catálogo, Central e instalação de aplicativos (Winget)
 │   ├── Winget.ps1                    Diagnóstico e preparação do ambiente WinGet
 │   ├── Audit.ps1                     Auditoria

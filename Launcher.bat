@@ -442,7 +442,7 @@ echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Rede, Internet e Conectividade%C_RESET%
 echo    %C_CIANO%[4]%C_RESET%  %C_TEXTO%Otimizacao, Limpeza Profunda e Privacidade%C_RESET%
 echo    %C_CIANO%[5]%C_RESET%  %C_TEXTO%Reparo do Sistema, Windows Update e Explorer%C_RESET%
 echo    %C_CIANO%[6]%C_RESET%  %C_TEXTO%Contas, Permissoes e Seguranca%C_RESET%
-echo    %C_CIANO%[7]%C_RESET%  %C_TEXTO%Discos, Drivers e Auditoria de Hardware%C_RESET%
+echo    %C_CIANO%[7]%C_RESET%  %C_TEXTO%Diagnostico e Reparo de Impressao%C_RESET%
 echo    %C_CIANO%[8]%C_RESET%  %C_TEXTO%Diagnostico Avancado e Relatorios (TXT/CSV/JSON/HTML)%C_RESET%
 echo    %C_CIANO%[9]%C_RESET%  %C_TEXTO%Ambiente de Execucao e Capacidades%C_RESET%
 echo.
@@ -458,7 +458,10 @@ choice /c 1234567890 /n /m "  Opcao: "
 if errorlevel 10 goto SAIR
 if errorlevel 9 goto MENU_AMBIENTE
 if errorlevel 8 goto MENU_DIAGNOSTICO
-if errorlevel 7 goto MENU_HARDWARE
+:: A opcao [7] passou a ser o Diagnostico e Reparo de Impressao. O menu
+:: Hardware e Discos NAO foi removido: :MENU_HARDWARE e as nove rotinas
+:: :MOD_* que ele chama continuam intactas, alcancadas por [9] Ambiente / [3].
+if errorlevel 7 goto MOD_IMPRESSORA_MENU
 if errorlevel 6 goto MENU_SEGURANCA
 if errorlevel 5 goto MENU_REPARO
 if errorlevel 4 goto MENU_OTIMIZACAO
@@ -827,14 +830,20 @@ echo %C_CINZA%  ----------------------------------------------------------------
 echo.
 echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Detalhar Capacidades via PowerShell%C_RESET%
 echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Reexecutar Deteccao de Ambiente%C_RESET%
+echo    %C_CIANO%[3]%C_RESET%  %C_TEXTO%Discos, Drivers e Auditoria de Hardware%C_RESET%
 echo.
 echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
 echo.
 echo %C_CINZA%  --------------------------------------------------------------------------%C_RESET%
 echo   %C_CINZA%DESENVOLVIDO POR EDSILAS%C_RESET%
 echo.
-choice /c 120 /n /m "  Opcao: "
-if errorlevel 3 goto MENU_PRINCIPAL
+:: [3] e o antigo [7] do menu principal, que cedeu a tecla ao Diagnostico e
+:: Reparo de Impressao. A tecla mudou; a rotina chamada (:MENU_HARDWARE) e o
+:: comportamento das nove capacidades - SMART, bateria, BitLocker, backup de
+:: drivers, auditoria, inventario, volumes e drivers com problema - sao os mesmos.
+choice /c 1230 /n /m "  Opcao: "
+if errorlevel 4 goto MENU_PRINCIPAL
+if errorlevel 3 goto MENU_HARDWARE
 if errorlevel 2 goto MENU_AMBIENTE_REDETECT
 if errorlevel 1 call :MOD_CAPACIDADES
 pause & goto MENU_AMBIENTE
@@ -1587,7 +1596,34 @@ if errorlevel 9000 goto FB_TAKEOWN
 goto :EOF
 
 :: ------------------------------------------------------------------------------
+:: DIAGNOSTICO E REPARO DE IMPRESSAO (opcao [7] do menu principal)
+::
+:: O menu de impressao vive em Modules\Printer.ps1, e nao aqui, pelo mesmo motivo
+:: de :MOD_APPS_CENTRAL_MENU e :MOD_WINGET_PREP_MENU: sao onze escolhas, uma
+:: delas de dois digitos ([10] Restaurar alteracoes), e o CHOICE do Batch decide
+:: com uma tecla so. Read-CompartDiskOpcao ja resolve o prefixo ambiguo.
+::
+:: Sem PowerShell, ou sem o modulo, o Launcher aplica :FB_IMPRESSORA: diagnostico
+:: SOMENTE LEITURA, com os limites declarados em tela. Correcao, backup e
+:: reversao nao tem equivalente em Batch e a rotina diz isso, em vez de aplicar
+:: uma alteracao que nao saberia desfazer.
+:: ------------------------------------------------------------------------------
+:MOD_IMPRESSORA_MENU
+cls
+call :MOD_IMPRESSORA
+pause & goto MENU_PRINCIPAL
+
+:MOD_IMPRESSORA
+set "PS_ARGS=-Action Menu"
+call :RUN_PS "Printer.ps1"
+if errorlevel 9000 goto FB_IMPRESSORA
+goto :EOF
+
+:: ------------------------------------------------------------------------------
 :: HARDWARE, DISCOS E DRIVERS
+::
+:: Alcancado por [9] Ambiente de Execucao / [3]. Era a opcao [7] do menu
+:: principal ate a versao anterior; nenhuma das rotinas abaixo mudou.
 :: ------------------------------------------------------------------------------
 :MOD_SMART
 set "PS_ARGS=-Action Status"
@@ -2578,8 +2614,19 @@ goto :EOF
 
 :FB_SMART
 call :LOG_MSG "INFO" "[Batch] Lendo metricas de hardware dos discos fisicos..."
+:: O "| findstr" normaliza a codificacao: o wmic escreve UTF-16LE, e quando a
+:: saida do Launcher e REDIRECIONADA (o caso de "Launcher.bat /audit > log.txt"
+:: em RMM, GPO ou tarefa agendada) esses bytes caem crus no arquivo e o trecho
+:: fica ilegivel no meio de um log que o resto da ferramenta grava em texto
+:: simples. REPRODUZIDO: 267 bytes 0x00 no arquivo redirecionado, zero depois
+:: do findstr. No console interativo o wmic ja sai legivel e nada muda.
+::
+:: O formato de TABELA e mantido de proposito. Com "/format:list" cada instancia
+:: vira um bloco separado por linhas em branco - e o findstr, que descarta linhas
+:: vazias, colava os discos/volumes uns nos outros. Na tabela cada instancia e
+:: uma linha, entao nao ha separador a perder.
 if "%HAS_WMIC%"=="1" (
-    wmic diskdrive get model,size,status 2>nul
+    wmic diskdrive get model,size,status 2>nul | findstr /r "."
 ) else (
     call :LOG_MSG "ERR" "Ferramentas necessarias (WMI/PS) inoperantes."
 )
@@ -2587,8 +2634,19 @@ call :LOG_MSG "INFO" "Nota: Status 'OK' indica saude basica do WMI, nao diagnost
 goto :EOF
 
 :FB_VOLUMES
+:: O "| findstr" normaliza a codificacao: o wmic escreve UTF-16LE, e quando a
+:: saida do Launcher e REDIRECIONADA (o caso de "Launcher.bat /audit > log.txt"
+:: em RMM, GPO ou tarefa agendada) esses bytes caem crus no arquivo e o trecho
+:: fica ilegivel no meio de um log que o resto da ferramenta grava em texto
+:: simples. REPRODUZIDO: 267 bytes 0x00 no arquivo redirecionado, zero depois
+:: do findstr. No console interativo o wmic ja sai legivel e nada muda.
+::
+:: O formato de TABELA e mantido de proposito. Com "/format:list" cada instancia
+:: vira um bloco separado por linhas em branco - e o findstr, que descarta linhas
+:: vazias, colava os discos/volumes uns nos outros. Na tabela cada instancia e
+:: uma linha, entao nao ha separador a perder.
 if "%HAS_WMIC%"=="1" (
-    wmic logicaldisk where "DriveType=3" get DeviceID,VolumeName,FileSystem,Size,FreeSpace 2>nul
+    wmic logicaldisk where "DriveType=3" get DeviceID,VolumeName,FileSystem,Size,FreeSpace 2>nul | findstr /r "."
 ) else (
     fsutil volume diskfree C:
 )
@@ -2639,12 +2697,16 @@ goto :EOF
 
 :FB_SYSINFO
 call :LOG_MSG "INFO" "[Batch] Coletando auditoria da placa-mae e sistema..."
+:: O "| findstr" normaliza a codificacao UTF-16LE do wmic, que so incomoda quando
+:: a saida do Launcher e redirecionada para arquivo. Aqui o "/format:list" ja era
+:: a forma original da rotina e pode ficar: cada uma destas consultas devolve UMA
+:: instancia, entao nao ha bloco a separar e o findstr nao remove informacao.
 if "%HAS_WMIC%"=="1" (
-    wmic os get Caption,Version,BuildNumber,OSArchitecture /format:list 2>nul
-    wmic cpu get Name,NumberOfCores,NumberOfLogicalProcessors /format:list 2>nul
-    wmic baseboard get Manufacturer,Product /format:list 2>nul
-    wmic computersystem get Manufacturer,Model,TotalPhysicalMemory /format:list 2>nul
-    wmic bios get Manufacturer,SMBIOSBIOSVersion,SerialNumber /format:list 2>nul
+    wmic os get Caption,Version,BuildNumber,OSArchitecture /format:list 2>nul | findstr /r "."
+    wmic cpu get Name,NumberOfCores,NumberOfLogicalProcessors /format:list 2>nul | findstr /r "."
+    wmic baseboard get Manufacturer,Product /format:list 2>nul | findstr /r "."
+    wmic computersystem get Manufacturer,Model,TotalPhysicalMemory /format:list 2>nul | findstr /r "."
+    wmic bios get Manufacturer,SMBIOSBIOSVersion,SerialNumber /format:list 2>nul | findstr /r "."
     goto :EOF
 )
 systeminfo | findstr /C:"Nome do sistema" /C:"OS Name" /C:"Versao" /C:"OS Version" /C:"Fabricante" /C:"System Manufacturer"
@@ -2679,6 +2741,88 @@ call :LOG_MSG "WARN" "[Batch] Geracao de relatorios HTML/JSON requer PowerShell.
 call :LOG_MSG "INFO" "O log consolidado em texto permanece disponivel."
 echo.
 echo   Relatorio de texto: %LOGFILE%
+goto :EOF
+
+:: ------------------------------------------------------------------------------
+:: FALLBACK BATCH DO DIAGNOSTICO E REPARO DE IMPRESSAO
+::
+:: Equivalente possivel de Modules\Printer.ps1 sem PowerShell. E deliberadamente
+:: SOMENTE LEITURA: o modulo grava backup do valor anterior antes de qualquer
+:: alteracao e oferece reversao pela opcao [10], e nada disso existe em Batch.
+:: Aplicar aqui uma correcao de registro seria aplicar uma alteracao que esta
+:: rotina nao saberia desfazer - o oposto do contrato do modulo.
+::
+:: O que esta rotina faz: mostra o estado real do Spooler, das impressoras e das
+:: chaves de politica, e diz explicitamente o que NAO consegue verificar.
+:: ------------------------------------------------------------------------------
+:FB_IMPRESSORA
+call :LOG_MSG "WARN" "[Batch] PowerShell indisponivel: diagnostico de impressao reduzido."
+call :LOG_MSG "INFO" "Esta rotina e SOMENTE LEITURA. Nenhuma correcao, backup ou reversao e aplicada sem o modulo PowerShell."
+echo.
+echo   %C_CINZA%Servico de spool de impressao%C_RESET%
+sc query spooler 2>nul | findstr /i "STATE"
+sc qc spooler 2>nul | findstr /i "START_TYPE"
+sc query rpcss 2>nul | findstr /i "STATE"
+sc query spooler 2>nul | find "RUNNING" >nul
+if errorlevel 1 (
+    call :LOG_MSG "WARN" "Spooler NAO confirmado em execucao. Sem o servico nao ha impressao."
+    call :LOG_MSG "INFO" "Como administrador: services.msc / Spooler de Impressao / Iniciar."
+) else (
+    call :LOG_MSG "OK" "Spooler em execucao (confirmado por sc query)."
+)
+echo.
+echo   %C_CINZA%Impressoras instaladas%C_RESET%
+:: O "| findstr" normaliza a codificacao: o wmic escreve UTF-16LE, e com a saida
+:: do Launcher redirecionada para arquivo esses bytes caem crus no log. No console
+:: o wmic ja sai legivel - a afirmacao anterior, de que a tabela sairia "com um
+:: espaco entre cada caractere", estava errada e foi refutada lendo o buffer de
+:: tela de um console real sob a pagina 65001.
+::
+:: O "/format:list" SAIU, e o motivo foi medido nesta rotina, nao herdado de
+:: :FB_SMART: em formato de lista o wmic quebra cada campo em bloco proprio, e o
+:: findstr - que descarta linhas vazias - colava as impressoras umas nas outras.
+:: REPRODUZIDO com 3 impressoras: 12 linhas "campo=valor" sem UM separador, e os
+:: campos em ordem alfabetica (Default antes de Name), de modo que nem o nome
+:: abria a instancia. Na tabela cada impressora e uma linha e a separacao e
+:: inequivoca. Os quatro campos continuam os mesmos: nada foi retirado para
+:: encurtar a linha.
+if "%HAS_WMIC%"=="1" (
+    wmic printer get Name,PortName,DriverName,Default 2>nul | findstr /r "."
+) else (
+    call :LOG_MSG "WARN" "WMIC ausente: a lista de impressoras nao pode ser consultada por esta rotina."
+)
+echo.
+echo   %C_CINZA%Politicas de impressao   %C_RESET%%C_TEXTO%ausente = padrao do Windows, que NAO equivale a zero%C_RESET%
+call :FB_IMP_CHAVE "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Printers" "RpcAuthnLevelPrivacyEnabled"
+call :FB_IMP_CHAVE "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint" "RestrictDriverInstallationToAdministrators"
+call :FB_IMP_CHAVE "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint" "Restricted"
+call :FB_IMP_CHAVE "HKLM\SYSTEM\CurrentControlSet\Control\Print" "RpcUseNamedPipeProtocol"
+call :FB_IMP_CHAVE "HKCU\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows" "LegacyDefaultPrinterMode"
+call :FB_IMP_CHAVE "HKCU\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows" "Device"
+echo.
+call :LOG_MSG "INFO" "NAO verificado por esta rotina: conectividade do servidor, SMB 445, RPC 135, fila de trabalhos, drivers e portas."
+call :LOG_MSG "INFO" "Para o diagnostico completo e as correcoes com reversao, restaure o PowerShell e reabra a opcao [7]."
+goto :EOF
+
+:FB_IMP_CHAVE
+:: %~1 = chave   %~2 = nome do valor
+:: A ausencia da chave e ESTADO, nao falha: e informada como tal, e nunca
+:: convertida em zero. Sem esta distincao a leitura mentiria justamente nas duas
+:: politicas cuja ausencia tem o mesmo efeito de 1.
+::
+:: O desfecho fica em rotulo proprio, e nao num bloco "if ( )", pela mesma razao
+:: de :FB_SPOOLER_SEM_PRIVILEGIO e :FB_EXPLORER_NAO_CONFIRMADO. Aqui houve
+:: motivo concreto: REPRODUZIDO em harness, um parentese literal no texto
+:: exibido fechava o bloco antes da hora e o cmd abortava a rotina com
+:: "... foi inesperado neste momento". Fora de bloco, o texto nao pode mais
+:: quebrar o fluxo.
+reg query "%~1" /v "%~2" >nul 2>&1
+if errorlevel 1 goto FB_IMP_CHAVE_AUSENTE
+reg query "%~1" /v "%~2" 2>nul | findstr /i "%~2"
+goto :EOF
+
+:FB_IMP_CHAVE_AUSENTE
+echo    %C_TEXTO%%~2%C_RESET%%C_CINZA% : ausente - padrao do Windows%C_RESET%
 goto :EOF
 
 :: ------------------------------------------------------------------------------

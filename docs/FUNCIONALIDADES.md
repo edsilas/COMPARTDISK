@@ -27,6 +27,7 @@ veja o [Manual do Usuário](MANUAL-DO-USUARIO.md).
 | `Battery.ps1` | `Info` `Report` `Sleep` |
 | `Bitlocker.ps1` | `Status` `Report` `Keys` |
 | `Explorer.ps1` | `Restart` `ClearCache` `Spooler` `ResetView` |
+| `Printer.ps1` | `Menu` `Diagnose` `Full` `Spooler` `Shared` `Rpc` `DriversPorts` `Fix011B` `Fix0709` `Fix0BC4` `Restore` `Report` |
 | `Apps.ps1` | `Menu` `Install` `InstallCategory` `InstallAll` `List` `Central` |
 | `Winget.ps1` | `Menu` `Status` `Prepare` `Repair` |
 | `Audit.ps1` | `Full` `Quick` `Events` `Software` `License` |
@@ -217,6 +218,73 @@ SHA-256 para transporte manual, e nenhum envio é tentado ou simulado.
 
 **BitLocker** é somente leitura. Chaves de recuperação podem ser exibidas na tela, mas
 **nunca são gravadas em arquivo**.
+
+---
+
+## Impressão
+
+Módulo `Printer.ps1`, sob a opção `7` do menu principal. Cobre impressoras locais, de
+rede e compartilhadas, spooler, fila, drivers, portas, conectividade, RPC, SMB, Point
+and Print e as políticas de impressão. Apenas recursos nativos do Windows.
+
+**O princípio é diagnosticar antes de corrigir.** O módulo não executa uma bateria de
+comandos esperando que algum resolva. Ele lê o estado real uma vez, avalia esse retrato
+contra um catálogo de cenários e apresenta as hipóteses **compatíveis** com o que foi
+observado e as **descartadas**, com o motivo de cada descarte.
+
+**A cadeia de rede é verificada em camadas**, e cada camada reduz o espaço de hipóteses
+da seguinte: resolução do nome → ICMP (auxiliar, porque bloqueio de ICMP não prova
+servidor fora do ar) → TCP 445 (SMB) → TCP 135 (mapeador RPC) → enumeração do
+compartilhamento. O resultado distingue explicitamente **servidor inacessível** de
+**servidor acessível com compartilhamento indisponível** e de **compartilhamento
+acessível com instalação falhando** — três causas diferentes que produzem sintomas
+parecidos.
+
+**Os erros conhecidos ficam em um catálogo de dados, não em código.** Cada cenário
+declara o código, o título, a regra que o avalia e a correção aplicável; acrescentar um
+cenário é acrescentar uma linha. Estão cobertos `0x0000011B`, `0x00000709`,
+`0x00000BC4`, `0x80070035`, `0x80070005`, `0x00000002`, `0x00000040`, `0x00000057`,
+`0x0000007E` e `0x0000052E`, além dos cenários sem código explícito: spooler parado ou
+desabilitado, fila travada, impressora offline, driver ausente, porta inválida e
+ausência de impressoras. Um código que o Windows registrou e que ainda **não** tem
+cenário no catálogo é reportado como tal, em vez de sair do diagnóstico em silêncio.
+
+**Os códigos vêm do log de eventos, não de suposição.** O módulo lê
+`Microsoft-Windows-PrintService/Admin` e o log `System` dos últimos 7 dias e extrai os
+códigos realmente registrados. Uma hipótese sustentada por código observado é marcada
+como tal e se separa da que apenas tem as pré-condições compatíveis.
+
+**Correções são classificadas por nível de intervenção.** Nível 1 (baixo risco):
+reinício controlado do spooler e limpeza autorizada da fila. Nível 2 (administrativo):
+registro, políticas, Point and Print, RPC. Nível 3 (alto impacto): tudo que reduz uma
+proteção. Quanto maior o impacto, maior a exigência de confirmação, de evidência e de
+validação.
+
+**Nenhuma alteração acontece sem esta cadeia:** diagnóstico → causa provável → bloco de
+risco com o que exatamente será alterado → confirmação do operador → backup do valor
+anterior → aplicação → **releitura** do estado real → resultado. "O comando terminou"
+nunca é tratado como "o problema foi corrigido". Em execução sem operador nenhuma
+correção é aplicada.
+
+**As duas correções que reduzem segurança** — `0x0000011B`
+(`RpcAuthnLevelPrivacyEnabled`, CVE-2021-1678) e `0x00000BC4`
+(`RestrictDriverInstallationToAdministrators`, CVE-2021-34527) — recusam-se a executar
+quando o diagnóstico não encontra a condição correspondente, exibem a alternativa que
+resolve sem reduzir proteção antes de propor a própria correção, e ficam registradas
+para reversão.
+
+**A reversão** desfaz somente o que o módulo gravou, somente na máquina onde foi
+gravado e somente o que ainda não foi revertido. O tipo original do valor é preservado;
+o que não existia antes é removido, não zerado. Uma entrada só é marcada como revertida
+depois de o valor ser relido e conferido.
+
+**O que o módulo não faz:** não remove impressoras, não remove drivers, não executa
+reset de rede, não habilita autenticação de convidado no SMB, não grava nem lê
+credenciais e não desativa componente de segurança do Windows por conta própria.
+
+O diagnóstico funciona **sem privilégio administrativo**. A elevação só é exigida nas
+operações que realmente a requerem, e a correção `0x00000709` não a exige por atuar no
+perfil do próprio usuário.
 
 ---
 

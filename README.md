@@ -160,6 +160,7 @@ Detalhes completos em [Arquitetura](docs/ARQUITETURA.md).
 | **Limpeza de disco** | Inclui modo de simulação, que mede o espaço recuperável antes de apagar |
 | **Segurança** | Revisa Defender, firewall, contas, BitLocker, TPM e Secure Boot |
 | **Hardware e discos** | Saúde física dos discos, desgaste da bateria, drivers e inventário completo |
+| **Diagnóstico e reparo de impressão** | Diagnostica impressora local, de rede e compartilhada antes de corrigir; toda correção tem backup e reversão |
 | **Desbloat do Windows** | Remove aplicativos pré-instalados, com simulação, três níveis de risco e reversão |
 | **Operação sem PowerShell** | Cada função possui rotina Batch equivalente para ambientes restritos |
 | **Execução remota** | Um único comando executa a versão mais recente, com validação de integridade |
@@ -309,7 +310,7 @@ Instruções detalhadas em [Guia de Instalação](docs/INSTALACAO.md).
    [4]  Otimizacao, Limpeza Profunda e Privacidade
    [5]  Reparo do Sistema, Windows Update e Explorer
    [6]  Contas, Permissoes e Seguranca
-   [7]  Discos, Drivers e Auditoria de Hardware
+   [7]  Diagnostico e Reparo de Impressao
    [8]  Diagnostico Avancado e Relatorios (TXT/CSV/JSON/HTML)
    [9]  Ambiente de Execucao e Capacidades
 
@@ -344,9 +345,9 @@ flowchart LR
     MP --> M4["<b>4</b> · Otimização, Limpeza e Privacidade<br/><i>9 opções — 2 leem, 2 irreversíveis</i>"]
     MP --> M5["<b>5</b> · Reparo do Sistema e Update<br/><i>9 opções — 2 leem, 7 alteram</i>"]
     MP --> M6["<b>6</b> · Contas, Permissões e Segurança<br/><i>9 opções — 4 leem, 3 irreversíveis</i>"]
-    MP --> M7["<b>7</b> · Discos, Drivers e Hardware<br/><i>9 opções — 8 leem, 1 grava</i>"]
+    MP --> M7["<b>7</b> · Diagnóstico e Reparo de Impressão<br/><i>10 opções — 5 leem, 5 pedem confirmação</i>"]
     MP --> M8["<b>8</b> · Diagnóstico e Relatórios<br/><i>9 opções — todas somente leitura</i>"]
-    MP --> M9["<b>9</b> · Ambiente de Execução<br/><i>2 opções — somente leitura</i>"]
+    MP --> M9["<b>9</b> · Ambiente de Execução<br/><i>3 opções — inclui Discos, Drivers e Hardware</i>"]
 
     M2 --> WG["<b>2 › 1</b> · Verificar / preparar WinGet<br/><i>diagnóstico e recuperação oficial</i>"]
     M2 --> CA["<b>2 › 2</b> · Central de Aplicativos<br/><i>pesquisa por nome e instala</i>"]
@@ -354,13 +355,15 @@ flowchart LR
     M4 --> DB["<b>4 › 9</b> · Desbloat do Windows<br/><i>9 opções — 3 níveis, 1 simula</i>"]
     DB --> BK["<b>4 › 9 › 9</b> · Backup e reversão<br/><i>4 opções</i>"]
 
+    M9 --> HW["<b>9 › 3</b> · Discos, Drivers e Hardware<br/><i>9 opções — 8 leem, 1 grava</i>"]
+
     classDef leitura fill:#DFF6DD,stroke:#107C10,color:#0B5A0B
     classDef altera fill:#FFF4CE,stroke:#9D5D00,color:#3B2300
     classDef critico fill:#FDE7E9,stroke:#A4262C,color:#6E0811
     class M8,M9 leitura
-    class M2,M3,M5,WG,CA,DB,BK altera
+    class M2,M3,M5,M7,WG,CA,DB,BK altera
     class M1,M4,M6 critico
-    class M7 leitura
+    class HW leitura
 ```
 
 <sub>🟩 somente leitura · 🟨 altera e é reversível · 🟥 contém operação definitiva</sub>

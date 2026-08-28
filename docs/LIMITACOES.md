@@ -157,6 +157,56 @@ Quando o PowerShell está indisponível, todas as funções continuam acessívei
 - algumas leituras de hardware ficam menos detalhadas;
 - o resumo executivo com classificação de severidade não é produzido.
 
+### O reparo de impressão não prova que a página vai sair
+
+O módulo de impressão valida toda correção relendo o estado real: serviço, chave de
+registro, impressora padrão, conectividade. Nenhuma dessas leituras prova que um
+documento será impresso — só um teste de impressão real confirma isso, e o módulo diz
+isso explicitamente ao final de cada correção.
+
+Além disso, ele **não** age no servidor de impressão: quando a causa está lá (servidor
+desatualizado, compartilhamento sem permissão, driver não publicado para a arquitetura
+do cliente), o diagnóstico identifica e localiza o problema, mas a correção é do lado
+do servidor.
+
+### Diagnóstico de impressão sem PowerShell é apenas leitura
+
+A rotina Batch de contingência mostra spooler, impressoras e políticas, e declara em
+tela o que não consegue verificar (conectividade do servidor, SMB, RPC, fila, drivers
+e portas). Ela **não** aplica correção alguma: sem PowerShell não há como gravar o
+backup do valor anterior, e uma correção sem backup seria irreversível.
+
+### A reversão de impressão cobre só o que o módulo alterou
+
+A opção `[7]` › `[10]` restaura exclusivamente valores gravados pelo próprio módulo,
+na mesma máquina, e que ainda não foram revertidos. Ela não desfaz configuração de
+impressão anterior ao uso da ferramenta, não restaura estado de outro computador e não
+reconhece backup sem identificação.
+
+### Códigos de erro de impressão vêm do log dos últimos 7 dias
+
+A identificação do código exato depende do que o Windows registrou em
+`Microsoft-Windows-PrintService/Admin` e no log `System`. Esse log costuma vir
+desabilitado, a leitura é limitada aos 500 eventos mais recentes de nível 1 a 3, e um
+erro mais antigo que a janela consultada não aparece. Nesses casos o diagnóstico
+continua funcionando pelas pré-condições observadas, mas informa que o código não foi
+observado, em vez de afirmar qual erro ocorreu.
+
+O reconhecimento da resposta "nenhum evento encontrado" é feito pelo texto da mensagem,
+em português e em inglês. Em um Windows com outro idioma de exibição essa resposta pode
+não ser reconhecida, e o log passa a ser reportado como **não consultado**. A degradação
+é conservadora — a ferramenta deixa de afirmar "nenhum erro no período" e passa a dizer
+que não conseguiu consultar —, mas é uma limitação real.
+
+### Quando o WMI não responde, o diagnóstico de impressão não conclui
+
+Impressoras, fila, drivers e portas são lidos pelo repositório WMI. Quando ele não
+responde — repositório corrompido, serviço parado, acesso negado —, o módulo declara cada
+uma dessas leituras como **não consultada** e as regras que dependem delas saem como
+**não avaliadas**. Ele não conclui "nenhuma impressora instalada" nem "nenhum problema
+encontrado" a partir de uma consulta que falhou. O diagnóstico correto nesse caso é tratar
+a integridade do Windows primeiro, pela opção `5` do menu principal.
+
 ---
 
 ## Limites de escopo

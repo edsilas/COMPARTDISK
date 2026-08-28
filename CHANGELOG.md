@@ -141,6 +141,12 @@ não acontecia, ou acontecia onde não devia.
   no disco para o cache — e a espera usa `ping` em vez de `timeout`, que aborta sob entrada
   redirecionada, o caso de `/autofix` em RMM, GPO e tarefa agendada.
 
+- **Saída do `wmic` corrompida no log quando a saída é redirecionada.** `:FB_SMART`,
+  `:FB_VOLUMES` e `:FB_SYSINFO` chamavam o `wmic` sem filtro, e passam a filtrar por
+  `findstr`. A descrição completa, com a causa medida e o que foi descartado por medição,
+  está em **Corrigido — codificação do `wmic` nas rotinas Batch de contingência**, mais
+  adiante nesta mesma seção.
+
 ### Alterado
 
 - **Item aberto por outro processo deixou de elevar o nível da limpeza.** É a condição
@@ -210,6 +216,205 @@ não acontecia, ou acontecia onde não devia.
 - **`ipconfig /registerdns` não tem equivalente na rotina Batch.** O módulo tem a etapa H;
   o fallback não a executa. É omissão, não destruição: o registro no DNS volta a
   acontecer sozinho na próxima renovação de concessão.
+
+### Adicionado — Diagnóstico e Reparo de Impressão na opção `7`
+
+A opção `7` do menu principal passou de **Discos, Drivers e Auditoria de Hardware** para
+**Diagnóstico e Reparo de Impressão**. O menu Hardware **não foi removido**: cedeu a tecla e passou a
+ser alcançado por `9` Ambiente de Execução › `3`, com as mesmas nove capacidades e o mesmo
+comportamento.
+
+- **`Modules\Printer.ps1` (novo).** Diagnóstico e reparo do subsistema de impressão:
+  impressoras locais, de rede e compartilhadas, spooler, fila, drivers, portas, RPC, SMB,
+  Point and Print e políticas. Ações `Menu` `Diagnose` `Full` `Spooler` `Shared` `Rpc`
+  `DriversPorts` `Fix011B` `Fix0709` `Fix0BC4` `Restore` `Report`. Somente componentes
+  nativos; onde o `PrintManagement` ou o `NetTCPIP` não existem, cai para WMI/CIM e para
+  sockets do próprio .NET.
+
+  O menu vive no módulo, como em `Apps.ps1` e `Winget.ps1`, porque são onze escolhas com
+  uma de dois dígitos (`[10]`) e o `CHOICE` do Batch decide com uma tecla só.
+  `Read-CompartDiskOpcao` já resolve o prefixo ambíguo.
+
+- **Diagnóstico antes de correção, como regra estrutural.** O módulo lê o estado UMA vez e
+  avalia esse retrato contra um catálogo de cenários em forma de dados — acrescentar um
+  erro conhecido é acrescentar uma linha, sem tocar no motor. As hipóteses saem separadas
+  em **compatíveis** e **descartadas**, cada descarte com o motivo: um diagnóstico que só
+  mostra o que deu errado obriga o operador a repetir na mão as verificações já feitas.
+
+- **Os códigos vêm do log de eventos, não de suposição.** `Microsoft-Windows-PrintService/Admin`
+  e o log `System` dos últimos 7 dias. Uma hipótese sustentada por código realmente
+  observado é marcada como tal e se separa da que apenas tem pré-condições compatíveis.
+  Código registrado pelo Windows que ainda não tenha cenário no catálogo é reportado como
+  tal, em vez de sair do diagnóstico em silêncio.
+
+- **Cadeia de rede em camadas**, cada uma reduzindo o espaço de hipóteses da seguinte: DNS
+  → ICMP (auxiliar; bloqueio de ICMP não prova servidor fora do ar) → TCP 445 → TCP 135 →
+  enumeração do compartilhamento. Distingue **servidor inacessível** de **servidor
+  acessível com compartilhamento indisponível** e de **compartilhamento acessível com
+  instalação falhando**.
+
+- **Nenhuma alteração sem a cadeia completa:** diagnóstico → causa provável → bloco de
+  risco com o que exatamente muda → confirmação → backup do valor anterior → gravação →
+  **releitura** → resultado. Em execução sem operador nenhuma correção é aplicada, e a
+  recusa fica registrada. Toda correção declara o que a validação **não** prova: nenhuma
+  leitura local prova que uma página vai sair impressa.
+
+- **As duas correções que reduzem uma mitigação** — `0x0000011B`
+  (`RpcAuthnLevelPrivacyEnabled`, CVE-2021-1678) e `0x00000BC4`
+  (`RestrictDriverInstallationToAdministrators`, CVE-2021-34527) — **recusam-se a
+  executar** quando o diagnóstico não encontra a condição correspondente, e exibem a
+  alternativa que resolve sem reduzir proteção antes de propor a própria correção. Com
+  servidor inacessível ou SMB fora, a causa é outra e reduzir a proteção não corrigiria
+  nada. Em `0x00000BC4` a ausência da chave tem o mesmo efeito de `1`, e isso é dito em
+  tela: gravar `0` é mudança real de postura, não volta ao padrão de fábrica.
+
+- **Reversão em `[7]` › `[10]`.** Restaura só o que o próprio módulo gravou, só nesta
+  máquina e só o que ainda não foi revertido. O tipo original do valor é preservado e o
+  que não existia antes é **removido**, não zerado. Uma entrada só é marcada como revertida
+  depois de o valor ser relido e conferido. Quando há mais de uma alteração no mesmo alvo,
+  a reversão é aplicada em ordem cronológica decrescente, para que o valor **original**
+  prevaleça, e não o penúltimo.
+
+- **`:FB_IMPRESSORA` (novo fallback Batch).** Deliberadamente somente leitura: mostra
+  spooler, impressoras e políticas e declara o que não consegue verificar. Não aplica
+  correção porque sem PowerShell não há backup do valor anterior — e uma correção sem
+  backup seria irreversível. A ausência de uma chave de política é informada como
+  **ausente — padrão do Windows**, nunca convertida em zero.
+
+**Defeitos encontrados e corrigidos durante o desenvolvimento**, todos reproduzidos em
+execução real ou em harness antes da correção:
+
+- `ConvertFrom-Json` recebendo por **pipeline** faz o Windows PowerShell 5.1 emitir o
+  array desserializado como um único item, e o `@()` em volta produzia um array contendo o
+  array. A partir da segunda entrada o registro de reversão ficava ilegível e a opção
+  `[10]` não teria o que restaurar. Passou a `-InputObject` atribuído a variável.
+- Um único `try/catch` em volta de `Get-ItemPropertyValue` tratava **"valor não existe"** e
+  **"leitura negada"** como a mesma coisa, e as duas viravam `<inexistente>`. O backup
+  gravaria "não havia valor" para uma chave que existia, e a reversão **apagaria** um valor
+  que precisava voltar. A ausência agora só é afirmada depois de a chave ser aberta e a
+  lista de valores lida; o que não pode ser lido aborta a alteração.
+- Função que devolve `@()` vazio não devolve "coleção vazia", devolve **nada**, e a
+  propriedade do chamador vira `$null` — o mesmo valor que o módulo usa para dizer "não
+  consultado". Fila de impressão vazia era relatada como fila **não consultada**. Corrigido
+  com o operador vírgula nos coletores; em `Get-PrnRestauracoes`, que os chamadores
+  envolvem em `@()`, a vírgula produziria o defeito oposto e por isso **não** é usada.
+- Um parêntese literal no texto exibido por `:FB_IMP_CHAVE` fechava o bloco `if ( )` antes
+  da hora e o `cmd` abortava a rotina. O desfecho passou a rótulo próprio, como
+  `:FB_SPOOLER_SEM_PRIVILEGIO`.
+- A regra do `0x00000709` marcava como compatível o estado em que **o Windows gerencia a
+  impressora padrão** — que é o padrão de fábrica do Windows 10/11 e dispararia em quase
+  toda máquina. Passou a exigir evidência real: código observado no log, nenhuma impressora
+  padrão, ou valor `Device` apontando para impressora inexistente.
+
+- **Consulta WMI que não responde virava retrato saudável.** `@($null)` não é uma coleção
+  vazia: é uma coleção de **um elemento nulo**. Como `Get-CompartDiskCim` devolve `$null`
+  quando a consulta falha, e a guarda `$null -eq` era aplicada **depois** do `@()`, ela
+  nunca disparava. REPRODUZIDO em harness, com o repositório WMI mudo: o módulo fabricava
+  uma impressora de campos em branco, e a análise concluía "1 impressora(s) instalada(s)",
+  "1 trabalho(s) na fila, nenhum em estado de erro", "1 driver(s) instalado(s)" e
+  "1 porta(s) enumerada(s)" — as quatro regras respondendo `Aplica=False`, ou seja, "está
+  tudo bem", sobre uma máquina cujo WMI não respondeu. Justamente um dos defeitos que esta
+  ferramenta existe para diagnosticar.
+
+  A correção usa o parâmetro `-ThrowOnError`, que **já existia** em `Get-CompartDiskCim`, e
+  não altera `Core.ps1`. Sem ele os dois estados são indistinguíveis; com ele a falha das
+  três vias (CIM, WMI, CIM/DCOM) lança e o retorno vazio continua sendo apenas vazio. Os
+  quatro coletores passaram a separar três estados: **N itens**, **coleção vazia**
+  (consultado, nada encontrado) e **`$null`** (não consultado).
+
+  A primeira tentativa de correção testava o retorno antes do `@()`, mas sem
+  `-ThrowOnError` — e reintroduziu, pelo outro lado, o defeito de fila vazia virar "não
+  consultada". Foi apanhada pela linha de controle do próprio harness, que compara o
+  cenário real antes de simular a falha.
+
+- **Cinco regras afirmavam o que a consulta não sustentava.** Com a lista de impressoras
+  não consultada, `RegraOffline`, `Regra011B`, `Regra0BC4`, `Regra0000007E` e `Regra0709`
+  continuavam escrevendo "nenhuma impressora offline", "nenhuma impressora compartilhada
+  instalada" e "nenhuma impressora instalada". É o mesmo defeito um nível acima: ausência
+  de dado virando ausência de problema. Passaram a compartilhar a guarda
+  `Get-PrnSemLista`, que devolve "não avaliado" em vez de uma conclusão. `RegraSemImpressora`
+  passou a distinguir "nenhuma impressora" de "lista não consultada", esta última como
+  achado **CRIT**.
+
+**Padronização visual e nome definitivo.** A opção passou a se chamar **Diagnóstico e
+Reparo de Impressão** — no menu principal, no título do submenu e na documentação. O
+submenu deixou de usar a gramática própria e passou a reproduzir a dos demais submenus do
+`Launcher.bat`, medida a partir do próprio projeto e não escolhida: título em caixa mista
+sem acento e cor `C_TITULO`; régua de 74 traços com margem de 2, a mesma medida de
+`Write-CompartDiskMenuCabecalho`; opções com margem de 3, tecla em `C_CIANO` e texto em
+`C_TEXTO`, com o texto de `[1]` e de `[10]` começando na mesma coluna; `[0]` com a tecla em
+`C_CINZA`; rodapé com régua, contexto em cinza, versão e assinatura, como
+`:MENU_APLICATIVOS` já fazia com as suas dicas; e o rótulo `  Opcao: ` do `CHOICE`, em vez
+do `Escolha` padrão.
+
+O cabeçalho continua vindo do ponto único do Core (`Write-CompartDiskMenuCabecalho`), o
+mesmo que `Apps.ps1` e `Winget.ps1` usam — não foi criado outro sistema de cabeçalho, de
+cores ou de bordas, e as linhas de opção são compostas com `Write-Color -NoNewLine`, o
+primitivo que já existia. **Diferença residual assumida:** nos submenus Batch a linha
+`COMPARTDISK <versão>` fica entre o título e a régua; aqui ela ficou no rodapé, porque
+aquela posição exigiria alterar `Write-CompartDiskMenuCabecalho`, que é compartilhado com
+os menus da opção `2`.
+
+Nada de lógica mudou: mesmas 12 ações, mesmo `ValidateSet`, mesmos códigos de saída,
+mesmas 5 confirmações, 4 verificações de privilégio e 15 regras de catálogo. As três
+baterias (coletores em três estados, sete bordas de reversão, 12 ações com comparação de
+24 campos de estado) foram reexecutadas e devolveram resultado idêntico ao de antes da
+mudança visual.
+
+### Corrigido — codificação do `wmic` nas rotinas Batch de contingência
+
+`:FB_SMART`, `:FB_VOLUMES` e `:FB_SYSINFO` passaram a filtrar a saída do `wmic` por
+`findstr`. **A causa registrada antes estava errada** e ficou corrigida no comentário: não
+há "espaço entre cada caractere" no console. Verificado lendo o **buffer de tela de um
+console real** sob `chcp 65001` — a saída do `wmic` sai legível, com zero linhas espaçadas.
+A observação que originou a mudança tinha sido feita sobre um arquivo redirecionado e
+confundiu o método de captura com o comportamento da ferramenta.
+
+O defeito real é outro e foi reproduzido: o `wmic` escreve **UTF-16LE**, e quando a saída
+do Launcher é redirecionada — `Launcher.bat /audit > log.txt` em RMM, GPO ou tarefa
+agendada, exatamente onde o fallback Batch existe para servir — esses bytes caem crus no
+arquivo. Medido: **267 bytes `0x00`** no log redirecionado, **zero** depois do `findstr`,
+no meio de um log que o resto da ferramenta grava em texto simples.
+
+`:FB_SMART` e `:FB_VOLUMES` haviam recebido também `/format:list`, e isso **era uma
+regressão**, igualmente reproduzida: em formato de lista cada instância vira um bloco
+separado por linhas em branco, e o `findstr` — que descarta linhas vazias — colava os
+discos e os volumes uns nos outros. Numa máquina com dois discos, `Model=... Size=...
+Status=... Model=... Size=... Status=...` sem qualquer separador. As duas voltaram ao
+formato de **tabela** do baseline, onde cada instância é uma linha e não há separador a
+perder; só o `| findstr` permaneceu. `:FB_SYSINFO` ficou como estava: `/format:list` já era
+a forma original da rotina e cada uma das suas cinco consultas devolve uma única instância.
+
+Contrato preservado: nenhum chamador lê o código de saída dessas rotinas — os únicos testes
+de `errorlevel` são os `9000` do `RUN_PS`, aplicados **antes** de entrar nelas. `findstr`
+não pagina, então o caminho desassistido `/audit` continua sem interação.
+
+**`:FB_IMPRESSORA`, da opção `7`, tinha a mesma perda de separação** e foi corrigida em
+seguida, em rodada própria e isolada. A medição foi refeita nesta rotina, não herdada de
+`:FB_SMART`: com três impressoras, `/format:list | findstr` produzia **12 linhas
+`campo=valor` sem um único separador**, e como o `wmic` ordena os campos alfabeticamente
+(`Default` antes de `Name`) nem o nome abria a instância. Em formato de tabela cada
+impressora é uma linha e a separação é inequívoca.
+
+Também foram descartadas as alternativas, por medição e não por analogia: sem o `findstr`
+são 42 linhas para 12 de conteúdo, porque o `wmic` intercala uma linha vazia entre **cada
+campo** e não só entre instâncias; e `/format:csv` sai mais largo (108 colunas contra 101) e
+acrescenta a coluna `Node`. Os quatro campos foram preservados — nada foi retirado para
+encurtar a linha. A largura de 101 colunas vem do dado (porta WSD com GUID de 40
+caracteres), não da formatação: em console de 80 colunas a linha quebra, mas cada
+impressora continua abrindo em linha nova.
+
+**Limitação declarada, sem correção nesta rodada:** com **zero** impressoras a consulta não
+produz saída e o bloco "Impressoras instaladas" fica vazio — sem erro falso, mas sem
+mensagem. O comportamento é o mesmo de antes da correção, não é regressão, e tratá-lo seria
+outra alteração.
+
+**Preservado sem alteração:** `:MENU_HARDWARE` e as nove rotinas `:MOD_*` que ele chama;
+`:MOD_SPOOLER` e `Explorer.ps1 -Action Spooler`, usados pela opção `5` e pela etapa "Fila
+de impressão" do Reparo Geral Automático; `Core.ps1`, `Collectors.ps1`, `remote.ps1`, o
+mecanismo `RUN_PS`/`AF_ETAPA`/`AF_RC`, os códigos de saída, os argumentos de automação e o
+esquema de relatórios. As opções `1` a `6` e `8` não têm uma linha alterada. A versão
+permanece `1.4.8`; o acréscimo caracteriza incremento **MINOR** no próximo lançamento.
 
 ---
 

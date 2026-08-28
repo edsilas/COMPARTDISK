@@ -19,7 +19,7 @@ Legenda: 🔵 **Leitura** (não muda nada) · 🟡 **Altera** o sistema · 🔴 
 | `4` | Otimização, Limpeza Profunda e Privacidade | Submenu Otimização |
 | `5` | Reparo do Sistema, Windows Update e Explorer | Submenu Reparo |
 | `6` | Contas, Permissões e Segurança | Submenu Segurança |
-| `7` | Discos, Drivers e Auditoria de Hardware | Submenu Hardware |
+| `7` | Diagnóstico e Reparo de Impressão | Submenu Impressão |
 | `8` | Diagnóstico Avançado e Relatórios | Submenu Diagnóstico |
 | `9` | Ambiente de Execução e Capacidades | Tela Ambiente |
 | `0` | Sair e Salvar Relatório | Encerra |
@@ -340,7 +340,82 @@ processador.
 
 ---
 
+## Menu Diagnóstico e Reparo de Impressão
+
+Diagnóstico e reparo do subsistema de impressão do Windows: impressoras locais,
+de rede e compartilhadas, spooler, fila, drivers, portas, RPC, SMB e as políticas
+de impressão. O menu é desenhado pelo módulo `Modules\Printer.ps1`.
+
+| Tecla | Opção | Tipo |
+|---|---|---|
+| `1` | Diagnóstico automático | 🔵 |
+| `2` | Corrigir erro 0x0000011B | 🔴 |
+| `3` | Corrigir erro 0x00000709 | 🟡 |
+| `4` | Corrigir erro 0x00000BC4 | 🔴 |
+| `5` | Corrigir impressora compartilhada | 🔵 |
+| `6` | Corrigir Spooler de Impressão | 🟡 |
+| `7` | Diagnóstico RPC / SMB | 🔵 |
+| `8` | Diagnóstico de drivers e portas | 🔵 |
+| `9` | Diagnóstico completo | 🔵 |
+| `10` | Restaurar alterações | 🟡 |
+| `0` | Voltar | — |
+
+**Nada é corrigido antes de ser diagnosticado.** As opções `1`, `5`, `7`, `8` e `9`
+são estritamente de leitura. As opções `2`, `3`, `4`, `6` e `10` mostram o problema
+identificado, a correção proposta, o que exatamente será alterado e o risco, e só
+prosseguem depois de você confirmar. Em execução sem operador nenhuma correção é
+aplicada.
+
+**`1` Diagnóstico automático** — lê o estado real (impressoras, tipo de conexão,
+spooler, fila, políticas, servidores) e os erros de impressão que o próprio Windows
+registrou nos últimos 7 dias. Mostra as hipóteses **compatíveis** com o que foi
+observado e também as **descartadas**, com o motivo de cada descarte. Um código de
+erro registrado pelo Windows que ainda não tenha cenário no catálogo aparece
+identificado, em vez de sumir do diagnóstico.
+
+**`2` e `4` — as duas correções de risco 🔴.** Reduzem uma mitigação de segurança do
+Windows: `2` desliga a exigência de privacidade na autenticação RPC de impressão
+(CVE-2021-1678) e `4` libera a instalação de driver por Point and Print a usuários
+sem privilégio (CVE-2021-34527, o "PrintNightmare"). Por isso as duas:
+
+- **recusam-se a executar** quando o diagnóstico não encontra a condição
+  correspondente — se o servidor está inacessível ou o SMB está fora, a causa é
+  outra e reduzir a proteção não corrigiria nada;
+- mostram **antes** a alternativa que resolve sem reduzir proteção (atualizar o
+  servidor de impressão; instalar o driver uma vez com conta administrativa);
+- gravam o valor anterior para reversão pela opção `10`.
+
+Atenção em `4`: a chave **ausente** tem o mesmo efeito de `1`. Gravar `0` é uma
+mudança real de postura de segurança, não a volta ao padrão de fábrica.
+
+**`6` Corrigir Spooler** — verifica antes se o RPC local (`RpcSs`) está de pé, porque
+reiniciar o spooler não resolve nada enquanto essa dependência estiver parada. Se o
+serviço estiver `Disabled`, devolve a inicialização para `Automatic`. Lista os
+trabalhos que serão perdidos antes de limpar a fila. Se o spooler não parar, a fila
+**não** é tocada.
+
+**`10` Restaurar alterações** — desfaz somente o que este módulo gravou, somente
+nesta máquina e somente o que ainda não foi revertido. Cada valor volta ao estado
+anterior com o tipo original preservado; o que não existia antes é **removido**, não
+zerado. Uma entrada só é marcada como revertida depois de o valor ser relido e
+conferido.
+
+Toda correção termina com validação por releitura do estado real. O módulo diz
+explicitamente o que a validação **não** prova — nenhuma verificação local prova que
+uma página vai sair impressa; isso só um teste de impressão real confirma.
+
+Sem PowerShell, o Launcher aplica a rotina Batch `:FB_IMPRESSORA`, que é somente
+leitura: mostra spooler, impressoras e políticas, e declara o que não consegue
+verificar. Correção, backup e reversão não têm equivalente em Batch, e a rotina diz
+isso em vez de aplicar uma alteração que não saberia desfazer.
+
+---
+
 ## Menu Hardware
+
+Alcançado por **`9` Ambiente de Execução › `3`**. Era a opção `7` do menu principal até
+a versão anterior, quando cedeu a tecla ao Diagnóstico e Reparo de Impressão. As nove
+e o comportamento de cada uma continuam exatamente os mesmos.
 
 | Tecla | Opção | Tipo |
 |---|---|---|
@@ -400,6 +475,7 @@ O HTML abre sozinho ao final. É o que enviar ao suporte técnico.
 |---|---|
 | `1` | Detalhar capacidades via PowerShell |
 | `2` | Reexecutar detecção de ambiente |
+| `3` | Discos, Drivers e Auditoria de Hardware |
 | `0` | Voltar |
 
 Funciona como a tela "Sobre". Mostra produto, versão, autoria, motor em uso,
