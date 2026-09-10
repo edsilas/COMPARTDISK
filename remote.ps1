@@ -45,11 +45,7 @@ $TagFixa  = if ($env:COMPARTDISK_TAG)   { $env:COMPARTDISK_TAG }   else { 'v1.5.
 # do que depender das notas da release: o valor passa a viajar com o proprio script.
 # Se ficar vazio, o script recorre ao SHA-256 publicado nas notas (Get-HashPublicado)
 # e, na falta dele, valida apenas a assinatura de arquivo ZIP, avisando na tela.
-#
-# Fica vazio ate o pacote da release ser publicado: manter aqui o hash da versao
-# ANTERIOR com a tag NOVA faria o instalador recusar o download correto como
-# corrompido. O valor e fixado em seguida, quando o pacote existir.
-$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { '' }
+$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { 'f1f045abcb851d54b2211c31c8fba153f241ff917deb1a5d93821b0ae3455dda' }
 $Origem   = "https://github.com/$Repo"
 $ApiBase  = "https://api.github.com/repos/$Repo"
 
