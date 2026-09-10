@@ -58,6 +58,13 @@ dos dois anteriores.
 Esses são os números do catálogo completo. **O total efetivo em uma máquina específica
 é menor**, por dois motivos: 12 itens declaram a plataforma em que fazem efeito e são
 ignorados fora dela, e itens cujo alvo não existe no sistema saem como `NaoInstalado`.
+
+Cada item termina em um resultado próprio, e nenhum deles é apresentado como um `OK`
+genérico: `Aplicado`, `Parcial`, `JaAplicado`, `NaoInstalado`, `NaoSuportado`,
+`Protegido`, `AdiadoReboot`, `Bloqueado` e `Falhou`. **`Bloqueado` não é falha** —
+significa que a remoção é impossível *no estado atual* do sistema, por dependência de
+outro pacote ou por implantação em andamento; nada foi forçado, e repetir a operação
+depois costuma resolver.
 Um ajuste que só existe no Windows 11 não é aplicado no Windows 10 — seria inerte, e
 relatar isso como sucesso seria falso.
 
@@ -82,8 +89,34 @@ Antes de qualquer alteração, o módulo confere e interrompe se algo estiver er
 - Privilégio administrativo presente
 - Reinício pendente — avisa, mas não impede
 - Módulos `Appx` e `ScheduledTasks` disponíveis — avisa e ignora a categoria correspondente
+- **Motor de escrita AppX** — os cmdlets `Appx` são do Windows PowerShell. Sob
+  PowerShell 7 eles carregam e falham na execução, então as remoções são
+  reencaminhadas ao Windows PowerShell 5.1 do próprio Windows. O aviso diz qual
+  motor está em uso
+- **Inventário de pacotes provisionados** — vem do módulo `Dism`, não do `Appx`.
+  Sem ele o aplicativo sai apenas dos perfis existentes e **volta em todo perfil
+  novo**; nesse caso nenhum item é reportado como totalmente aplicado
+- **Windows ainda em configuração** — avisa quando a instalação não concluiu a
+  fase de implantação (`ImageState`) ou há pacotes em estado diferente de `Ok`
 - Espaço livre no disco de sistema — avisa abaixo de 2 GB
 - Ponto de restauração criado com sucesso — **interrompe** a rotina completa se falhar
+
+### Máquina recém-formatada
+
+É o cenário em que mais coisas estão em movimento, e o módulo trata isso
+explicitamente em vez de tropeçar nele:
+
+- o Windows continua **distribuindo pacotes provisionados** para o perfil recém-criado;
+- por isso o **provisionamento é removido antes** da instância do usuário — na ordem
+  inversa, o próprio Windows pode reimplantar o pacote no meio da operação;
+- remoção que esbarra em **recurso em uso** (`0x80073D02`) não é falha: é uma nova
+  tentativa após pausa curta e, persistindo, o item sai como `Bloqueado`;
+- pacote apenas **preparado (`Staged`)** não está instalado para ninguém: com o
+  provisionamento tratado, não há o que remover do perfil — mas isso só é dado
+  como resolvido quando o estado final pode ser **relido**; sem essa releitura o
+  alvo fica como `Parcial`, nunca como aplicado;
+- executar de novo depois que a configuração terminar é o procedimento normal — o
+  módulo reavalia o estado real a cada execução e não guarda decisão da vez anterior.
 
 ### O que preparar
 
@@ -177,7 +210,7 @@ completa.
 | **Dependências** | Módulo `Appx`. Sem ele, a categoria é ignorada com aviso |
 | **Compatibilidade** | Windows 10 1607 ou superior e Windows 11, todas as edições |
 | **Reversão** | **Parcial.** O Windows não retém o pacote no disco após a remoção. A reversão lista o que foi removido, para reinstalação pela Microsoft Store |
-| **Observações** | A remoção é feita para todos os usuários e também no provisionamento, o que impede a reinstalação automática em contas novas. Pacotes casados por curinga são reconferidos pelo nome real antes da remoção, para que um curinga amplo não arraste um pacote protegido |
+| **Observações** | A remoção é feita para todos os usuários e também no provisionamento, o que impede a reinstalação automática em contas novas — e o **provisionamento é tratado primeiro**, para que o Windows não reimplante o pacote no meio da operação. Pacotes casados por curinga são reconferidos pelo nome real antes da remoção, para que um curinga amplo não arraste um pacote protegido. Quando o inventário de provisionamento **não pode ser lido**, o item nunca é dado como totalmente aplicado: o resultado é `Parcial`, com o aviso de que o aplicativo pode voltar em perfis novos |
 
 ### 4.2 Serviços
 

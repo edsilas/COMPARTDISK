@@ -1,6 +1,6 @@
 # Descrição dos Menus
 
-**COMPARTDISK 1.5.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.5.1** · Desenvolvido por Edsilas
 
 Mapa completo de todas as telas. Cada opção indica se **altera** o computador ou se
 apenas **lê** informações.
@@ -76,22 +76,41 @@ internet. Programas em uso podem falhar — feche o que puder antes.
 ### `1` — Verificar / preparar WinGet 🟡
 
 Diagnostica o ambiente do WinGet e, quando ele não está disponível, tenta prepará-lo
-**por métodos oficiais do Windows**. A tela mostra a ficha do diagnóstico — sistema,
-build, arquitetura, App Installer, versão, fonte, Microsoft Store e política — e o
-estado apurado: *disponível*, *desatualizado*, *não funcional*, *ausente*, *bloqueado
-por política* ou *não suportado*.
+**por métodos e fontes oficiais da Microsoft**. A tela mostra a ficha do diagnóstico —
+sistema, build, arquitetura, App Installer, onde o `winget.exe` foi encontrado, alias de
+execução, dependências, fonte, Microsoft Store e política — e o estado apurado:
+*disponível*, *desatualizado*, *não funcional*, *ausente*, *bloqueado por política* ou
+*não suportado*.
 
-O que a preparação faz, nesta ordem:
+A preparação **não aplica uma tentativa fixa**: ela monta o plano a partir do
+diagnóstico, e camada que não tem o que fazer naquele ambiente nem entra no plano. As
+camadas, na ordem em que fazem sentido:
 
-1. **Reparo local, sem baixar nada** — registra novamente o pacote do App Installer
-   que já está na máquina. Resolve o caso mais comum, em que o `winget` some porque o
-   registro do pacote se perdeu no perfil.
-2. **Microsoft Store** — abre a página oficial do App Installer para você concluir a
+1. **PATH / alias de execução** — o `winget` existe e não é alcançável pelo comando.
+   Devolve a pasta `WindowsApps` ao PATH. Sem baixar nada.
+2. **Fontes** — o `winget` executa e a fonte oficial não responde: redefine as fontes
+   pelo próprio WinGet.
+3. **Dependências** — repõe as bibliotecas de runtime do App Installer pelo pacote
+   oficial publicado pela Microsoft.
+4. **Registro do pacote** — registra novamente o App Installer que já está na máquina.
+   Resolve o caso mais comum, em que o `winget` some porque o registro do pacote se
+   perdeu no perfil. Sem baixar nada.
+5. **Módulo oficial `Microsoft.WinGet.Client`** — quando já instalado na máquina.
+6. **Pacote oficial da Microsoft** — instala o App Installer pelo pacote publicado no
+   repositório oficial do Windows Package Manager, **sem depender da Microsoft Store**.
+   O arquivo é conferido pelo SHA256 publicado e pela assinatura digital antes de ser
+   instalado, e o download é confirmado com você, com origem e tamanho na tela.
+7. **Microsoft Store** — abre a página oficial do App Installer para você concluir a
    instalação. Depende da sua ação na janela da Store.
+
+Se uma camada falha, a seguinte é escolhida **em função do erro recebido** — nunca é a
+mesma tentativa repetida. Depois de cada camada que conclui, o ambiente é reconsultado:
+se o WinGet já ficou funcional, as camadas restantes não são executadas.
 
 Depois de agir, o resultado é **validado de verdade**: existência do `winget.exe`,
 `--version`, `--info`, fontes e uma consulta de teste. Só então a tela informa que o
-WinGet está pronto e oferece voltar direto para os aplicativos.
+WinGet está pronto e oferece voltar direto para os aplicativos. A tela também mostra a
+lista das etapas executadas, com ação, resultado e motivo técnico de cada uma.
 
 ### `2` — Central de Aplicativos 🟡
 
@@ -269,6 +288,37 @@ precisar de nova autorização.
 | `3` | Simular Reversão | 🟢 |
 | `4` | Reverter Alterações do Desbloat | 🟡 |
 | `0` | Voltar | — |
+
+**`3` Aplicar Perfil Desempenho Máximo** — não é só trocar o plano de energia. A
+opção diagnostica o ambiente (versão e build do Windows, tipo de equipamento,
+plano ativo, diretivas de grupo em vigor), resolve o plano de Desempenho Máximo
+**reutilizando** o que já existir, e então aplica o perfil configuração por
+configuração, na linha **CA (na tomada)**:
+
+| Grupo | O que é ajustado |
+|---|---|
+| Processador | estado mínimo e máximo, modo de boost, política de resfriamento, núcleos mínimos (core parking) |
+| Tela | desligar vídeo por ociosidade e o tempo limite do vídeo na tela de bloqueio |
+| Suspensão | suspender, hibernar e o tempo limite de suspensão não assistida |
+| USB | suspensão seletiva, energia do link USB 3 e tempo limite de suspensão de hubs |
+| Barramento e disco | PCI Express (link state) e desligar disco rígido, incluindo o link AHCI |
+
+Cada valor é gravado **e relido** — pelo `powercfg` ou, nas configurações ocultas,
+pelo registro do próprio plano. O resultado de cada uma aparece como *Aplicado*,
+*Já estava aplicado*, *Não aplicável*, *Não suportado*, *Bloqueado por política* ou
+*Falhou*; quando a releitura final encontra divergência, **só aquela configuração**
+é reescrita e revalidada. Executar a opção várias vezes não cria planos nem
+reescreve o que já está correto.
+
+**Em bateria (CC) nada é alterado por padrão** — um portátil que nunca apaga a tela
+nem suspende fora da tomada esquenta fechado e chega ao fim da carga. As linhas de
+bateria aparecem no relatório como *Não aplicável*, com o motivo.
+
+**Bloqueio de sessão não é plano de energia.** Proteção de tela com senha e a
+diretiva de segurança de inatividade continuam bloqueando o computador mesmo com o
+perfil aplicado: a opção **detecta e informa** essas restrições e **não as altera**.
+
+Para desfazer, use `8` Restaurar Plano de Energia Equilibrado.
 
 **`4` Simular Limpeza** — comece por aqui. Mostra quanto espaço cada categoria
 liberaria, **sem apagar nada**.

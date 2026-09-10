@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.5.0 - Printer.ps1
+ COMPARTDISK 1.5.1 - Printer.ps1
  Desenvolvido por Edsilas
  Acoes: Menu | Diagnose | Full | Spooler | Shared | Rpc | DriversPorts
         | Fix011B | Fix0709 | Fix0BC4 | Restore | Report

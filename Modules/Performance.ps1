@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.5.0 - Performance.ps1
+ COMPARTDISK 1.5.1 - Performance.ps1
  Desenvolvido por Edsilas
 
  Acoes: Analyze | Ultimate | Balanced | Startup | Processes | Services
@@ -99,6 +99,21 @@ $REG_SCHEMES    = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerScheme
 $REG_VISUALFX   = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects'
 $REG_NLS_CP     = 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage'
 
+# Diretiva de grupo de energia. Quando presente, o valor gravado aqui SOBREPOE o
+# do plano: o powercfg aceita o comando, o indice do plano muda e o efetivo
+# continua o da diretiva. Ler isto antes de escrever e o que permite reportar
+# "bloqueado por politica" em vez de "aplicado" ou "divergente sem explicacao".
+# Documentado pela Microsoft em Power Management Group Policy Settings.
+$REG_POL_PWRSET = 'HKLM:\SOFTWARE\Policies\Microsoft\Power\PowerSettings'
+$REG_POL_PWR    = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Power'
+
+# Bloqueio por inatividade. NAO sao configuracoes de energia e NAO sao alteradas
+# por este modulo: sao lidas para explicar um bloqueio que o perfil de energia,
+# sozinho, nao consegue impedir.
+$REG_POL_SYSTEM   = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+$REG_DESKTOP      = 'HKCU:\Control Panel\Desktop'
+$REG_POL_DESKTOP  = 'HKCU:\Software\Policies\Microsoft\Windows\Control Panel\Desktop'
+
 # O plano de Desempenho Maximo usa SEMPRE a nomenclatura do proprio Windows.
 # Nenhum nome personalizado e atribuido: o plano duplicado herda do modelo do
 # sistema o nome localizado ("Desempenho maximo" / "Ultimate Performance"), e
@@ -115,6 +130,13 @@ $script:ModernStandby = $false
 $script:SleepStates  = $null
 $script:HibernateEnabled = $null
 $script:OsCaption    = ''
+# Versao/build do Windows, tipo de equipamento, diretivas de energia em vigor e
+# mecanismos de bloqueio por inatividade. Preenchidos uma vez por execucao.
+$script:Win          = $null
+$script:Chassi       = 'Indeterminado'
+$script:IsNotebook   = $false
+$script:PowerPolicies = $null
+$script:LockState    = $null
 
 # ============================================================================
 # 2. RESULTADO CENTRALIZADO E DETERMINISTICO
@@ -219,6 +241,36 @@ function Initialize-PerfEnvironment {
         }
     }
 
+    # --- versao e build do Windows -------------------------------------------
+    # Windows 10 e Windows 11 nao expoem o mesmo conjunto de configuracoes nem o
+    # mesmo mecanismo primario de controle (plano classico x modo de energia).
+    # A decisao usa build, e nao o nome comercial do sistema.
+    if (Test-PerfCommand 'Test-WindowsVersion') {
+        try { $script:Win = Test-WindowsVersion } catch {
+            Write-Verbose "Test-WindowsVersion indisponivel -> $($_.Exception.Message)"
+        }
+    }
+
+    # --- tipo de equipamento --------------------------------------------------
+    # Notebook e desktop nao recebem o mesmo tratamento em bateria. A deteccao
+    # usa o chassi declarado pelo firmware e, como segunda via, a presenca de
+    # bateria - equipamento sem chassi confiavel ainda e classificavel.
+    $portateis = @(8, 9, 10, 11, 12, 14, 18, 21, 30, 31, 32)
+    if (Test-PerfCommand 'Get-CompartDiskCim') {
+        try {
+            $enc = Get-CompartDiskCim -Class Win32_SystemEnclosure
+            foreach ($e in @($enc)) {
+                foreach ($t in @($e.ChassisTypes)) {
+                    if ($portateis -contains [int]$t) { $script:IsNotebook = $true }
+                }
+            }
+        } catch {
+            Write-Verbose "Win32_SystemEnclosure indisponivel -> $($_.Exception.Message)"
+        }
+    }
+    if ($script:HasBattery) { $script:IsNotebook = $true }
+    $script:Chassi = $(if ($script:IsNotebook) { 'Portátil' } else { 'Desktop / estação' })
+
     # --- hibernacao (leitura nativa, independente de idioma) ------------------
     $script:HibernateEnabled = Get-PerfRegistryDword -Path $REG_POWER -Name 'HibernateEnabled'
 
@@ -230,6 +282,146 @@ function Initialize-PerfEnvironment {
         foreach ($s in $script:SleepStates.Disponiveis) { if ($s -match '(?i)\bS0\b') { $temS0 = $true } }
     }
     $script:ModernStandby = (($cs -eq 1) -or $temS0)
+
+    # --- diretivas de energia e mecanismos de bloqueio -----------------------
+    $script:PowerPolicies = Get-PerfPowerPolicies
+    $script:LockState     = Get-PerfLockState
+}
+
+function Get-PerfPowerPolicies {
+    <#
+      Diretivas de grupo que FIXAM configuracoes de energia.
+
+      Por que isto existe: quando uma diretiva fixa um valor, o powercfg aceita
+      o comando, o indice do plano ate muda, e o valor EFETIVO continua o da
+      diretiva. Sem ler a diretiva antes, essa configuracao apareceria como
+      "divergente" no final, sem que ninguem soubesse por que - e a acao ficaria
+      tentando corrigir algo que nao e corrigivel por aqui.
+
+      Somente leitura. Nenhuma diretiva e alterada, criada ou removida.
+      Retorna hashtable: '<subgrupo>|<setting>' -> {Ac,Dc,Origem}.
+    #>
+    [CmdletBinding()]
+    param()
+    $mapa = @{}
+
+    # Diretiva por configuracao: .../Power/PowerSettings/<GUID da configuracao>
+    # com ACSettingIndex / DCSettingIndex. O subgrupo nao entra no caminho, entao
+    # a chave do mapa guarda apenas o GUID da configuracao.
+    try {
+        if (Test-Path -LiteralPath $REG_POL_PWRSET) {
+            foreach ($k in @(Get-ChildItem -LiteralPath $REG_POL_PWRSET -ErrorAction Stop)) {
+                $nome = $k.PSChildName
+                if ($nome -notmatch ('^' + $script:GuidPattern + '$')) { continue }
+                $ac = Get-PerfRegistryDword -Path $k.PSPath -Name 'ACSettingIndex'
+                $dc = Get-PerfRegistryDword -Path $k.PSPath -Name 'DCSettingIndex'
+                if ($null -eq $ac -and $null -eq $dc) { continue }
+                $mapa[$nome.ToLowerInvariant()] = [pscustomobject]@{
+                    Ac     = $ac
+                    Dc     = $dc
+                    Origem = 'Diretiva de grupo (Power\PowerSettings)'
+                }
+            }
+        }
+    } catch {
+        Write-Verbose "Leitura de diretivas de energia falhou -> $($_.Exception.Message)"
+    }
+
+    # Diretiva que fixa o PLANO ativo. Nao entra no mapa por configuracao: e
+    # devolvida a parte, porque impede a propria troca de plano.
+    $planoFixado = $null
+    foreach ($p in @($REG_POL_PWRSET, $REG_POL_PWR)) {
+        $v = Get-PerfRegistryString -Path $p -Name 'ActivePowerScheme'
+        if (-not [string]::IsNullOrWhiteSpace($v)) { $planoFixado = $v.Trim('{', '}').ToLowerInvariant(); break }
+    }
+
+    return [pscustomobject]@{
+        PorConfiguracao = $mapa
+        PlanoFixado     = $planoFixado
+        Total           = $mapa.Count
+    }
+}
+
+function Get-PerfPolicyForSetting {
+    <# Diretiva em vigor para uma configuracao, ou $null. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$SettingGuid)
+    if ($null -eq $script:PowerPolicies) { return $null }
+    $k = $SettingGuid.ToLowerInvariant()
+    if ($script:PowerPolicies.PorConfiguracao.ContainsKey($k)) { return $script:PowerPolicies.PorConfiguracao[$k] }
+    return $null
+}
+
+function Get-PerfLockState {
+    <#
+      Mecanismos que bloqueiam a sessao ou apagam a tela por inatividade.
+
+      TELA APAGADA, SUSPENSAO E BLOQUEIO DE SESSAO SAO TRES COISAS DIFERENTES, e
+      so a primeira e a segunda pertencem ao perfil de energia. Esta funcao lê -
+      e apenas lê - os mecanismos que NAO sao de energia, para que o relatorio
+      consiga dizer por que a tela ainda bloqueia depois de o perfil ter sido
+      aplicado corretamente.
+
+      Nada aqui e alterado: protecao de tela e preferencia do usuario, e limite
+      de inatividade da maquina e diretiva de seguranca.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $out = [pscustomobject]@{
+        InactivityTimeoutSecs = $null   # diretiva de seguranca: bloqueia a maquina
+        ProtecaoAtiva         = $false  # protecao de tela realmente configurada
+        ProtecaoSegura        = $false  # ... e que exige senha ao retomar
+        ProtecaoTimeout       = $null
+        ProtecaoExe           = ''
+        ProtecaoPorDiretiva   = $false
+        Restricoes            = @()
+    }
+    $restr = New-Object System.Collections.ArrayList
+
+    # 1. Limite de inatividade da maquina (diretiva de seguranca).
+    $inat = Get-PerfRegistryDword -Path $REG_POL_SYSTEM -Name 'InactivityTimeoutSecs'
+    if ($null -ne $inat -and [int]$inat -gt 0) {
+        $out.InactivityTimeoutSecs = [int]$inat
+        [void]$restr.Add("Diretiva de segurança 'Limite de inatividade da máquina' em vigor: a sessão será bloqueada após $([int]$inat) s de inatividade. Nenhuma configuração de energia impede esse bloqueio, e a diretiva não foi alterada.")
+    }
+
+    # 2. Protecao de tela. A do usuario e a imposta por diretiva - a segunda tem
+    #    precedencia sobre a primeira, e nenhuma das duas e alterada aqui.
+    foreach ($par in @(@($REG_POL_DESKTOP, $true), @($REG_DESKTOP, $false))) {
+        $caminho   = $par[0]
+        $ehPolitica = [bool]$par[1]
+        $ativa = Get-PerfRegistryString -Path $caminho -Name 'ScreenSaveActive'
+        $exe   = Get-PerfRegistryString -Path $caminho -Name 'SCRNSAVE.EXE'
+        $tout  = Get-PerfRegistryString -Path $caminho -Name 'ScreenSaveTimeOut'
+        $seg   = Get-PerfRegistryString -Path $caminho -Name 'ScreenSaverIsSecure'
+
+        $tempo = 0
+        if (-not [string]::IsNullOrWhiteSpace($tout)) { try { $tempo = [int]$tout } catch { $tempo = 0 } }
+
+        # "Ativa" exige as tres condicoes. ScreenSaveActive=1 sozinho, sem
+        # executavel e sem tempo, e o estado de fabrica do Windows e NAO bloqueia
+        # nada - reportar isso como risco seria alarme falso.
+        $ehAtiva = (("$ativa" -eq '1') -and $tempo -gt 0 -and -not [string]::IsNullOrWhiteSpace($exe))
+        if (-not $ehAtiva) { continue }
+
+        $out.ProtecaoAtiva       = $true
+        $out.ProtecaoTimeout     = $tempo
+        $out.ProtecaoExe         = "$exe"
+        $out.ProtecaoSegura      = ("$seg" -eq '1')
+        $out.ProtecaoPorDiretiva = $ehPolitica
+
+        $origem = $(if ($ehPolitica) { 'imposta por diretiva de grupo' } else { 'configurada neste perfil de usuário' })
+        if ($out.ProtecaoSegura) {
+            [void]$restr.Add("Proteção de tela $origem com exigência de senha ao retomar, após $tempo s: ela bloqueia a sessão independentemente do plano de energia. Não foi alterada.")
+        } else {
+            [void]$restr.Add("Proteção de tela $origem após $tempo s (sem exigência de senha): apaga a tela sem bloquear a sessão. Não foi alterada.")
+        }
+        break
+    }
+
+    $out.Restricoes = @($restr)
+    return $out
 }
 
 function Get-PerfRegistryDword {
@@ -896,6 +1088,29 @@ function Get-PerfSettingIndexFromRegistry {
     return (Get-PerfRegistryDword -Path $caminho -Name $nome)
 }
 
+function Get-PerfEfetivo {
+    <#
+      Valor EFETIVO de uma configuracao na linha pedida, com a mesma segunda via
+      usada na aplicacao: powercfg primeiro, registro do plano depois.
+
+      A segunda via nao e luxo: configuracao oculta (Attributes=1) nao aparece no
+      'powercfg /query', e sem ela um item corretamente gravado seria rebaixado a
+      "sem confirmação" apenas por nao ser exibido.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$SchemeGuid,
+        [Parameter(Mandatory = $true)]$Cfg,
+        [ValidateSet('AC', 'DC')][string]$Linha = 'AC'
+    )
+    $st = Get-PerfSettingState -SchemeGuid $SchemeGuid -SubGuid $Cfg.Sub -SettingGuid $Cfg.Setting
+    $v = $(if ($Linha -eq 'DC') { $st.Dc } else { $st.Ac })
+    if ($null -eq $v) {
+        $v = Get-PerfSettingIndexFromRegistry -SchemeGuid $SchemeGuid -SubGuid $Cfg.Sub -SettingGuid $Cfg.Setting -Line $Linha
+    }
+    return $v
+}
+
 function Get-PerfSettingState {
     <#
       Consulta uma configuracao. Retorna {Exists,Ac,Dc,Motivo}.
@@ -923,8 +1138,16 @@ function Get-PerfSettingState {
     }
     $out.Presente = $true
 
+    # O rotulo da saida do powercfg e TRADUZIDO. Em pt-BR ele e "Índice de
+    # Configurações de Correntes Alternadas Atuais" - nada parecido com o texto
+    # em ingles -, entao casar so o rotulo ingles jogava toda leitura da versao
+    # localizada na heuristica posicional abaixo. A heuristica funciona, mas
+    # depende da ordem dos valores; o rotulo, quando casa, e deterministico.
+    # "Alternadas" e "Contínuas" identificam AC e DC sem depender de acentuacao.
     $mAc = [regex]::Match($q.StdOut, '(?im)^\s*Current AC Power Setting Index:\s*0x([0-9A-Fa-f]+)\s*$')
     $mDc = [regex]::Match($q.StdOut, '(?im)^\s*Current DC Power Setting Index:\s*0x([0-9A-Fa-f]+)\s*$')
+    if (-not $mAc.Success) { $mAc = [regex]::Match($q.StdOut, '(?im)^\s*.ndice de Configura..es de Correntes Alternadas Atuais:\s*0x([0-9A-Fa-f]+)\s*$') }
+    if (-not $mDc.Success) { $mDc = [regex]::Match($q.StdOut, '(?im)^\s*.ndice de Configura..es de Correntes Cont.nuas Atuais:\s*0x([0-9A-Fa-f]+)\s*$') }
     if ($mAc.Success) { $out.Ac = [Convert]::ToInt64($mAc.Groups[1].Value, 16) }
     if ($mDc.Success) { $out.Dc = [Convert]::ToInt64($mDc.Groups[1].Value, 16) }
 
@@ -983,6 +1206,29 @@ function Set-PerfSettingValue {
     $res = [pscustomobject]@{
         Configuracao = $Label; Linha = $Line; Desejado = $Value
         Anterior = $null; Efetivo = $null; Status = 'SKIP'; Detalhe = ''
+    }
+
+    # DIRETIVA DE GRUPO ANTES DA ESCRITA. Quando ela fixa outro valor, escrever
+    # no plano nao muda o efetivo: o powercfg aceita o comando e o Windows
+    # continua usando o valor da diretiva. Tentar assim mesmo produziria um
+    # "divergente" inexplicado no fim e uma correcao que nunca converge.
+    $pol = Get-PerfPolicyForSetting -SettingGuid $SettingGuid
+    if ($null -ne $pol) {
+        $valPol = $(if ($Line -eq 'DC') { $pol.Dc } else { $pol.Ac })
+        if ($null -ne $valPol) {
+            $res.Anterior = $valPol
+            $res.Efetivo  = $valPol
+            if ([int]$valPol -eq $Value) {
+                $res.Status  = 'ALREADY'
+                $res.Detalhe = 'valor imposto por diretiva de grupo, e coincide com o do perfil'
+                Write-Log OK "[$Line] $Label : já fixado em $(Format-PerfValue -Label $Label -Value $valPol) por diretiva de grupo. Nenhuma escrita realizada."
+            } else {
+                $res.Status  = 'POLICY'
+                $res.Detalhe = "$($pol.Origem) fixa o valor em $valPol"
+                Write-Log WARN "[$Line] $Label : bloqueado por diretiva de grupo (valor imposto: $(Format-PerfValue -Label $Label -Value $valPol)). Nenhuma alteração foi tentada."
+            }
+            return $res
+        }
     }
 
     $antes = Get-PerfSettingState -SchemeGuid $SchemeGuid -SubGuid $SubGuid -SettingGuid $SettingGuid
@@ -1069,16 +1315,78 @@ function Format-PerfValue {
     param([string]$Label, $Value)
     if ($null -eq $Value) { return 'n/d' }
     $v = [int]$Value
+    # A ORDEM DECIDE. 'switch -Regex' avalia de cima para baixo e cada ramo sai
+    # por 'return', entao o primeiro padrao que casar e o que vale. As
+    # configuracoes medidas em TEMPO vem primeiro porque varias delas tambem
+    # contem a palavra do ramo seguinte - "Tempo limite de suspensão de hubs USB"
+    # casaria com 'USB' e seria exibida como "0 (Desabilitado)" em vez de "Nunca".
     switch -Regex ($Label) {
+        'Tempo limite|após|apos|Desligar|Suspender|Hibernar' { if ($v -eq 0) { return 'Nunca' }; return "$v s" }
         'boost'      { $m = @{0='Desabilitado';1='Habilitado';2='Agressivo';3='Eficiente habilitado';4='Eficiente agressivo';5='Agressivo garantido';6='Eficiente agressivo garantido'}; if ($m.ContainsKey($v)) { return "$v ($($m[$v]))" }; return "$v" }
         'resfriamento' { if ($v -eq 0) { return '0 (Passivo)' } elseif ($v -eq 1) { return '1 (Ativo)' }; return "$v" }
         'PCI Express' { $m = @{0='Desligado';1='Economia moderada';2='Economia maxima'}; if ($m.ContainsKey($v)) { return "$v ($($m[$v]))" }; return "$v" }
+        'AHCI'       { $m = @{0='Ativo (sem economia)';1='HIPM';2='HIPM+DIPM';3='DIPM'}; if ($m.ContainsKey($v)) { return "$v ($($m[$v]))" }; return "$v" }
         'USB'        { if ($v -eq 0) { return '0 (Desabilitado)' } elseif ($v -eq 1) { return '1 (Habilitado)' }; return "$v" }
         'ocioso'     { if ($v -eq 0) { return '0 (Estados de ocioso ativos)' } elseif ($v -eq 1) { return '1 (Estados de ocioso desativados)' }; return "$v" }
-        'estado (min|max)|processador' { return "$v%" }
-        'Desligar|Suspender|Hibernar'  { if ($v -eq 0) { return 'Nunca' }; return "$v s" }
+        'estado (min|max)|processador|Núcleos' { return "$v%" }
         default { return "$v" }
     }
+}
+
+function Get-PerfStatusRotulo {
+    <# Vocabulario unico de resultado. 'OK' nao pode significar seis coisas
+       diferentes: cada estado abaixo tem consequencia operacional propria. #>
+    [CmdletBinding()]
+    param([string]$Status)
+    switch ($Status) {
+        'APPLIED'    { return 'Aplicado' }
+        'ALREADY'    { return 'Já estava aplicado' }
+        'NA'         { return 'Não aplicável' }
+        'SKIP'       { return 'Não suportado' }
+        'POLICY'     { return 'Bloqueado por política' }
+        'FAIL'       { return 'Falhou' }
+        'UNVERIFIED' { return 'Falhou (sem confirmação)' }
+        default      { return "$Status" }
+    }
+}
+
+function Show-PerfLockDiagnosis {
+    <#
+      Por que a tela ainda bloqueia depois de o perfil ter sido aplicado.
+
+      O perfil de energia controla APAGAR A TELA e SUSPENDER. Ele nao controla o
+      BLOQUEIO DA SESSAO - isso e protecao de tela com senha ou diretiva de
+      seguranca de inatividade. Confundir os tres faz a ferramenta prometer o que
+      nao pode cumprir; por isso os mecanismos que nao sao de energia sao
+      apenas diagnosticados e reportados como restricao, nunca alterados.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $lock = $script:LockState
+    if ($null -eq $lock) { return }
+
+    $pares = [ordered]@{
+        'Limite de inatividade da máquina' = $(if ($lock.InactivityTimeoutSecs) { "$($lock.InactivityTimeoutSecs) s (diretiva de segurança)" } else { 'não definido' })
+        'Proteção de tela'                 = $(if ($lock.ProtecaoAtiva) { "ativa após $($lock.ProtecaoTimeout) s ($($lock.ProtecaoExe))" } else { 'não configurada' })
+        'Bloqueio ao retomar'              = $(if ($lock.ProtecaoAtiva -and $lock.ProtecaoSegura) { 'sim - exige senha' } else { 'não' })
+        'Origem da proteção de tela'       = $(if (-not $lock.ProtecaoAtiva) { 'n/d' } elseif ($lock.ProtecaoPorDiretiva) { 'diretiva de grupo' } else { 'preferência do usuário' })
+    }
+
+    if (@($lock.Restricoes).Count -eq 0) {
+        Write-Log OK 'Nenhum mecanismo de bloqueio por inatividade em vigor além dos controlados pelo plano de energia.'
+        Add-CompartDiskSection -Title 'Bloqueio por inatividade' -Status 'OK' `
+            -Summary 'Nenhuma restrição: apagar a tela e suspender são governados pelo plano de energia aplicado.' -Pairs $pares
+        return
+    }
+
+    foreach ($r in @($lock.Restricoes)) { Write-Log WARN $r }
+    Write-Log INFO 'Proteção de tela e diretiva de inatividade não pertencem ao plano de energia e não foram alteradas por esta opção.'
+    Add-CompartDiskFinding -Severity WARN -Area 'Desempenho' `
+        -Message 'A sessao pode continuar sendo bloqueada por mecanismo alheio ao plano de energia.' `
+        -Recommendation 'Protecao de tela com senha: Configuracoes > Personalizacao > Tela de bloqueio. Limite de inatividade: diretiva de seguranca, tratar com o administrador.'
+    Add-CompartDiskSection -Title 'Bloqueio por inatividade' -Status 'WARN' `
+        -Summary (@($lock.Restricoes) -join ' | ') -Pairs $pares
 }
 
 # ============================================================================
@@ -1192,26 +1500,65 @@ function Set-PerfVisualFx {
 # ============================================================================
 
 function Get-PerfProfileDefinition {
+    <#
+      Campos de cada configuracao:
+        Rotulo    texto exibido e chave de correlacao dos resultados
+        Sub       GUID do subgrupo | Setting  GUID da configuracao
+        Ac        valor desejado na linha CA ($null = a linha nao pertence ao perfil)
+        Dc        valor desejado na linha CC ($null = bateria preservada)
+        Aplicar   $false = somente diagnosticada, nunca escrita
+        Grupo     agrupamento do relatorio
+        Motivo    por que nao e aplicada (Aplicar=$false) ou por que a bateria
+                  e preservada (Dc=$null) - texto que vai para o relatorio
+
+      LINHA CC (bateria): os valores Dc so sao escritos com -IncludeDcSettings,
+      exatamente como antes. As configuracoes de tempo ocioso (tela, suspensao,
+      hibernacao, USB, disco) nao tem valor Dc NEM COM O PARAMETRO: um portatil
+      que nunca apaga a tela nem suspende em bateria esquenta fechado dentro da
+      mochila e chega ao fim da carga sem salvar nada. Isso e dano, nao
+      desempenho. Em CA, onde nao ha esse risco, todas sao aplicadas.
+    #>
     [CmdletBinding()]
     param()
+    $mBat = 'em bateria a configuração é preservada: mantê-la em desempenho máximo consumiria a carga sem ganho sustentado'
+    $mOci = 'em bateria a configuração é preservada: impedir tela/suspensão fora da tomada esgota a carga e aquece o equipamento fechado'
     return @(
-        [pscustomobject]@{ Rotulo = 'Estado mínimo do processador'; Sub = $SUB_PROCESSOR; Setting = '893dee8e-2bef-41e0-89c6-b55d0929964c'; Ac = 100; Dc = $null; Aplicar = $true }
-        [pscustomobject]@{ Rotulo = 'Estado máximo do processador'; Sub = $SUB_PROCESSOR; Setting = 'bc5038f7-23e0-4960-96da-33abaf5935ec'; Ac = 100; Dc = 100;  Aplicar = $true }
-        [pscustomobject]@{ Rotulo = 'Modo de boost do processador'; Sub = $SUB_PROCESSOR; Setting = 'be337238-0d82-4146-a960-4f3749d470c7'; Ac = 2;   Dc = 2;    Aplicar = $true }
-        [pscustomobject]@{ Rotulo = 'Política de resfriamento do sistema'; Sub = $SUB_PROCESSOR; Setting = '94d3a615-a899-4ac5-ae2b-e4d8f634367f'; Ac = 1; Dc = $null; Aplicar = $true }
-        [pscustomobject]@{ Rotulo = 'Núcleos mínimos do processador (core parking)'; Sub = $SUB_PROCESSOR; Setting = '0cc5b647-c1df-4637-891a-dec35c318583'; Ac = 100; Dc = 100; Aplicar = $true }
-        [pscustomobject]@{ Rotulo = 'PCI Express - gerenciamento de energia do link'; Sub = $SUB_PCIEXPRESS; Setting = 'ee12f906-d277-404b-b6da-e5fa1a576df5'; Ac = $null; Dc = $null; Aplicar = $false }
-        [pscustomobject]@{ Rotulo = 'Suspensão seletiva USB'; Sub = $SUB_USB; Setting = '48e6b7a6-50f5-4782-a5d4-53bb8f07e226'; Ac = $null; Dc = $null; Aplicar = $false }
-        [pscustomobject]@{ Rotulo = 'Desligar disco rígido após'; Sub = $SUB_DISK; Setting = '6738e2c4-e8a5-4a42-b16a-e040e769756e'; Ac = $null; Dc = $null; Aplicar = $false }
-        # --- diagnostico apenas (nunca alteradas automaticamente) -------------
-        # PCI Express, USB e disco saem do conjunto aplicado: nenhum deles altera
-        # a capacidade de processamento da CPU, e mexer neles atingiria portas USB
-        # e desligamento de HD/SSD - efeitos fora do escopo de desempenho maximo
-        # do processador. Continuam sendo lidos e exibidos no diagnostico.
-        [pscustomobject]@{ Rotulo = 'Desativar estados de ocioso do processador'; Sub = $SUB_PROCESSOR; Setting = '5d76a2ca-e8c0-402f-a133-2158492d58ad'; Ac = $null; Dc = $null; Aplicar = $false }
-        [pscustomobject]@{ Rotulo = 'Desligar vídeo após'; Sub = $SUB_VIDEO; Setting = '3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e'; Ac = $null; Dc = $null; Aplicar = $false }
-        [pscustomobject]@{ Rotulo = 'Suspender após'; Sub = $SUB_SLEEP; Setting = '29f6c1db-86da-48c5-9fdb-f2b67b1f44da'; Ac = $null; Dc = $null; Aplicar = $false }
-        [pscustomobject]@{ Rotulo = 'Hibernar após'; Sub = $SUB_SLEEP; Setting = '9d7815a6-7ee4-497e-8888-515a05f02364'; Ac = $null; Dc = $null; Aplicar = $false }
+        # --- Processador ------------------------------------------------------
+        [pscustomobject]@{ Rotulo = 'Estado mínimo do processador'; Sub = $SUB_PROCESSOR; Setting = '893dee8e-2bef-41e0-89c6-b55d0929964c'; Ac = 100; Dc = $null; Aplicar = $true; Grupo = 'Processador'; Motivo = $mBat }
+        [pscustomobject]@{ Rotulo = 'Estado máximo do processador'; Sub = $SUB_PROCESSOR; Setting = 'bc5038f7-23e0-4960-96da-33abaf5935ec'; Ac = 100; Dc = 100;  Aplicar = $true; Grupo = 'Processador'; Motivo = '' }
+        [pscustomobject]@{ Rotulo = 'Modo de boost do processador'; Sub = $SUB_PROCESSOR; Setting = 'be337238-0d82-4146-a960-4f3749d470c7'; Ac = 2;   Dc = 2;    Aplicar = $true; Grupo = 'Processador'; Motivo = '' }
+        [pscustomobject]@{ Rotulo = 'Política de resfriamento do sistema'; Sub = $SUB_PROCESSOR; Setting = '94d3a615-a899-4ac5-ae2b-e4d8f634367f'; Ac = 1; Dc = $null; Aplicar = $true; Grupo = 'Processador'; Motivo = $mBat }
+        [pscustomobject]@{ Rotulo = 'Núcleos mínimos do processador (core parking)'; Sub = $SUB_PROCESSOR; Setting = '0cc5b647-c1df-4637-891a-dec35c318583'; Ac = 100; Dc = 100; Aplicar = $true; Grupo = 'Processador'; Motivo = '' }
+
+        # --- Tela --------------------------------------------------------------
+        # Tela apagada NAO e suspensao e NAO e bloqueio de sessao. Aqui trata-se
+        # exclusivamente do desligamento do video por ociosidade - o bloqueio
+        # tem mecanismos proprios, diagnosticados em Show-PerfLockDiagnosis.
+        [pscustomobject]@{ Rotulo = 'Desligar vídeo após'; Sub = $SUB_VIDEO; Setting = '3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e'; Ac = 0; Dc = $null; Aplicar = $true; Grupo = 'Tela'; Motivo = $mOci }
+        [pscustomobject]@{ Rotulo = 'Tempo limite de desligamento do vídeo na tela de bloqueio'; Sub = $SUB_VIDEO; Setting = '8ec4b3a5-6868-48c2-be75-4f3044be88a7'; Ac = 0; Dc = $null; Aplicar = $true; Grupo = 'Tela'; Motivo = $mOci }
+
+        # --- Suspensao ---------------------------------------------------------
+        # "Tempo limite de suspensão não assistida" e o que devolve a maquina ao
+        # estado de baixa energia depois de um despertar nao assistido - com ele
+        # ativo, a maquina volta a suspender mesmo com "Suspender após = Nunca".
+        [pscustomobject]@{ Rotulo = 'Suspender após'; Sub = $SUB_SLEEP; Setting = '29f6c1db-86da-48c5-9fdb-f2b67b1f44da'; Ac = 0; Dc = $null; Aplicar = $true; Grupo = 'Suspensão'; Motivo = $mOci }
+        [pscustomobject]@{ Rotulo = 'Hibernar após'; Sub = $SUB_SLEEP; Setting = '9d7815a6-7ee4-497e-8888-515a05f02364'; Ac = 0; Dc = $null; Aplicar = $true; Grupo = 'Suspensão'; Motivo = $mOci }
+        [pscustomobject]@{ Rotulo = 'Tempo limite de suspensão não assistida'; Sub = $SUB_SLEEP; Setting = '7bc4a2f9-d8fc-4469-b07b-33eb785aaca0'; Ac = 0; Dc = $null; Aplicar = $true; Grupo = 'Suspensão'; Motivo = $mOci }
+
+        # --- USB ---------------------------------------------------------------
+        # Suspensao seletiva vem HABILITADA nos planos de fabrica do Windows,
+        # inclusive no Alto Desempenho: e a causa direta de porta USB que "dorme".
+        [pscustomobject]@{ Rotulo = 'Suspensão seletiva USB'; Sub = $SUB_USB; Setting = '48e6b7a6-50f5-4782-a5d4-53bb8f07e226'; Ac = 0; Dc = $null; Aplicar = $true; Grupo = 'USB'; Motivo = $mOci }
+        [pscustomobject]@{ Rotulo = 'Gerenciamento de energia do link USB 3'; Sub = $SUB_USB; Setting = 'd4e98f31-5ffe-4ce1-be31-1b38b384c009'; Ac = 0; Dc = $null; Aplicar = $true; Grupo = 'USB'; Motivo = $mOci }
+        [pscustomobject]@{ Rotulo = 'Tempo limite de suspensão de hubs USB'; Sub = $SUB_USB; Setting = '0853a681-27c8-4100-a2fd-82013e970683'; Ac = 0; Dc = $null; Aplicar = $true; Grupo = 'USB'; Motivo = $mOci }
+
+        # --- Barramento e armazenamento ---------------------------------------
+        [pscustomobject]@{ Rotulo = 'PCI Express - gerenciamento de energia do link'; Sub = $SUB_PCIEXPRESS; Setting = 'ee12f906-d277-404b-b6da-e5fa1a576df5'; Ac = 0; Dc = $null; Aplicar = $true; Grupo = 'Barramento'; Motivo = $mBat }
+        [pscustomobject]@{ Rotulo = 'Desligar disco rígido após'; Sub = $SUB_DISK; Setting = '6738e2c4-e8a5-4a42-b16a-e040e769756e'; Ac = 0; Dc = $null; Aplicar = $true; Grupo = 'Armazenamento'; Motivo = $mOci }
+        [pscustomobject]@{ Rotulo = 'AHCI - gerenciamento de energia do link (HIPM/DIPM)'; Sub = $SUB_DISK; Setting = '0b2d69d7-a2a1-449c-9680-f91c70521c60'; Ac = 0; Dc = $null; Aplicar = $true; Grupo = 'Armazenamento'; Motivo = $mBat }
+
+        # --- Diagnostico apenas (nunca alterada automaticamente) --------------
+        [pscustomobject]@{ Rotulo = 'Desativar estados de ocioso do processador'; Sub = $SUB_PROCESSOR; Setting = '5d76a2ca-e8c0-402f-a133-2158492d58ad'; Ac = $null; Dc = $null; Aplicar = $false; Grupo = 'Processador'; Motivo = 'desativar os estados de ocioso (C-states) mantém o processador em plena tensão o tempo todo: eleva temperatura e consumo de forma permanente sem aumentar o desempenho sustentado. É ajuste de depuração de latência, não de desempenho' }
     )
 }
 
@@ -1248,8 +1595,42 @@ function Invoke-PerfUltimate {
     $planoInicial = Get-PerfActiveScheme
     if ($planoInicial) { Write-Log INFO "Plano atual: $($planoInicial.Nome) ($($planoInicial.Guid))." }
 
+    # ---------- Ficha do ambiente: o que decide o metodo de aplicacao ----------
+    $buildTxt = 'n/d'
+    $familia  = 'n/d'
+    if ($script:Win) {
+        $familia  = "$($script:Win.Family)"
+        $buildTxt = "$($script:Win.FullBuild)"
+        if ($script:Win.DisplayVersion) { $buildTxt = "$($script:Win.DisplayVersion) (build $($script:Win.FullBuild))" }
+    }
+    Write-CompartDiskKeyValue 'Sistema'        $(if ($script:OsCaption) { $script:OsCaption } else { $familia }) -Pad 22
+    Write-CompartDiskKeyValue 'Versão'         $buildTxt -Pad 22
+    Write-CompartDiskKeyValue 'Arquitetura'    $(if ($script:Win) { $script:Win.Architecture } else { $env:PROCESSOR_ARCHITECTURE }) -Pad 22
+    Write-CompartDiskKeyValue 'Equipamento'    $script:Chassi -Pad 22
+    Write-CompartDiskKeyValue 'Bateria'        $(if ($script:HasBattery) { 'presente (linhas CA e CC)' } else { 'ausente (somente linha CA)' }) -Pad 22
+    Write-CompartDiskKeyValue 'Administrador'  $(if ($script:IsAdmin) { 'sim' } else { 'NÃO' }) -Pad 22
+    Write-CompartDiskKeyValue 'Modern Standby' $(if ($script:ModernStandby) { 'sim (S0)' } else { 'não' }) -Pad 22
+    Write-CompartDiskKeyValue 'Plano atual'    $(if ($planoInicial) { "$($planoInicial.Nome) ($($planoInicial.Guid))" } else { 'não determinado' }) -Pad 22
+    Write-Color ''
+
+    # A ausencia de privilegio ja e tratada duas vezes antes de chegar aqui:
+    # Start-CompartDiskModule -RequireAdmin barra a acao, e o bloco de execucao
+    # registra o aviso de salvaguarda. A ficha acima apenas exibe o estado.
+
     if ($script:ModernStandby) {
         Write-Log INFO 'Dispositivo com Modern Standby (S0). Planos de alto desempenho podem estar ocultos pelo fabricante - isso não é um defeito.'
+    }
+
+    # Diretiva que fixa o plano ativo: o /setactive e aceito e revertido.
+    if ($script:PowerPolicies -and $script:PowerPolicies.PlanoFixado) {
+        Set-PerfResult 'WARN'
+        Write-Log WARN "Diretiva de grupo fixa o plano de energia ativo em $($script:PowerPolicies.PlanoFixado). A troca de plano pode ser revertida pelo Windows."
+        Add-CompartDiskFinding -Severity WARN -Area 'Desempenho' `
+            -Message 'Diretiva de grupo define o plano de energia ativo desta maquina.' `
+            -Recommendation 'Restricao corporativa legitima: tratar com o administrador do dominio. Nenhuma diretiva foi alterada.'
+    }
+    if ($script:PowerPolicies -and $script:PowerPolicies.Total -gt 0) {
+        Write-Log WARN "$($script:PowerPolicies.Total) configuração(ões) de energia estão fixadas por diretiva de grupo e não serão alteradas."
     }
 
     # ---------- PREPARAR: alvo com cadeia de fallback explicita ----------
@@ -1274,6 +1655,17 @@ function Invoke-PerfUltimate {
     }
 
     # ---------- Fallback final: Power Mode overlay (dispositivos S0) ----------
+    # ANTES: aqui a acao aplicava o overlay e RETORNAVA. Num dispositivo que nao
+    # expoe plano de alto desempenho, nenhuma configuracao chegava a ser tocada -
+    # a tela continuava apagando, a maquina continuava suspendendo e o USB
+    # continuava dormindo, com a operacao reportada como concluida. O overlay
+    # controla a curva de energia do processador; ele nao mexe em tempo ocioso.
+    #
+    # AGORA: aplicado o overlay, o perfil continua sendo escrito - no PLANO ATIVO,
+    # que nesse cenario e o unico que existe. E uma alteracao em plano de fabrica
+    # e por isso e declarada como tal; a reversao continua sendo a opcao [8]
+    # (Restaurar Plano de Energia Equilibrado), que devolve o plano padrao.
+    $planoDedicado = $true
     if ($null -eq $alvo) {
         Set-PerfResult 'WARN'
         Write-Log WARN 'Nenhum plano de alto desempenho pode ser criado ou ativado neste dispositivo.'
@@ -1283,13 +1675,26 @@ function Invoke-PerfUltimate {
                 -Message 'Planos Desempenho Maximo e Alto Desempenho indisponiveis. Foi aplicado e validado o modo de energia "Melhor desempenho" do Windows.' `
                 -Recommendation 'Comum em notebooks com Modern Standby: o fabricante oculta os planos classicos e o Windows usa o controle deslizante de energia.'
         } else {
-            Write-Log WARN 'Nenhum plano ou modo de desempenho solicitado pode ser aplicado. O sistema permanece exatamente como estava.'
+            Write-Log WARN 'O modo de energia do Windows também não pôde ser aplicado neste dispositivo.'
             Add-CompartDiskFinding -Severity WARN -Area 'Desempenho' `
-                -Message 'Nao foi possivel aplicar nenhum perfil de desempenho neste dispositivo.' `
+                -Message 'Nao foi possivel aplicar plano nem modo de desempenho neste dispositivo.' `
                 -Recommendation 'Verificar politicas de grupo corporativas em Configuracao do Computador > Modelos Administrativos > Sistema > Gerenciamento de Energia.'
         }
-        Invoke-PerfVisualEffectsForAction -Alvo 2
-        return
+
+        # Ultimo recurso util: escrever o perfil no plano que esta em uso.
+        $atualAgora = Get-PerfActiveScheme
+        if ($null -eq $atualAgora) {
+            Write-Log WARN 'O plano ativo não pôde ser identificado. Nenhuma configuração foi alterada.'
+            Invoke-PerfVisualEffectsForAction -Alvo 2
+            return
+        }
+        $planoDedicado = $false
+        $alvo = [pscustomobject]@{ Guid = $atualAgora.Guid; Nome = $atualAgora.Nome; Origem = 'plano ativo' }
+        Write-Log WARN "Sem plano dedicado disponível, o perfil será aplicado ao plano em uso: '$($alvo.Nome)'."
+        Write-Log INFO 'Para desfazer, use a opção [8] Restaurar Plano de Energia Equilibrado deste mesmo menu.'
+        Add-CompartDiskFinding -Severity WARN -Area 'Desempenho' `
+            -Message "Perfil de desempenho aplicado ao plano em uso ('$($alvo.Nome)') por ausencia de plano dedicado." `
+            -Recommendation 'Reversao pela opcao [8] Restaurar Plano de Energia Equilibrado.'
     }
 
     # ---------- APLICAR + VALIDAR o plano ----------
@@ -1337,22 +1742,58 @@ function Invoke-PerfUltimate {
     $resultados = New-Object System.Collections.ArrayList
     $perfil = Get-PerfProfileDefinition
 
+    function Add-PerfLinhaNA {
+        <# Registra uma linha que NAO foi escrita, com o motivo. "Nao aplicavel" e
+           um resultado legitimo e precisa aparecer - omiti-la faria o resumo
+           final contar menos itens do que o perfil realmente cobre. #>
+        param([string]$Rotulo, [string]$Linha, $Desejado, [string]$Motivo)
+        [void]$resultados.Add([pscustomobject]@{
+            Configuracao = $Rotulo; Linha = $Linha; Desejado = $Desejado
+            Anterior = $null; Efetivo = $null; Status = 'NA'; Detalhe = $Motivo
+        })
+    }
+
     foreach ($cfg in $perfil) {
-        if (-not $cfg.Aplicar) { continue }
+
+        # Diagnosticada e nunca escrita: entra no relatorio com o motivo tecnico.
+        if (-not $cfg.Aplicar) {
+            $st = Get-PerfSettingState -SchemeGuid $alvo.Guid -SubGuid $cfg.Sub -SettingGuid $cfg.Setting
+            [void]$resultados.Add([pscustomobject]@{
+                Configuracao = $cfg.Rotulo; Linha = 'AC'; Desejado = $null
+                Anterior = $st.Ac; Efetivo = $st.Ac; Status = 'NA'; Detalhe = $cfg.Motivo
+            })
+            Write-Log INFO "[AC] $($cfg.Rotulo) : não alterada por decisão de projeto - $($cfg.Motivo)."
+            continue
+        }
+
+        # --- linha CA (na tomada) ---------------------------------------------
         if ($null -ne $cfg.Ac) {
             $r = Set-PerfSettingValue -SchemeGuid $alvo.Guid -SubGuid $cfg.Sub -SettingGuid $cfg.Setting `
                 -Value ([int]$cfg.Ac) -Label $cfg.Rotulo -Line 'AC'
             [void]$resultados.Add($r)
         }
-        if ($IncludeDcSettings -and $null -ne $cfg.Dc) {
+
+        # --- linha CC (bateria) -----------------------------------------------
+        # Equipamento sem bateria nao tem linha CC: gerar dezenas de linhas
+        # "nao aplicavel" num desktop seria ruido, entao a ausencia e dita uma vez.
+        if (-not $script:HasBattery) { continue }
+
+        if ($null -eq $cfg.Dc) {
+            Add-PerfLinhaNA -Rotulo $cfg.Rotulo -Linha 'DC' -Desejado $null -Motivo $cfg.Motivo
+        } elseif (-not $IncludeDcSettings) {
+            Add-PerfLinhaNA -Rotulo $cfg.Rotulo -Linha 'DC' -Desejado ([int]$cfg.Dc) `
+                -Motivo 'bateria preservada por padrão; use -IncludeDcSettings para aplicar também em bateria'
+        } else {
             $r = Set-PerfSettingValue -SchemeGuid $alvo.Guid -SubGuid $cfg.Sub -SettingGuid $cfg.Setting `
                 -Value ([int]$cfg.Dc) -Label $cfg.Rotulo -Line 'DC'
             [void]$resultados.Add($r)
         }
     }
 
-    if (-not $IncludeDcSettings) {
-        Write-Log INFO 'Configurações em bateria (DC) preservadas. Use -IncludeDcSettings para alterá-las também.'
+    if (-not $script:HasBattery) {
+        Write-Log INFO 'Equipamento sem bateria: existe apenas a linha CA (na tomada). Nenhuma configuração de bateria é aplicável.'
+    } elseif (-not $IncludeDcSettings) {
+        Write-Log INFO 'Configurações em bateria (CC) preservadas. Use -IncludeDcSettings para aplicar o perfil também em bateria.'
     }
 
     # ---------- EFETIVAR: alteracoes no plano em uso so valem apos reativa-lo ----------
@@ -1367,41 +1808,72 @@ function Invoke-PerfUltimate {
         }
     }
 
-    # ---------- VALIDAR NOVAMENTE (releitura final independente) ----------
+    # ---------- VALIDAR NOVAMENTE + CORRIGIR SOMENTE O QUE DIVERGIU ----------
+    # A correcao e DIRIGIDA: apenas a configuracao que divergiu, uma unica vez.
+    # Reaplicar o perfil inteiro a cada inconsistencia reescreveria dezenas de
+    # valores que ja estavam corretos e esconderia qual deles realmente falhou.
     Write-Log INFO 'Revalidando as configurações gravadas...'
     $divergentes = New-Object System.Collections.ArrayList
+    $corrigidas  = New-Object System.Collections.ArrayList
+    $reescreveu  = $false
+
     foreach ($r in $resultados) {
         if ($r.Status -ne 'APPLIED' -and $r.Status -ne 'ALREADY') { continue }
         $cfg = $perfil | Where-Object { $_.Rotulo -eq $r.Configuracao } | Select-Object -First 1
         if ($null -eq $cfg) { continue }
-        $st = Get-PerfSettingState -SchemeGuid $alvo.Guid -SubGuid $cfg.Sub -SettingGuid $cfg.Setting
-        $efet = $st.Ac
-        if ($r.Linha -eq 'DC') { $efet = $st.Dc }
-        # Configuracao oculta nao aparece no powercfg: a revalidacao usa a mesma
-        # segunda via da aplicacao, senao um item corretamente aplicado seria
-        # rebaixado a UNVERIFIED so por nao ser exibido.
-        if ($null -eq $efet) {
-            $efet = Get-PerfSettingIndexFromRegistry -SchemeGuid $alvo.Guid -SubGuid $cfg.Sub -SettingGuid $cfg.Setting -Line $r.Linha
-        }
-        if ($null -eq $efet -or [int]$efet -ne [int]$r.Desejado) {
-            $r.Status = 'UNVERIFIED'
-            $r.Efetivo = $efet
-            $r.Detalhe = 'divergência detectada na revalidação final'
+
+        $efet = Get-PerfEfetivo -SchemeGuid $alvo.Guid -Cfg $cfg -Linha $r.Linha
+        if ($null -ne $efet -and [int]$efet -eq [int]$r.Desejado) { continue }
+
+        # 1. identificar exatamente o que divergiu
+        Write-Log WARN "[$($r.Linha)] $($r.Configuracao) : divergência na revalidação (efetivo=$efet, esperado=$($r.Desejado)). Corrigindo apenas esta configuração..."
+
+        # 2. corrigir somente essa configuracao
+        $corr = Set-PerfSettingValue -SchemeGuid $alvo.Guid -SubGuid $cfg.Sub -SettingGuid $cfg.Setting `
+            -Value ([int]$r.Desejado) -Label $cfg.Rotulo -Line $r.Linha
+        if ($corr.Status -eq 'APPLIED') { $reescreveu = $true }
+
+        # 3. validar novamente
+        $efet2 = Get-PerfEfetivo -SchemeGuid $alvo.Guid -Cfg $cfg -Linha $r.Linha
+
+        # 4. registrar o resultado real da correcao
+        $r.Efetivo = $efet2
+        if ($null -ne $efet2 -and [int]$efet2 -eq [int]$r.Desejado) {
+            $r.Status  = 'APPLIED'
+            $r.Detalhe = 'divergência detectada na revalidação e corrigida na segunda tentativa'
+            [void]$corrigidas.Add($r.Configuracao)
+            Write-Log OK "[$($r.Linha)] $($r.Configuracao) : corrigida e confirmada em $(Format-PerfValue -Label $r.Configuracao -Value $efet2)."
+        } else {
+            $r.Status  = $(if ($corr.Status -eq 'POLICY') { 'POLICY' } else { 'UNVERIFIED' })
+            $r.Detalhe = $(if ($corr.Status -eq 'POLICY') { $corr.Detalhe } else { 'divergência persistiu após a correção dirigida' })
             [void]$divergentes.Add($r.Configuracao)
         }
     }
+
+    if ($reescreveu) {
+        Write-Log INFO 'Reaplicando o plano após as correções...'
+        if (-not (Set-PerfActiveScheme -Guid $alvo.Guid -Nome $alvo.Nome -Force -Silent)) {
+            Set-PerfResult 'WARN'
+            Write-Log WARN 'As correções foram gravadas, mas a reativação do plano não pôde ser confirmada.'
+        }
+    }
+    if ($corrigidas.Count -gt 0) {
+        Write-Log OK "Correção dirigida: $($corrigidas.Count) configuração(ões) reajustada(s) e confirmada(s) ($($corrigidas -join ', '))."
+    }
     if ($divergentes.Count -gt 0) {
         Set-PerfResult 'WARN'
-        Write-Log WARN "Revalidação final: $($divergentes.Count) configuração(ões) não permaneceram com o valor solicitado ($($divergentes -join ', '))."
+        Write-Log WARN "Revalidação final: $($divergentes.Count) configuração(ões) não permaneceram com o valor solicitado nem após a correção ($($divergentes -join ', '))."
     } else {
         Write-Log OK 'Revalidação final: todas as configurações gravadas permanecem com o valor esperado.'
     }
 
     # ---------- CONTABILIZAR ----------
-    $nAplic = @($resultados | Where-Object { $_.Status -eq 'APPLIED' }).Count
-    $nJa    = @($resultados | Where-Object { $_.Status -eq 'ALREADY' }).Count
-    $nSkip  = @($resultados | Where-Object { $_.Status -eq 'SKIP' }).Count
-    $nFalha = @($resultados | Where-Object { $_.Status -eq 'FAIL' -or $_.Status -eq 'UNVERIFIED' }).Count
+    $nAplic  = @($resultados | Where-Object { $_.Status -eq 'APPLIED' }).Count
+    $nJa     = @($resultados | Where-Object { $_.Status -eq 'ALREADY' }).Count
+    $nNA     = @($resultados | Where-Object { $_.Status -eq 'NA' }).Count
+    $nSkip   = @($resultados | Where-Object { $_.Status -eq 'SKIP' }).Count
+    $nPol    = @($resultados | Where-Object { $_.Status -eq 'POLICY' }).Count
+    $nFalha  = @($resultados | Where-Object { $_.Status -eq 'FAIL' -or $_.Status -eq 'UNVERIFIED' }).Count
 
     if ($nFalha -gt 0) {
         Set-PerfResult 'WARN'
@@ -1409,16 +1881,58 @@ function Invoke-PerfUltimate {
             -Message "$nFalha configuracao(oes) de energia nao pode(m) ser aplicada(s) ou confirmada(s)." `
             -Recommendation 'Verificar politicas de grupo de gerenciamento de energia e privilegios administrativos.'
     }
+    if ($nPol -gt 0) {
+        Set-PerfResult 'WARN'
+        Write-Log WARN "$nPol configuração(ões) estão fixadas por diretiva de grupo e não foram alteradas."
+        Add-CompartDiskFinding -Severity WARN -Area 'Desempenho' `
+            -Message "$nPol configuracao(oes) de energia estao fixadas por diretiva de grupo." `
+            -Recommendation 'Restricao corporativa legitima: tratar com o administrador do dominio. Nenhuma diretiva foi alterada.'
+    }
     if ($nSkip -gt 0) {
-        Write-Log INFO "$nSkip configuração(ões) não foi(ram) aplicada(s): ausente(s) neste plano/hardware ou com o valor atual ilegível. Nenhuma escrita foi tentada."
+        Write-Log INFO "$nSkip configuração(ões) não existe(m) neste plano/hardware. Nenhuma escrita foi tentada."
     }
 
     if ($resultados.Count -gt 0) {
+        # A tabela exibida traz o rotulo de estado por extenso; o objeto publicado
+        # no relatorio mantem o codigo, que e o que os relatorios ja consomem.
+        $tabela = @($resultados | ForEach-Object {
+            [pscustomobject]@{
+                Configuracao = $_.Configuracao
+                Linha        = $_.Linha
+                Anterior     = $(if ($null -eq $_.Anterior) { 'n/d' } else { Format-PerfValue -Label $_.Configuracao -Value $_.Anterior })
+                Desejado     = $(if ($null -eq $_.Desejado) { '-' }   else { Format-PerfValue -Label $_.Configuracao -Value $_.Desejado })
+                Efetivo      = $(if ($null -eq $_.Efetivo)  { 'n/d' } else { Format-PerfValue -Label $_.Configuracao -Value $_.Efetivo })
+                Resultado    = (Get-PerfStatusRotulo $_.Status)
+            }
+        })
         Write-Color ''
-        $resultados | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+        if (Test-PerfCommand 'Write-CompartDiskTable') {
+            Write-CompartDiskTable -Rows $tabela -Property @('Configuracao', 'Linha', 'Anterior', 'Desejado', 'Efetivo', 'Resultado')
+        } else {
+            $tabela | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+        }
+        $resumo = "$nAplic aplicada(s), $nJa já conforme, $nNA não aplicável(is), $nSkip não suportada(s), $nPol bloqueada(s) por política, $nFalha com falha"
+        Write-Log INFO "Resumo das configurações de energia: $resumo"
+
+        # O relatorio leva o rotulo por extenso E o codigo: quem le o TXT/HTML
+        # precisa do primeiro, e o segundo e o que os relatorios ja consomem.
+        # Anterior/Desejado/Efetivo vao como valor bruto, que e o que permite
+        # reconstruir o estado anterior a partir do relatorio da sessao.
+        $linhasRelatorio = @($resultados | ForEach-Object {
+            [pscustomobject]@{
+                Configuracao = $_.Configuracao
+                Linha        = $_.Linha
+                Resultado    = (Get-PerfStatusRotulo $_.Status)
+                Status       = $_.Status
+                Anterior     = $_.Anterior
+                Desejado     = $_.Desejado
+                Efetivo      = $_.Efetivo
+                Detalhe      = $_.Detalhe
+            }
+        })
         Add-CompartDiskSection -Title 'Configuracoes de energia aplicadas' `
-            -Status $(if ($nFalha -gt 0) { 'WARN' } else { 'OK' }) -Rows ($resultados.ToArray()) `
-            -Summary "$nAplic aplicada(s), $nJa ja conforme, $nSkip nao aplicada(s), $nFalha com falha"
+            -Status $(if ($nFalha -gt 0 -or $nPol -gt 0) { 'WARN' } else { 'OK' }) -Rows $linhasRelatorio `
+            -Summary $resumo
     }
 
     # ---------- Hibernacao: decisao consciente de NAO alterar ----------
@@ -1427,23 +1941,32 @@ function Invoke-PerfUltimate {
     # ---------- Efeitos visuais ----------
     Invoke-PerfVisualEffectsForAction -Alvo 2
 
+    # ---------- BLOQUEIO POR INATIVIDADE (diagnostico, nunca alteracao) -------
+    Show-PerfLockDiagnosis
+
     # ---------- VALIDACAO FINAL DO PLANO ATIVO ----------
-    # Nao basta ter mandado ativar: confirma-se que o plano em vigor E o plano de
-    # Desempenho Maximo pretendido, comparando GUID com o alvo resolvido e, quando
-    # o plano canonico existe, tambem o nome que o proprio Windows lhe da.
+    # Nao basta ter mandado ativar: confirma-se que o plano em vigor E o plano
+    # pretendido, comparando GUID com o alvo resolvido.
+    #
+    # A comparacao de NOME contra o plano canonico so vale quando o alvo era, de
+    # fato, o Desempenho Maximo. Quando o alvo foi o Alto Desempenho (fallback)
+    # ou o proprio plano em uso, exigir o nome do plano canonico reprovaria uma
+    # aplicacao que esta correta para o cenario em que ela aconteceu.
     $final = Get-PerfActiveScheme
     $planoConfirmado = $false
     $motivoPlano = 'nao foi possivel consultar o plano ativo'
     if ($final) {
         if ($final.Guid -eq $alvo.Guid) {
             $planoConfirmado = $true
-            $motivoPlano = 'GUID do plano ativo confere com o plano de Desempenho Maximo aplicado'
-            $listaFinal = Get-PerfPowerSchemes
-            if ($listaFinal) {
-                $canonico = @($listaFinal | Where-Object { $_.Guid -eq $GUID_ULTIMATE }) | Select-Object -First 1
-                if ($canonico -and "$($canonico.Nome)" -ne "$($final.Nome)") {
-                    $planoConfirmado = $false
-                    $motivoPlano = "o plano ativo ('$($final.Nome)') nao corresponde ao plano de Desempenho Maximo do Windows ('$($canonico.Nome)')"
+            $motivoPlano = 'GUID do plano ativo confere com o plano aplicado'
+            if ($planoDedicado -and -not $viaFallback) {
+                $listaFinal = Get-PerfPowerSchemes
+                if ($listaFinal) {
+                    $canonico = @($listaFinal | Where-Object { $_.Guid -eq $GUID_ULTIMATE }) | Select-Object -First 1
+                    if ($canonico -and "$($canonico.Nome)" -ne "$($final.Nome)") {
+                        $planoConfirmado = $false
+                        $motivoPlano = "o plano ativo ('$($final.Nome)') nao corresponde ao plano de Desempenho Maximo do Windows ('$($canonico.Nome)')"
+                    }
                 }
             }
         } else {
@@ -1454,12 +1977,12 @@ function Invoke-PerfUltimate {
     if ($planoConfirmado) {
         Write-Log OK "Plano ativo validado: '$($final.Nome)'."
         Add-CompartDiskFinding -Severity OK -Area 'Desempenho' `
-            -Message "Plano de Desempenho Maximo do Windows ativo e confirmado: '$($final.Nome)'."
+            -Message "Plano de energia de desempenho ativo e confirmado: '$($final.Nome)'."
     } else {
         Set-PerfResult 'WARN'
         Write-Log WARN "Validação do plano ativo: $motivoPlano."
         Add-CompartDiskFinding -Severity WARN -Area 'Desempenho' `
-            -Message "O plano de Desempenho Maximo nao pode ser confirmado como ativo: $motivoPlano." `
+            -Message "O plano de desempenho nao pode ser confirmado como ativo: $motivoPlano." `
             -Recommendation 'Conferir em Painel de Controle > Opcoes de Energia qual plano esta selecionado.'
     }
 
@@ -1468,13 +1991,44 @@ function Invoke-PerfUltimate {
         Write-Color ''
         Write-Output $final.Raw
         Add-CompartDiskSection -Title 'Estado final de energia' -Status $(if ($planoConfirmado) { 'OK' } else { 'WARN' }) -Pairs ([ordered]@{
-            'Plano ativo'      = $final.Nome
-            'GUID'             = $final.Guid
-            'Plano confirmado' = $(if ($planoConfirmado) { 'Sim' } else { "Nao - $motivoPlano" })
-            'Origem do plano'  = $alvo.Origem
-            'Modern Standby'   = $(if ($script:ModernStandby) { 'Sim (S0)' } else { 'Nao' })
-            'Ajustes em bateria' = $(if ($IncludeDcSettings) { 'Aplicados' } else { 'Preservados' })
+            'Sistema'            = $(if ($script:OsCaption) { $script:OsCaption } else { 'n/d' })
+            'Equipamento'        = $script:Chassi
+            'Plano antes'        = $(if ($planoInicial) { "$($planoInicial.Nome) ($($planoInicial.Guid))" } else { 'n/d' })
+            'Plano ativo'        = $final.Nome
+            'GUID'               = $final.Guid
+            'Plano confirmado'   = $(if ($planoConfirmado) { 'Sim' } else { "Nao - $motivoPlano" })
+            'Origem do plano'    = $alvo.Origem
+            'Plano dedicado'     = $(if ($planoDedicado) { 'Sim' } else { 'Nao - perfil gravado no plano em uso' })
+            'Modern Standby'     = $(if ($script:ModernStandby) { 'Sim (S0)' } else { 'Nao' })
+            'Ajustes em bateria' = $(if (-not $script:HasBattery) { 'Nao aplicavel (sem bateria)' } elseif ($IncludeDcSettings) { 'Aplicados' } else { 'Preservados' })
+            'Diretivas de energia' = $(if ($script:PowerPolicies -and $script:PowerPolicies.Total -gt 0) { "$($script:PowerPolicies.Total) configuracao(oes) fixada(s) por diretiva" } else { 'nenhuma detectada' })
         })
+    }
+
+    # ---------- RESUMO FINAL: o que foi REALMENTE aplicado -------------------
+    # O resultado do modulo ja escalou a cada falha; aqui ele e traduzido para
+    # uma frase unica que diz o estado real, sem transformar falha parcial em
+    # sucesso nem sucesso em alarme.
+    Write-Color ''
+    $nomeFinal = $(if ($final) { "$($final.Nome)" } else { "$($alvo.Nome)" })
+
+    # A frase final tem de descrever o que ACONTECEU, e nao o que a opcao se
+    # propunha a fazer. Plano alternativo, perfil gravado em plano de fabrica,
+    # configuracao fixada por diretiva ou sem confirmacao sao todos desvios do
+    # resultado ideal - e nenhum deles pode sair da tela como sucesso pleno.
+    $pend = New-Object System.Collections.ArrayList
+    if (-not $planoConfirmado) { [void]$pend.Add('o plano ativo não pôde ser confirmado') }
+    # As duas condicoes descrevem o MESMO desvio em graus diferentes; sem plano
+    # dedicado, dizer as duas repetiria a mesma informacao na mesma frase.
+    if (-not $planoDedicado)          { [void]$pend.Add("não há plano de desempenho dedicado neste dispositivo e o perfil foi gravado no plano em uso ('$nomeFinal')") }
+    elseif ($viaFallback)             { [void]$pend.Add("o plano Desempenho Máximo não existe neste dispositivo e o perfil foi aplicado em '$nomeFinal'") }
+    if ($nPol -gt 0)           { [void]$pend.Add("$nPol configuração(ões) fixada(s) por diretiva de grupo") }
+    if ($nFalha -gt 0)         { [void]$pend.Add("$nFalha sem confirmação do valor efetivo") }
+
+    if ($pend.Count -eq 0) {
+        Write-Log OK "Perfil de Desempenho Máximo aplicado e validado: $nAplic configuração(ões) gravada(s), $nJa já conforme(s), plano '$nomeFinal' confirmado como ativo."
+    } else {
+        Write-Log WARN "Perfil aplicado parcialmente: $nAplic gravada(s) e $nJa já conforme(s), porém $($pend -join '; ')."
     }
 }
 

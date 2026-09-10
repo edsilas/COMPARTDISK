@@ -1,6 +1,6 @@
 # Manual do Usuário
 
-**COMPARTDISK 1.5.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.5.1** · Desenvolvido por Edsilas
 
 Manual escrito para quem **não é técnico**. Cada recurso é explicado em linguagem
 simples: o que faz, quando usar e o que esperar.
@@ -55,7 +55,7 @@ Uma janela preta e azul se abre com o menu. É por ali que você trabalha.
 ## Entendendo a tela
 
 ```
-  COMPARTDISK  1.5.0
+  COMPARTDISK  1.5.1
   Assistente de Reparo
 
   --------------------------------------------------------------------------
@@ -136,21 +136,37 @@ quando não está, tenta prepará-lo.
 de preparar uma máquina, para conferir.
 
 **O que esperar:** primeiro um diagnóstico na tela — versão do Windows, App Installer,
-versão do WinGet, fontes, Microsoft Store e política. Depois, conforme o caso:
+onde o `winget.exe` foi encontrado, alias de execução, dependências, fontes, Microsoft
+Store e política. A ferramenta descobre **qual é o problema** e escolhe o que fazer a
+partir disso:
 
 | Situação | O que a ferramenta faz |
 |---|---|
 | Já está funcionando | Diz isso e não mexe em nada |
-| Instalado, mas sem funcionar | Registra o pacote de novo, **sem baixar nada** |
-| Ausente | Abre a página oficial do App Installer na Microsoft Store, para você concluir |
-| Desatualizado | Abre a tela de atualizações da Microsoft Store |
+| Funciona, mas o comando `winget` não é encontrado | Devolve a pasta `WindowsApps` ao PATH. **Sem baixar nada** |
+| Instalado, mas sem funcionar | Registra o pacote de novo. **Sem baixar nada** |
+| As fontes do WinGet pararam de responder | Redefine as fontes pelo próprio WinGet |
+| Faltam bibliotecas de que o App Installer depende | Repõe pelo pacote oficial da Microsoft |
+| Ausente, ou nenhum reparo local resolveu | Instala o pacote oficial da Microsoft — **sem depender da Loja** |
+| A Loja é a única saída restante | Abre a página oficial do App Installer, para você concluir |
 | Bloqueado pela empresa | Informa e para. Nenhuma política é alterada |
 | Windows antigo demais | Informa o requisito e para |
+
+Se uma tentativa não resolver, a ferramenta passa para a **próxima estratégia adequada
+ao erro que ela recebeu** — não repete a mesma coisa. Ao final você vê a lista das
+etapas executadas, com o que foi tentado, o resultado de cada uma e o motivo técnico
+quando alguma falhou.
 
 Ao final, a ferramenta **confere de verdade** se o WinGet passou a funcionar, e só
 então oferece voltar para instalar ou atualizar aplicativos.
 
-> Nada é baixado de sites de terceiros, e nenhuma proteção do Windows é desativada
+Repetir a opção é seguro: com o ambiente já correto, ela confirma e sai sem reinstalar
+nem mexer em configuração.
+
+> Quando é preciso baixar, o pacote vem **do repositório oficial da Microsoft** e a
+> ferramenta pergunta antes, mostrando a origem e o tamanho. O arquivo só é instalado
+> depois de conferir o código SHA256 publicado pela Microsoft e a assinatura digital do
+> pacote. Nada vem de sites de terceiros, e nenhuma proteção do Windows é desativada
 > para isso funcionar.
 
 #### `2` › `2` Central de Aplicativos
@@ -241,8 +257,17 @@ feche o que puder antes. É comum aparecerem alguns avisos amarelos.
 
 - `6` **Análise de Desempenho** — só mostra: o que abre junto com o Windows, o que
   consome memória, qual plano de energia está ativo.
-- `3` **Desempenho Máximo** — prioriza velocidade sobre economia de energia. Em
-  notebook, gasta mais bateria.
+- `3` **Desempenho Máximo** — prioriza velocidade sobre economia de energia. Além
+  do plano de energia, impede que **na tomada** o computador apague a tela,
+  suspenda, hiberne, desligue o disco ou coloque as portas USB em suspensão. Cada
+  ajuste é conferido depois de aplicado, e a tela mostra o que foi aplicado, o que
+  já estava certo e o que não pôde ser alterado — nunca um "pronto" genérico.
+  **Em bateria, nada é alterado**: um notebook que nunca apaga a tela nem suspende
+  fora da tomada esquenta fechado e acaba a carga.
+  Se o computador continuar **bloqueando** a tela, a causa é outra: proteção de
+  tela com senha ou uma regra da empresa. A opção detecta e avisa, mas não mexe
+  nelas — desligar uma proteção de segurança não é trabalho de um perfil de
+  desempenho.
 - `8` **Restaurar Equilibrado** — desfaz a opção acima.
 
 **Para privacidade:**

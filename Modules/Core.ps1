@@ -1,6 +1,6 @@
 ﻿<#
 ================================================================================
- COMPARTDISK 1.5.0 - Core.ps1
+ COMPARTDISK 1.5.1 - Core.ps1
  Desenvolvido por Edsilas
  Biblioteca central de funcoes reutilizaveis.
  Compativel com Windows PowerShell 5.1 e PowerShell 7.x (pwsh).
@@ -26,7 +26,7 @@ if (-not $Global:CompartDisk) { $Global:CompartDisk = @{} }
 
 $Global:CompartDisk.CoreDir    = $__CompartDiskCoreDir
 $Global:CompartDisk.Root       = Split-Path -Parent $__CompartDiskCoreDir
-$Global:CompartDisk.Version    = '1.5.0'
+$Global:CompartDisk.Version    = '1.5.1'
 $Global:CompartDisk.Product    = 'COMPARTDISK'
 $Global:CompartDisk.Author     = 'Edsilas'
 $Global:CompartDisk.Signature  = 'DESENVOLVIDO POR EDSILAS'
@@ -977,18 +977,306 @@ function Test-WindowsVersion {
 function Get-CompartDiskOSName { try { (Test-WindowsVersion).Caption } catch { 'n/d' } }
 function Get-CompartDiskBuild   { try { (Test-WindowsVersion).FullBuild } catch { 'n/d' } }
 
-function Test-Winget {
+function Invoke-CompartDiskAppxScript {
+    <# Executa um comando que depende dos cmdlets Appx NO MOTOR EM QUE ELES
+       FUNCIONAM.
+
+       Os cmdlets Appx sao do Windows PowerShell. Em PowerShell 7 eles ate
+       carregam com -SkipEditionCheck, mas as operacoes de escrita
+       (Add-AppxPackage) falham em execucao - e o pwsh e justamente o motor
+       preferido pelo Launcher quando existe na maquina. Nesse caso o comando e
+       reencaminhado ao Windows PowerShell 5.1 do proprio Windows por
+       -EncodedCommand: nao ha montagem de linha de comando com aspas, entao
+       caminho com espaco nao quebra a chamada.
+
+       Sob Windows PowerShell o comando roda EM PROCESSO e o resultado e
+       devolvido como esta - repetir a mesma operacao num processo auxiliar do
+       mesmo motor so gastaria tempo para falhar de novo.
+
+       Nunca lanca: devolve sempre Success/Engine/Output/Error. #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Comando,
+        [string]$Activity = 'Operacao AppX',
+        [int]$TimeoutSeconds = 600
+    )
+
+    $out = [pscustomobject]@{ Success = $false; Engine = 'n/d'; Output = ''; Error = '' }
+
+    if (-not (Test-CompartDiskCommand 'Get-AppxPackage')) { $null = Import-CompartDiskModule 'Appx' }
+    $temAppx     = Test-CompartDiskCommand 'Get-AppxPackage'
+    $ehWindowsPS = ($PSVersionTable.PSVersion.Major -lt 6)
+
+    if ($temAppx -and $ehWindowsPS) {
+        $out.Engine = 'Windows PowerShell (em processo)'
+        try {
+            $valor       = & ([scriptblock]::Create($Comando))
+            $out.Output  = (($valor | Out-String) -replace "`r", '').Trim()
+            $out.Success = $true
+        } catch {
+            $out.Error = $_.Exception.Message
+            Write-Log DEBUG ("{0}: {1}" -f $Activity, $out.Error) -NoConsole
+        }
+        return $out
+    }
+
+    $wps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (Test-Path -LiteralPath $wps) {
+        $molde = @'
+$ErrorActionPreference = 'Stop'
+$ProgressPreference    = 'SilentlyContinue'
+try {
+    Import-Module Appx -ErrorAction SilentlyContinue
+    __COMANDO__
+    exit 0
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}
+'@
+        # .Replace e nao -replace: o comando pode conter '$1', que o operador de
+        # substituicao por expressao regular leria como grupo capturado.
+        $texto = $molde.Replace('__COMANDO__', $Comando)
+        $b64   = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($texto))
+        try {
+            $r = Invoke-NativeCommand -FilePath $wps `
+                 -Arguments @('-NoProfile', '-NoLogo', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $b64) `
+                 -TimeoutSeconds $TimeoutSeconds
+            $out.Engine  = 'Windows PowerShell 5.1 (processo auxiliar)'
+            $out.Output  = "$($r.StdOut)".Trim()
+            $out.Success = ($r.ExitCode -eq 0)
+            if (-not $out.Success) {
+                $out.Error = "$($r.StdErr)".Trim()
+                if (-not $out.Error) { $out.Error = ('codigo {0}' -f $r.ExitCode) }
+            }
+            return $out
+        } catch {
+            $out.Error = $_.Exception.Message
+            Write-Log DEBUG ("{0} (processo auxiliar): {1}" -f $Activity, $out.Error) -NoConsole
+        }
+    }
+
+    # Sem Windows PowerShell na maquina, tentar em processo e o unico caminho
+    # que ainda resta - mesmo fora do motor ideal.
+    if ($temAppx) {
+        $out.Engine = ('PowerShell {0} (em processo)' -f $PSVersionTable.PSVersion.Major)
+        try {
+            $valor       = & ([scriptblock]::Create($Comando))
+            $out.Output  = (($valor | Out-String) -replace "`r", '').Trim()
+            $out.Success = $true
+            $out.Error   = ''
+            return $out
+        } catch { $out.Error = $_.Exception.Message }
+    }
+
+    if (-not $out.Error) { $out.Error = 'Nenhum motor com cmdlets Appx disponivel neste sistema.' }
+    return $out
+}
+
+function Get-CompartDiskAppxPacote {
+    <# Consulta um pacote AppX distinguindo TRES estados: a consulta respondeu e
+       achou, respondeu e nao achou, ou nao pode ser feita.
+
+       Sem essa distincao, "nao achei" e "nao consegui olhar" viram a mesma
+       coisa, e o diagnostico afirma ausencia sobre uma maquina que nem chegou a
+       ser consultada. #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [switch]$TodosUsuarios
+    )
+
+    $out = [pscustomobject]@{ Consultado = $false; Pacotes = @(); Erro = '' }
+
+    # Os nomes usados pelo projeto sao constantes de modulo. A validacao existe
+    # para que nunca entre texto de origem externa no comando remontado abaixo.
+    if ($Name -notmatch '^[A-Za-z0-9._*-]+$') {
+        $out.Erro = ('Nome de pacote invalido: {0}' -f $Name)
+        return $out
+    }
+
+    $lista = New-Object System.Collections.ArrayList
+
+    if (Test-CompartDiskCommand 'Get-AppxPackage') {
+        try {
+            $pacotes = if ($TodosUsuarios) {
+                Get-AppxPackage -AllUsers -Name $Name -ErrorAction Stop
+            } else {
+                Get-AppxPackage -Name $Name -ErrorAction Stop
+            }
+            foreach ($p in @($pacotes)) {
+                if (-not $p) { continue }
+                [void]$lista.Add([pscustomobject]@{
+                    Name            = [string]$p.Name
+                    Version         = [string]$p.Version
+                    Status          = [string]$p.Status
+                    InstallLocation = [string]$p.InstallLocation
+                })
+            }
+            $out.Consultado = $true
+            $out.Pacotes    = @($lista)
+            return $out
+        } catch {
+            $out.Erro = $_.Exception.Message
+            Write-Log DEBUG ("Consulta AppX em processo falhou ({0}): {1}" -f $Name, $out.Erro) -NoConsole
+        }
+    }
+
+    # Motor sem cmdlets Appx utilizaveis: refazer a consulta onde ela funciona.
+    $sel = "Get-AppxPackage -Name '" + $Name + "'"
+    if ($TodosUsuarios) { $sel = "Get-AppxPackage -AllUsers -Name '" + $Name + "'" }
+    $comando = $sel + ' | ForEach-Object { ($_.Name + "|" + $_.Version + "|" + $_.Status + "|" + $_.InstallLocation) }'
+
+    $r = Invoke-CompartDiskAppxScript -Comando $comando -Activity ('Consulta do pacote ' + $Name) -TimeoutSeconds 180
+    if (-not $r.Success) {
+        if ($r.Error) { $out.Erro = $r.Error }
+        return $out
+    }
+
+    foreach ($linha in ("$($r.Output)" -split "`r?`n")) {
+        if (-not $linha.Trim()) { continue }
+        $campos = $linha -split '\|'
+        if ($campos.Count -lt 2) { continue }
+        [void]$lista.Add([pscustomobject]@{
+            Name            = $campos[0].Trim()
+            Version         = $campos[1].Trim()
+            Status          = $(if ($campos.Count -gt 2) { $campos[2].Trim() } else { '' })
+            InstallLocation = $(if ($campos.Count -gt 3) { $campos[3].Trim() } else { '' })
+        })
+    }
+    $out.Consultado = $true
+    $out.Pacotes    = @($lista)
+    return $out
+}
+
+function Resolve-WingetExecutable {
+    <# Localiza o winget.exe SEM depender so do PATH.
+
+       O winget e alcancado por tres caminhos diferentes, e "nao esta no PATH"
+       nao significa "nao existe":
+         1. PATH              - o caso normal;
+         2. alias de execucao - %LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe,
+                                que e um ponto de reanalise de 0 byte. Some
+                                quando o registro do pacote no perfil se perde,
+                                e some do PATH quando a entrada WindowsApps e
+                                retirada da variavel do usuario;
+         3. pasta do pacote   - InstallLocation do AppX, executavel mesmo sem
+                                alias e sem PATH.
+
+       Um winget.exe que exista no lugar do alias SEM ser ponto de reanalise e um
+       alias quebrado: nao executa nada e o Windows responde com a caixa "este
+       aplicativo nao pode ser executado no seu computador". Esse estado e
+       reportado, nunca usado como caminho valido. #>
     [CmdletBinding()] param()
+
+    $out = [pscustomobject]@{
+        Path            = $null
+        Origin          = 'nao encontrado'
+        AliasPath       = $null
+        AliasState      = 'ausente'
+        InstallLocation = $null
+    }
+
+    # 1. PATH
     try {
-        $cmd = Get-Command winget.exe -ErrorAction SilentlyContinue
-        if (-not $cmd) { return [pscustomobject]@{ Available = $false; Version = $null; Path = $null } }
-        $r = Invoke-NativeCommand -FilePath $cmd.Source -Arguments @('--version') -TimeoutSeconds 30
+        $cmd = Get-Command winget.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($cmd -and $cmd.Source) { $out.Path = $cmd.Source; $out.Origin = 'PATH' }
+    } catch { }
+
+    # 2. alias de execucao (estado avaliado sempre, mesmo com o PATH resolvido)
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        try {
+            $alias         = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winget.exe'
+            $out.AliasPath = $alias
+            if (Test-Path -LiteralPath $alias) {
+                $item = Get-Item -LiteralPath $alias -Force -ErrorAction Stop
+                if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                    $out.AliasState = 'ok'
+                    if (-not $out.Path) { $out.Path = $alias; $out.Origin = 'alias de execucao' }
+                } else {
+                    $out.AliasState = 'quebrado'
+                }
+            }
+        } catch { }
+    }
+
+    # 3. pasta do pacote instalado - so consultada quando ainda falta caminho,
+    #    para nao cobrar Get-AppxPackage de quem ja resolveu pelo PATH.
+    if (-not $out.Path) {
+        try {
+            $c = Get-CompartDiskAppxPacote -Name 'Microsoft.DesktopAppInstaller'
+            if ($c.Consultado) {
+                foreach ($p in @($c.Pacotes)) {
+                    if (-not $p.InstallLocation) { continue }
+                    $exe = Join-Path $p.InstallLocation 'winget.exe'
+                    if (Test-Path -LiteralPath $exe) {
+                        $out.Path            = $exe
+                        $out.Origin          = 'pasta do pacote'
+                        $out.InstallLocation = $p.InstallLocation
+                        break
+                    }
+                }
+            }
+        } catch { }
+    }
+
+    # 4. imagem do Windows - o pacote pode estar em disco sem registro no perfil.
+    #    Enumerar WindowsApps exige privilegio; sem ele a tentativa apenas falha.
+    if (-not $out.Path) {
+        foreach ($raiz in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+            if ([string]::IsNullOrWhiteSpace($raiz)) { continue }
+            try {
+                $pastas = Get-ChildItem -LiteralPath (Join-Path $raiz 'WindowsApps') -Directory `
+                          -Filter 'Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe' -ErrorAction Stop
+                foreach ($d in (@($pastas) | Sort-Object Name -Descending)) {
+                    $exe = Join-Path $d.FullName 'winget.exe'
+                    if (Test-Path -LiteralPath $exe) {
+                        $out.Path            = $exe
+                        $out.Origin          = 'imagem do Windows'
+                        $out.InstallLocation = $d.FullName
+                        break
+                    }
+                }
+            } catch { }
+            if ($out.Path) { break }
+        }
+    }
+
+    return $out
+}
+
+function Test-Winget {
+    <# Disponibilidade real: o executavel e localizado por Resolve-WingetExecutable
+       e exercitado com --version. O erro de execucao volta em Error, para que o
+       diagnostico consiga dizer POR QUE o winget nao respondeu. #>
+    [CmdletBinding()]
+    param([object]$Location)
+
+    $vazio = [pscustomobject]@{ Available = $false; Version = $null; Path = $null; Origin = 'nao encontrado'; Error = '' }
+    try {
+        $loc = $Location
+        if (-not $loc) { $loc = Resolve-WingetExecutable }
+        if (-not $loc.Path) {
+            $vazio.Origin = $loc.Origin
+            return $vazio
+        }
+        $r = Invoke-NativeCommand -FilePath $loc.Path -Arguments @('--version') -TimeoutSeconds 30
+        $erro = ''
+        if (-not $r.Success) {
+            $erro = "$($r.StdErr)".Trim()
+            if (-not $erro) { $erro = ('"winget --version" retornou codigo {0}.' -f $r.ExitCode) }
+        }
         return [pscustomobject]@{
             Available = $r.Success
             Version   = ($r.StdOut -replace '\s', '')
-            Path      = $cmd.Source
+            Path      = $loc.Path
+            Origin    = $loc.Origin
+            Error     = $erro
         }
-    } catch { return [pscustomobject]@{ Available = $false; Version = $null; Path = $null } }
+    } catch {
+        $vazio.Error = $_.Exception.Message
+        return $vazio
+    }
 }
 
 function Test-WingetAvailability {
@@ -1032,6 +1320,19 @@ function Test-WingetAvailability {
         PackageFamily       = 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe'
         PackageName         = 'Microsoft.DesktopAppInstaller'
         MinBuild            = 17763
+        # Campos abaixo: acrescimos da preparacao em camadas. Nenhum consumidor
+        # antigo perde campo - o objeto so passou a dizer mais sobre POR QUE o
+        # estado e o que e, que e o que decide a estrategia de recuperacao.
+        ExecutableOrigin    = 'nao encontrado'
+        AliasPath           = $null
+        AliasState          = 'ausente'
+        InstallLocation     = $null
+        PackageScope        = 'nao encontrado'
+        SideloadBlocked     = $false
+        SideloadDetail      = ''
+        Dependencies        = @()
+        DependenciesOk      = $null
+        LastError           = ''
         Detail              = @()
     }
     $notas = New-Object System.Collections.ArrayList
@@ -1064,28 +1365,57 @@ function Test-WingetAvailability {
     }
     if ($r.PolicyBlocked) { & $anota $r.PolicyDetail }
 
+    # Sideload de pacote assinado. NAO bloqueia o WinGet - bloqueia apenas UMA
+    # das vias de recuperacao (instalar o MSIX oficial). Por isso e registrado
+    # separado de PolicyBlocked: confundir os dois faria o modulo declarar o
+    # WinGet bloqueado numa maquina em que ele funciona.
+    $polSide = Get-CompartDiskRegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Appx' 'AllowAllTrustedApps'
+    if ($null -ne $polSide -and [int]$polSide -eq 0) {
+        $r.SideloadBlocked = $true
+        $r.SideloadDetail  = 'Politica "Allow all trusted apps to install" desativada (AllowAllTrustedApps=0): instalar pacote MSIX assinado esta bloqueado.'
+        & $anota $r.SideloadDetail
+    }
+
     # --- 3. pacote AppX do App Installer ------------------------------------
-    if (Test-CompartDiskCommand 'Get-AppxPackage') { $null = $true } else { $null = Import-CompartDiskModule 'Appx' }
-    if (Test-CompartDiskCommand 'Get-AppxPackage') {
-        try {
-            $pkg = Get-AppxPackage -Name $r.PackageName -ErrorAction Stop | Select-Object -First 1
-            if ($pkg) {
-                $r.Registered          = $true
-                $r.AppInstaller        = 'Presente'
-                $r.AppInstallerVersion = [string]$pkg.Version
-                try { $r.PackageStatus = [string]$pkg.Status } catch { }
-                & $anota ('App Installer registrado no perfil (versao {0}).' -f $r.AppInstallerVersion)
-            } else {
-                $r.AppInstaller = 'Ausente'
-                & $anota 'App Installer nao esta registrado para este usuario.'
+    # A consulta distingue "nao achei" de "nao consegui olhar" e, no motor sem
+    # cmdlets Appx utilizaveis (PowerShell 7), refaz a leitura no Windows
+    # PowerShell 5.1 em vez de desistir com 'Nao verificavel'.
+    $consulta = Get-CompartDiskAppxPacote -Name $r.PackageName
+    if ($consulta.Consultado) {
+        $pkg = @($consulta.Pacotes) | Select-Object -First 1
+        if ($pkg) {
+            $r.Registered          = $true
+            $r.AppInstaller        = 'Presente'
+            $r.PackageScope        = 'perfil deste usuario'
+            $r.AppInstallerVersion = [string]$pkg.Version
+            if ($pkg.Status)          { $r.PackageStatus   = [string]$pkg.Status }
+            if ($pkg.InstallLocation) { $r.InstallLocation = [string]$pkg.InstallLocation }
+            & $anota ('App Installer registrado no perfil (versao {0}).' -f $r.AppInstallerVersion)
+        } else {
+            $r.AppInstaller = 'Ausente'
+            & $anota 'App Installer nao esta registrado para este usuario.'
+
+            # Instalado para outro perfil: o pacote esta na maquina e o reparo e
+            # registrar, nao instalar. So visivel com privilegio administrativo.
+            if ($r.Admin) {
+                $todos = Get-CompartDiskAppxPacote -Name $r.PackageName -TodosUsuarios
+                if ($todos.Consultado) {
+                    $outro = @($todos.Pacotes) | Select-Object -First 1
+                    if ($outro) {
+                        $r.AppInstaller        = 'Presente'
+                        $r.PackageScope        = 'outro perfil de usuario'
+                        $r.AppInstallerVersion = [string]$outro.Version
+                        if ($outro.Status)          { $r.PackageStatus   = [string]$outro.Status }
+                        if ($outro.InstallLocation) { $r.InstallLocation = [string]$outro.InstallLocation }
+                        & $anota ('App Installer instalado na maquina, porem nao registrado neste perfil (versao {0}).' -f $r.AppInstallerVersion)
+                    }
+                }
             }
-        } catch {
-            $r.AppInstaller = 'Nao verificavel'
-            & $anota ('Consulta ao pacote AppX falhou: {0}' -f $_.Exception.Message)
         }
     } else {
         $r.AppInstaller = 'Nao verificavel'
-        & $anota 'Cmdlets AppX indisponiveis neste motor: o estado do pacote nao pode ser afirmado.'
+        $detalhe = $(if ($consulta.Erro) { $consulta.Erro } else { 'cmdlets AppX indisponiveis neste motor' })
+        & $anota ('Estado do pacote nao pode ser afirmado: {0}.' -f $detalhe)
     }
 
     # Provisionamento na imagem (exige privilegio) - permite reparo sem download.
@@ -1093,7 +1423,11 @@ function Test-WingetAvailability {
         try {
             $prov = Get-AppxProvisionedPackage -Online -ErrorAction Stop |
                     Where-Object { $_.DisplayName -eq $r.PackageName } | Select-Object -First 1
-            if ($prov) { $r.Provisioned = $true; & $anota 'Pacote provisionado na imagem do Windows.' }
+            if ($prov) {
+                $r.Provisioned = $true
+                if ($r.PackageScope -eq 'nao encontrado') { $r.PackageScope = 'imagem do Windows' }
+                & $anota 'Pacote provisionado na imagem do Windows.'
+            }
         } catch { & $anota ('Consulta de pacotes provisionados falhou: {0}' -f $_.Exception.Message) }
     }
 
@@ -1107,20 +1441,29 @@ function Test-WingetAvailability {
     }
 
     # --- 5. executavel ------------------------------------------------------
-    $w = Test-Winget          # reaproveita a deteccao ja existente, sem duplica-la
-    if ($w.Path) { $r.Executable = $w.Path }
-    if (-not $r.Executable -and -not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        # Alias de execucao do App Installer. E o caminho que some quando o
-        # registro do pacote se perde, com o pacote ainda instalado.
-        try {
-            $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winget.exe'
-            if (Test-Path -LiteralPath $alias) { $r.Executable = $alias }
-        } catch { }
+    # A resolucao completa (PATH, alias de execucao e pasta do pacote) fica em
+    # Resolve-WingetExecutable: PATH quebrado deixou de ser lido como ausencia.
+    $loc = Resolve-WingetExecutable
+    $r.Executable       = $loc.Path
+    $r.ExecutableOrigin = $loc.Origin
+    $r.AliasPath        = $loc.AliasPath
+    $r.AliasState       = $loc.AliasState
+    if ($loc.InstallLocation -and -not $r.InstallLocation) { $r.InstallLocation = $loc.InstallLocation }
+    if ($r.AliasState -eq 'quebrado') {
+        & $anota 'O alias de execucao existe mas nao e ponto de reanalise: alias quebrado, o Windows recusa executa-lo.'
     }
+    if ($r.Executable -and $r.ExecutableOrigin -ne 'PATH') {
+        & $anota ('winget.exe alcancado por {0}, nao pelo PATH.' -f $r.ExecutableOrigin)
+    }
+
+    $w = Test-Winget -Location $loc   # deteccao unica, reaproveitada sem duplicar
     if ($w.Available) {
         $r.VersionText = $w.Version
         $m = [regex]::Match([string]$w.Version, '(\d+)\.(\d+)(\.\d+)*')
         if ($m.Success) { try { $r.Version = [version]$m.Value } catch { } }
+    } elseif ($w.Error) {
+        $r.LastError = $w.Error
+        & $anota $w.Error
     }
 
     # --- 6. conclusao -------------------------------------------------------
@@ -1131,8 +1474,16 @@ function Test-WingetAvailability {
         try {
             $info = Invoke-NativeCommand -FilePath $r.Executable -Arguments @('--info') -TimeoutSeconds 60
             $infoOk = ($info.ExitCode -eq 0)
-            if (-not $infoOk) { & $anota ('"winget --info" retornou codigo {0}.' -f $info.ExitCode) }
-        } catch { $infoOk = $false; & $anota ('"winget --info" falhou: {0}' -f $_.Exception.Message) }
+            if (-not $infoOk) {
+                $r.LastError = ('"winget --info" retornou codigo {0}{1}' -f $info.ExitCode, $(
+                    if ("$($info.StdErr)".Trim()) { ': ' + "$($info.StdErr)".Trim() } else { '.' }))
+                & $anota $r.LastError
+            }
+        } catch {
+            $infoOk = $false
+            $r.LastError = ('"winget --info" falhou: {0}' -f $_.Exception.Message)
+            & $anota $r.LastError
+        }
 
         if (-not $infoOk) {
             $r.State  = 'Broken'
@@ -1147,15 +1498,58 @@ function Test-WingetAvailability {
     } elseif ($r.PolicyBlocked) {
         $r.State  = 'Blocked'
         $r.Reason = $r.PolicyDetail
-    } elseif ($r.Registered) {
+    } elseif ($r.AppInstaller -eq 'Presente' -or $r.Provisioned) {
+        # Pacote na maquina e winget que nao executa: o reparo e registrar, nao
+        # instalar. Registro perdido no perfil, alias quebrado, PATH sem a
+        # entrada WindowsApps e pacote registrado so em outro perfil caem todos
+        # aqui - e cada um tem uma acao propria na preparacao.
         $r.State  = 'Broken'
-        $r.Reason = 'O App Installer esta instalado, mas o winget nao executa. O registro do pacote no perfil pode ter se perdido.'
+        $r.Reason = switch ($r.PackageScope) {
+            'outro perfil de usuario' { 'O App Installer esta na maquina, mas nao registrado neste perfil de usuario.' }
+            'imagem do Windows'       { 'O App Installer esta provisionado na imagem, mas nao registrado para este usuario.' }
+            default                   { 'O App Installer esta instalado, mas o winget nao executa. O registro do pacote no perfil pode ter se perdido.' }
+        }
     } elseif ($r.AppInstaller -eq 'Nao verificavel' -and -not $r.Executable) {
         $r.State  = 'Unknown'
         $r.Reason = 'Nao foi possivel confirmar o estado do App Installer neste ambiente.'
     } else {
         $r.State  = 'Missing'
         $r.Reason = 'O App Installer (que fornece o WinGet) nao esta disponivel para este usuario.'
+    }
+
+    # --- 6.1 dependencias do App Installer ----------------------------------
+    # Inventario apenas informativo aqui: quem decide o que e obrigatorio e a
+    # propria versao do pacote publicada pela Microsoft, lida na hora de instalar.
+    # Consultado so em -Completo, para nao cobrar do arranque dos demais modulos.
+    if ($Completo) {
+        $deps = New-Object System.Collections.ArrayList
+        foreach ($d in @(
+            @{ Nome = 'Microsoft.VCLibs.140.00.UWPDesktop'; Rotulo = 'VCLibs (Desktop)';  Critica = $true  },
+            @{ Nome = 'Microsoft.VCLibs.140.00';            Rotulo = 'VCLibs (UWP)';      Critica = $false },
+            @{ Nome = 'Microsoft.UI.Xaml.*';                Rotulo = 'UI.Xaml';           Critica = $false },
+            @{ Nome = 'Microsoft.WindowsAppRuntime.*';      Rotulo = 'WindowsAppRuntime'; Critica = $false }
+        )) {
+            $item = [pscustomobject]@{ Nome = $d.Rotulo; Pacote = $d.Nome; Presente = $false; Versao = ''; Critica = $d.Critica }
+            $q = Get-CompartDiskAppxPacote -Name $d.Nome
+            if ($q.Consultado -and @($q.Pacotes).Count -gt 0) {
+                $item.Presente = $true
+                $item.Versao   = (@($q.Pacotes) | ForEach-Object { $_.Version } | Sort-Object -Descending | Select-Object -First 1)
+            }
+            [void]$deps.Add($item)
+        }
+        $r.Dependencies = @($deps)
+
+        # Criterio: a biblioteca C++ de desktop e sempre exigida; alem dela, o
+        # pacote precisa de UI.Xaml (versoes antigas) OU do WindowsAppRuntime
+        # (versoes recentes). Nenhuma das duas presentes e sinal concreto de
+        # dependencia faltando, nao palpite.
+        $vcOk = [bool](@($deps | Where-Object { $_.Pacote -eq 'Microsoft.VCLibs.140.00.UWPDesktop' -and $_.Presente }).Count)
+        $rtOk = [bool](@($deps | Where-Object { $_.Pacote -match '^(Microsoft\.UI\.Xaml|Microsoft\.WindowsAppRuntime)' -and $_.Presente }).Count)
+        $r.DependenciesOk = ($vcOk -and $rtOk)
+        if (-not $r.DependenciesOk) {
+            $faltando = @($deps | Where-Object { -not $_.Presente } | ForEach-Object { $_.Nome })
+            & $anota ('Dependencias de runtime ausentes: {0}.' -f ($faltando -join ', '))
+        }
     }
 
     # --- 7. fontes e conectividade -----------------------------------------

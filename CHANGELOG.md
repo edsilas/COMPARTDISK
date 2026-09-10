@@ -7,6 +7,321 @@ versionamento segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.5.1] — 2026-09-10
+
+Correções de confiabilidade em três opções do menu, sem mudança de contrato: nenhum menu,
+código de saída, argumento de automação ou esquema de relatório foi alterado. O tema comum
+das três é o mesmo — **deixar de afirmar sucesso sem prova** — e o efeito prático concentra-se
+em máquinas recém-formatadas, onde o estado do Windows ainda está em movimento.
+
+### Opção `4` › `9` — Debloat
+
+O módulo já fazia diagnóstico, classificação de risco, listas de proteção, manifesto de
+reversão e revalidação por item — o problema não era arquitetura, e sim **duas afirmações
+falsas** que só apareciam onde o sistema está em movimento, que é justamente a máquina
+recém-formatada. Ambas foram reproduzidas antes de qualquer alteração.
+
+#### Corrigido
+
+- **Pacote intacto reportado como removido.** `Test-DebloatAppxAusente` reconsultava o
+  alvo com `Get-AppxPackage -AllUsers`; quando essa consulta falhava, recuava para o
+  escopo do usuário atual — e nesse escopo `PackageUserInformation` volta **vazio**. A
+  função percorria a coleção vazia, não encontrava ninguém com `InstallState=Installed`
+  e concluía "ausente". O item terminava como `Aplicado` com o aplicativo inteiro no
+  lugar.
+
+  Reprodução: `Test-DebloatAppxAusente` para a Calculadora instalada devolvia `True`.
+  Agora ausência **nunca é inferida de um estado ilegível** — sem alcance de todos os
+  usuários, ou sem estado legível, o resultado é indeterminado, e o item não vira
+  sucesso.
+
+- **Remoção sem desprovisionamento reportada como sucesso total.** Quando o inventário
+  de pacotes provisionados estava indisponível, `$prov` ficava vazio, todos os alvos
+  "confirmavam" e o item saía como `Aplicado` — com o pacote ainda **provisionado**,
+  pronto para voltar em cada perfil novo. Era o "removi e o aplicativo voltou" relatado
+  após a formatação.
+
+  O inventário provisionado vem do módulo **`Dism`**, não do `Appx`, e nunca era
+  carregado: a indisponibilidade passava em silêncio. Agora o `Dism` é importado, o
+  motivo da indisponibilidade é registrado, e **sucesso total exige ter olhado o
+  provisionamento** — sem isso o resultado é `Parcial`, com a consequência dita por
+  extenso. A simulação também deixou de exibir "0 provisionamentos" quando o que existe
+  é ignorância sobre eles.
+
+- **Ordem invertida entre desprovisionar e remover do perfil.** A instância do usuário
+  era removida primeiro, com o provisionamento ainda de pé — janela em que o serviço de
+  implantação, ainda distribuindo pacotes numa máquina recém-formatada, pode reimplantar
+  o que acabou de sair. O provisionamento passou a ser tratado **antes**.
+
+#### Adicionado
+
+- **Estados transitórios deixaram de ser falha.** `0x80073D02` (recurso em uso) e a
+  falha de dependência `0x80073CF3` passam por uma **única** nova tentativa após pausa
+  curta e, persistindo, produzem o resultado **`Bloqueado`** — "impossível agora", não
+  "impossível". A distinção importa: numa máquina recém-formatada isso é comum e não
+  significa que o Debloat falhou. `Bloqueado` tem contador próprio na tela, coluna
+  própria por categoria, entrada própria no relatório e achado próprio, com a orientação
+  de repetir depois que a configuração terminar.
+
+- **Pacote apenas preparado (`Staged`).** Não está instalado para ninguém: com o
+  provisionamento tratado, não há o que remover do perfil, e isso deixou de ser
+  contabilizado como falha. O estado final ainda precisa ser **relido** para o
+  alvo ser dado como resolvido — sem releitura o resultado é `Parcial`.
+
+- **Detecção de máquina em configuração.** `Get-DebloatEstadoImplantacao` lê o
+  `ImageState` documentado pela Microsoft e procura pacotes em estado diferente de `Ok`.
+  Quando o Windows ainda está se configurando, a pré-condição diz isso com todas as
+  letras e recomenda a reexecução — em vez de deixar o operador concluir que a
+  ferramenta não funciona.
+
+- **Motor de escrita AppX explícito.** Os cmdlets `Appx` são do Windows PowerShell; sob
+  PowerShell 7 — motor que o Launcher prefere quando existe — eles carregam e falham na
+  execução. As escritas passam por `Invoke-CompartDiskAppxScript`, a **mesma** função do
+  Core já usada pelo módulo Winget, que reencaminha ao Windows PowerShell 5.1. Nenhum
+  segundo mecanismo foi criado, e o motor em uso é declarado na pré-condição.
+
+#### Corrigido na auditoria subsequente
+
+A auditoria da própria correção encontrou **duas reincidências da mesma classe de
+defeito** — sucesso afirmado sem prova — introduzidas pela correção anterior. Ambas
+reproduzidas com dublês antes de qualquer alteração:
+
+- **`InstallState` ilegível concluía ausência.** A verificação era "nenhum usuário com
+  `Installed` ⇒ removido". Um `InstallState` vazio, desconhecido ou intermediário
+  satisfazia essa condição e o pacote era dado como removido. A checagem passou a ser
+  por **lista branca** dos estados que realmente provam ausência (`NotInstalled`,
+  `Staged`); qualquer outro valor devolve indeterminado.
+
+- **`Staged` sem releitura contava como confirmado.** O ramo que tratava o pacote apenas
+  preparado incrementava o contador de confirmados quando a reconsulta final era
+  **indeterminada** — ou seja, exatamente quando não havia prova. O ramo foi removido: o
+  alvo cai no caminho de indeterminado e o item termina como `Parcial`, com o
+  provisionamento já removido contabilizado à parte.
+
+#### Inalterado por decisão
+
+- O catálogo, as listas de proteção, a precedência de seleção, o manifesto de reversão,
+  os níveis, os menus e as demais categorias (serviços, tarefas, privacidade, ajustes,
+  componentes) não foram tocados. A seleção do catálogo foi conferida por hash antes e
+  depois: 197 itens e a mesma lista de selecionados nos três níveis.
+- A simulação continua sendo o padrão e continua não alterando nada.
+- Nenhum componente protegido passou a ser removível: Store, Defender, frameworks,
+  runtime e shell seguem fora de alcance em qualquer nível, inclusive sob `-Include`.
+
+---
+
+### Opção `4` › `3` — Aplicar Perfil de Desempenho Máximo
+
+O plano era trocado e validado corretamente, mas **o perfil não era aplicado**: das
+configurações que definem o comportamento de um perfil de desempenho, só as do
+processador estavam no conjunto ativo. Tela, suspensão, hibernação, USB, PCI Express
+e disco constavam da tabela marcadas `Aplicar = $false` — lidas para o diagnóstico e
+nunca escritas. O efeito prático era exatamente o relatado: com o plano de
+Desempenho Máximo ativo e a operação reportada como concluída, a tela continuava
+apagando, a máquina continuava suspendendo e as portas USB continuavam dormindo.
+
+#### Corrigido
+
+- **O perfil deixa de ser só do processador.** Passam a ser aplicadas e validadas,
+  na linha CA: desligar vídeo, tempo limite do vídeo na tela de bloqueio, suspender,
+  hibernar, tempo limite de suspensão não assistida, suspensão seletiva USB, energia
+  do link USB 3, tempo limite de suspensão de hubs USB, PCI Express (link state),
+  desligar disco rígido e link AHCI (HIPM/DIPM) — além das cinco de processador que
+  já existiam. Os dezesseis GUIDs foram conferidos um a um contra
+  `HKLM\SYSTEM\CurrentControlSet\Control\Power\PowerSettings`, com a descrição que o
+  próprio Windows publica para cada um.
+
+  A causa concreta do sintoma: **a suspensão seletiva USB vem habilitada nos planos
+  de fábrica, inclusive no Alto Desempenho** (`AC=1`), e o desligamento de disco vem
+  em 1200 s nos dois. Nenhum dos dois era tocado.
+
+- **Dispositivo sem plano dedicado não recebia perfil nenhum.** Quando nem
+  Desempenho Máximo nem Alto Desempenho podiam ser criados ou ativados — típico de
+  portátil com Modern Standby —, a ação aplicava o modo de energia do Windows e
+  **retornava**. O overlay governa a curva do processador; ele não mexe em tempo
+  ocioso. Agora o perfil continua sendo gravado, no plano em uso, com a alteração
+  declarada como tal e o caminho de reversão (opção `8`) dito na tela.
+
+- **Rotina Batch de contingência ativava o plano e não configurava nada.** Passa a
+  aplicar as dezesseis configurações da linha CA, cada uma **relida do registro do
+  próprio plano** antes de ser contabilizada — o código de retorno do `powercfg` não
+  é aceito como prova. É idempotente: o valor só é escrito quando difere.
+
+- **Rótulo de valor trocado por ordem de padrão.** `Format-PerfValue` resolvia o
+  rótulo por expressão regular e `'USB'` era testado antes das medidas de tempo, de
+  modo que "Tempo limite de suspensão de hubs USB" seria exibido como
+  `0 (Desabilitado)` em vez de `Nunca`. As medidas de tempo passaram para o início da
+  cadeia.
+
+- **Saída localizada do `powercfg` caía na heurística posicional.** O índice atual só
+  era reconhecido pelo rótulo em inglês; em pt-BR ("Índice de Configurações de
+  Correntes Alternadas Atuais") nada casava e a leitura dependia da ordem dos valores
+  hexadecimais. Os rótulos em português foram acrescentados, com a heurística mantida
+  como última via.
+
+#### Adicionado
+
+- **Diagnóstico antes de aplicar.** Versão e build do Windows, arquitetura, tipo de
+  equipamento (chassi do firmware, com a presença de bateria como segunda via), plano
+  ativo com GUID, Modern Standby e privilégio aparecem na tela antes de qualquer
+  escrita, e definem o método.
+
+- **Diretivas de grupo de energia são lidas antes da escrita.** Quando uma diretiva
+  fixa uma configuração, o `powercfg` aceita o comando e o valor efetivo continua
+  sendo o da diretiva. A leitura prévia de
+  `HKLM\SOFTWARE\Policies\Microsoft\Power\PowerSettings` permite reportar **Bloqueado
+  por política** sem sequer tentar escrever — e o plano fixado por diretiva também é
+  detectado. Nenhuma diretiva é alterada.
+
+- **Correção dirigida.** Quando a revalidação final encontra divergência, apenas
+  **aquela** configuração é reescrita e revalidada, uma única vez. Reaplicar o perfil
+  inteiro a cada inconsistência reescreveria dezenas de valores corretos e esconderia
+  qual deles falhou.
+
+- **Vocabulário de resultado com seis estados** — Aplicado, Já estava aplicado, Não
+  aplicável, Não suportado, Bloqueado por política e Falhou — na tela e no relatório,
+  com valor anterior, desejado e efetivo por linha. `OK` deixou de significar seis
+  coisas diferentes.
+
+- **CA e bateria tratados separadamente.** Em equipamento com bateria, cada
+  configuração ganha a linha CC no relatório com o motivo de estar preservada. As
+  medidas de tempo ocioso não têm valor de bateria **nem com `-IncludeDcSettings`**:
+  um portátil que nunca apaga a tela nem suspende fora da tomada esquenta fechado e
+  chega ao fim da carga. Em equipamento sem bateria a ausência da linha é dita uma vez.
+
+- **Diagnóstico do bloqueio de sessão.** Tela apagada, suspensão e bloqueio são três
+  mecanismos distintos, e o plano de energia só governa os dois primeiros. Proteção de
+  tela (do usuário ou imposta por diretiva) e o limite de inatividade da máquina são
+  lidos e reportados como restrição — nunca alterados. `ScreenSaveActive=1` sem
+  executável e sem tempo, que é o estado de fábrica, **não** é reportado como risco.
+
+#### Inalterado por decisão
+
+- Estados de ocioso do processador (C-states) continuam fora do conjunto aplicado:
+  desativá-los mantém o processador em plena tensão o tempo todo, eleva temperatura e
+  consumo de forma permanente e não aumenta o desempenho sustentado.
+- Hibernação e Inicialização Rápida continuam preservadas como recurso.
+- Nenhuma proteção do Windows, diretiva, serviço ou controle de segurança é desativado
+  para obter desempenho.
+- O perfil é gravado no plano de desempenho, não no Equilibrado: a reversão continua
+  sendo a opção `4` › `8`, que não precisou ser modificada.
+
+---
+
+Auditoria e correção da **opção `2` › `1` — Verificar / preparar WinGet**. Nenhum menu,
+código de saída, argumento de automação ou esquema de relatório mudou de contrato, e
+nenhuma outra opção do COMPARTDISK foi tocada. O que muda é **por que a preparação
+falhava em máquina que tinha conserto** — e o que ela passa a dizer sobre o que fez.
+
+### Corrigido
+
+- **PATH quebrado era lido como "WinGet ausente".** `Test-Winget` resolvia o executável
+  só por `Get-Command winget.exe`. Numa máquina em que a entrada `WindowsApps` saiu do
+  PATH do usuário — situação comum depois de perfil migrado, ferramenta de "otimização"
+  ou diretiva mal aplicada — o pacote estava instalado, o `winget.exe` existia e
+  respondia, e a ferramenta inteira o dava como ausente: a Central de Aplicativos
+  recusava instalar e a preparação encaminhava para a Microsoft Store instalar de novo
+  o que já estava lá.
+
+  A resolução passou para `Resolve-WingetExecutable` (`Core.ps1`), que procura em três
+  caminhos — PATH, alias de execução em `%LOCALAPPDATA%\Microsoft\WindowsApps` e a pasta
+  do pacote (`InstallLocation`) — e classifica o alias como `ok`, `quebrado` (o arquivo
+  existe e **não** é ponto de reanálise, estado em que o Windows recusa executá-lo) ou
+  `ausente`. Como `Test-Winget` é o dono único da detecção, a Central de Aplicativos
+  passou a funcionar nessas máquinas sem nenhuma alteração no módulo dela.
+
+- **Operações AppX falhavam em silêncio sob PowerShell 7.** O Launcher prefere o `pwsh`
+  quando ele existe, e é lá que os cmdlets `Appx` carregam com `-SkipEditionCheck` e
+  falham na execução. O reparo do WinGet — que é `Add-AppxPackage -Register` — não tinha
+  como funcionar justamente nas máquinas mais bem equipadas, e o módulo reportava
+  "cmdlets AppX indisponíveis neste motor".
+
+  `Invoke-CompartDiskAppxScript` (`Core.ps1`) executa em processo no Windows PowerShell
+  e, sob PowerShell 7, reencaminha ao Windows PowerShell 5.1 do próprio Windows por
+  `-EncodedCommand` — sem montar linha de comando com aspas, então caminho com espaço não
+  quebra a chamada. Sob Windows PowerShell **não** há segunda tentativa em processo
+  auxiliar: seria o mesmo motor repetindo a mesma falha.
+
+- **`0xFFFFFFFF` sem sufixo é `-1` no Windows PowerShell.** A máscara aplicada para
+  formatar o código de erro devolvia o próprio negativo, a conversão para `UInt32`
+  lançava exceção e a formatação do erro caía — exatamente quando havia erro para
+  formatar. O literal passou a ser `0xFFFFFFFFL`.
+
+- **A correção de PATH duplicava a entrada a cada execução.** A comparação era entre o
+  valor **bruto** do registro e o caminho já expandido. Como a entrada costuma estar
+  gravada como `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps`, ela nunca casava e
+  uma cópia expandida da mesma pasta era acrescentada em toda execução. A comparação
+  passou a expandir as duas pontas; três execuções seguidas não alteram o registro.
+
+### Adicionado
+
+- **Estratégia em camadas, condicionada ao diagnóstico.** A preparação deixou de aplicar
+  uma tentativa fixa. `Get-WingetPlano` monta a sequência a partir do estado apurado —
+  PATH, fontes, dependências, registro do pacote, módulo oficial `Microsoft.WinGet.Client`,
+  pacote oficial e Microsoft Store — e camada que não tem o que fazer naquele ambiente
+  **não entra no plano**, que é exibido antes de executar. Depois de cada camada que
+  conclui, o ambiente é reconsultado: com o WinGet funcional, as restantes não rodam.
+
+- **Instalação pelo pacote oficial, sem depender da Microsoft Store.** Era o ponto que a
+  auditoria pediu: em máquina com a Store removida por política, bloqueada ou com falha,
+  a preparação não tinha para onde ir. O endereço agora vem do release oficial
+  `github.com/microsoft/winget-cli` (com recuo para o atalho oficial `aka.ms/getwinget`),
+  o download só ocorre por HTTPS e apenas dos domínios `aka.ms`, `microsoft.com`,
+  `github.com` e `githubusercontent.com`, e o arquivo passa por **duas conferências
+  independentes** antes de ser instalado: o SHA256 publicado pela Microsoft junto do
+  release e a assinatura digital do pacote. Hash divergente, assinatura inválida,
+  adulterada ou de outro editor reprovam o arquivo, que não é instalado.
+
+- **Reparo de dependências de runtime.** Causa dominante de falha no Windows 10, em que
+  `Add-AppxPackage` termina com `0x80073CF3`. As dependências exigidas são lidas do
+  próprio release (`DesktopAppInstaller_Dependencies.json`) e repostas pelo pacote oficial
+  correspondente àquela versão; quando só falta a biblioteca C++ de desktop, o atalho
+  oficial dela é usado no lugar do pacote completo.
+
+- **Reparo de fontes.** `winget source reset --force` seguido de `winget source update`,
+  aplicado apenas quando o `winget` executa e a fonte oficial não responde — um estado que
+  antes levava a ferramenta a reinstalar um pacote que não tinha defeito.
+
+- **Fallback condicionado ao erro, e não repetição.** Registro que falha por dependência
+  ausente insere a camada de dependências **e só então** repete o registro — uma única
+  vez. Nenhum caminho repete a mesma operação sem que algo tenha mudado.
+
+- **Trilha de etapas.** Diagnóstico, ação, resultado e motivo técnico de cada camada vão
+  para a tela, para o log e para a seção do relatório da sessão. `Format-WingetFalha`
+  traduz os códigos que aparecem de verdade nesta operação (`0x80073CF3`, `0x80073D02`,
+  `0x8A150002`, `0x80070005`…) e devolve em hexadecimal, com a descrição do Windows quando
+  existir, os que não estiverem na tabela — nunca um código inventado. A mensagem genérica
+  "falha ao instalar" deixou de existir.
+
+- **Diagnóstico mais fundo.** `Test-WingetAvailability` passou a apurar a origem do
+  executável, o estado do alias, o escopo do pacote (perfil, outro perfil ou imagem), o
+  inventário de dependências, a política de *sideload* (`AllowAllTrustedApps=0`, que
+  bloqueia apenas a via do MSIX e **não** o WinGet) e o último erro técnico devolvido pelo
+  sistema. Todos os campos são acréscimos: nenhum consumidor perdeu campo.
+
+- **`-SemDownload`.** Mantém as camadas locais e retira do plano as que dependem de rede,
+  declarando o motivo. Para link tarifado, rede isolada ou política interna.
+
+- **Rotina Batch de contingência mais útil.** `:FB_WINGET_PREP` passou a separar "o WinGet
+  não existe" de "o WinGet não está alcançável": detecta o pacote na imagem, testa a
+  execução direta pela pasta do pacote e expõe a pasta `WindowsApps` no PATH **da sessão**
+  quando o alias existe e o comando não resolve — o único reparo que o Batch consegue
+  aplicar sozinho. `:REDETECTAR_WINGET` faz o mesmo depois da preparação, para que `[2]` e
+  `[3]` do menu de aplicativos voltem a funcionar na mesma execução.
+
+### Inalterado por decisão
+
+- Nenhuma política, serviço, proteção do Windows, Defender, SmartScreen, firewall ou
+  configuração da Store é alterada para viabilizar a instalação.
+- Nenhum download fora dos domínios oficiais da Microsoft, e nenhum pacote instalado sem
+  conferência de origem.
+- O COMPARTDISK **não** instala módulo do PowerShell Gallery para reparar o WinGet: a
+  camada `Microsoft.WinGet.Client` só é usada quando o módulo oficial já está na máquina.
+- Em execução desassistida a Microsoft Store continua fora do plano — janela esperando
+  operador não serve para nada em máquina sem operador.
+
+---
+
 ## [1.5.0] — 2026-08-28
 
 Auditoria do **Reparo Geral Automático** (opção `1` e `/autofix`) e das rotinas Batch de

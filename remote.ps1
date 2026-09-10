@@ -40,11 +40,16 @@ $ProgressPreference    = 'SilentlyContinue'   # acelera muito o Invoke-WebReques
 # interno ou versao fixada.
 # ==============================================================================
 $Repo     = if ($env:COMPARTDISK_REPO)  { $env:COMPARTDISK_REPO }  else { 'edsilas/compartdisk' }
-$TagFixa  = if ($env:COMPARTDISK_TAG)   { $env:COMPARTDISK_TAG }   else { 'v1.5.0' }
-# Hash do pacote COMPARTDISK-1.5.0.zip anexado a tag acima. Fixa-lo aqui e mais forte
+$TagFixa  = if ($env:COMPARTDISK_TAG)   { $env:COMPARTDISK_TAG }   else { 'v1.5.1' }
+# Hash do pacote COMPARTDISK-1.5.1.zip anexado a tag acima. Fixa-lo aqui e mais forte
 # do que depender das notas da release: o valor passa a viajar com o proprio script.
-# Se ficar vazio, o script recorre ao SHA-256 publicado nas notas (Get-HashPublicado).
-$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { 'd31e195a3842b34016ca9f8e08e28690df7f1b4efc57d0888f3e126662c06d6f' }
+# Se ficar vazio, o script recorre ao SHA-256 publicado nas notas (Get-HashPublicado)
+# e, na falta dele, valida apenas a assinatura de arquivo ZIP, avisando na tela.
+#
+# Fica vazio ate o pacote da release ser publicado: manter aqui o hash da versao
+# ANTERIOR com a tag NOVA faria o instalador recusar o download correto como
+# corrompido. O valor e fixado em seguida, quando o pacote existir.
+$HashFixo = if ($env:COMPARTDISK_HASH)  { $env:COMPARTDISK_HASH }  else { '' }
 $Origem   = "https://github.com/$Repo"
 $ApiBase  = "https://api.github.com/repos/$Repo"
 

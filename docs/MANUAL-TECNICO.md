@@ -1,6 +1,6 @@
 # Manual Técnico
 
-**COMPARTDISK 1.5.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.5.1** · Desenvolvido por Edsilas
 
 Para quem vai ler, manter ou estender o código.
 
@@ -12,7 +12,7 @@ Todos os vinte módulos de domínio seguem exatamente esta estrutura:
 
 ```powershell
 <#
- COMPARTDISK 1.5.0 - Exemplo.ps1
+ COMPARTDISK 1.5.1 - Exemplo.ps1
  Desenvolvido por Edsilas
  Acoes: Acao1 | Acao2
 #>
@@ -90,11 +90,16 @@ que `Report.ps1` possa agregá-las.
 | `Invoke-SafeCommand` | Executa um bloco capturando exceções |
 | `Invoke-WithRetry` | Nova tentativa com espera progressiva |
 | `Invoke-NativeCommand` | Executa programa externo capturando saída, erro e tempo limite |
+| `Invoke-CompartDiskAppxScript` | Executa comando dependente dos cmdlets Appx no motor em que eles funcionam: em processo no Windows PowerShell e, sob PowerShell 7, reencaminhado ao Windows PowerShell 5.1 por `-EncodedCommand` |
 
 ### Testes de ambiente
 
 `Test-Administrator`, `Test-PowerShell`, `Test-WindowsVersion`, `Test-Winget`,
 `Test-WingetAvailability` (estado estruturado do ambiente WinGet),
+`Resolve-WingetExecutable` (localiza o `winget.exe` por PATH, alias de execução ou
+pasta do pacote, e classifica o estado do alias),
+`Get-CompartDiskAppxPacote` (consulta de pacote AppX que distingue "não achei" de
+"não consegui olhar"),
 `Test-WMI`, `Test-CIM`, `Test-TPM`, `Test-SecureBoot`, `Test-BitLocker`,
 `Test-Internet`, `Get-CompartDiskCapabilities`.
 

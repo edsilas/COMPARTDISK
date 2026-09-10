@@ -1,6 +1,6 @@
 # Descrição das Funcionalidades
 
-**COMPARTDISK 1.5.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.5.1** · Desenvolvido por Edsilas
 
 Descrição técnica do que cada recurso faz. Para a explicação em linguagem simples,
 veja o [Manual do Usuário](MANUAL-DO-USUARIO.md).
@@ -492,27 +492,81 @@ App Installer, versão, fonte, Microsoft Store, política e privilégio. Ausênc
 AppX é consultado antes de qualquer conclusão, porque o executável é um alias de
 execução que some quando o registro do pacote se perde.
 
-`Winget.ps1` age sobre esse estado, usando **apenas mecanismos oficiais**:
+Além do estado, o diagnóstico apura **por que** ele é o que é: por qual caminho o
+`winget.exe` foi alcançado (PATH, alias de execução ou pasta do pacote), se o alias
+está íntegro, em que escopo o pacote existe (perfil, outro perfil ou imagem), quais
+dependências de runtime estão presentes, se a política de *sideload* permite instalar
+pacote MSIX assinado e qual foi o último erro técnico devolvido pelo sistema. É esse
+detalhe que decide a estratégia — e não uma tentativa fixa.
 
-| Situação | O que é feito |
-|---|---|
-| Instalado, mas sem `winget` | Registra novamente o pacote local (`Add-AppxPackage -Register`). Sem download |
-| Ausente | Encaminha para a página oficial do App Installer na Microsoft Store |
-| Desatualizado | Encaminha para a tela oficial de atualizações da Store |
-| Bloqueado por política | Informa e para. Nenhuma política é alterada |
-| Windows incompatível | Informa o requisito e para, sem tentar instalar |
+#### Estratégia em camadas
 
-Nada é baixado por fora do Windows, não há instalador próprio do WinGet e nenhuma
-proteção do sistema é desativada para viabilizar a instalação.
+`Winget.ps1` monta um **plano condicionado ao diagnóstico**. Camada que não tem o que
+fazer naquele ambiente não entra no plano, e o plano é exibido antes de executar:
+
+| # | Camada | Quando entra | O que faz |
+|---|---|---|---|
+| 1 | PATH / alias | O `winget.exe` existe e não é alcançável pelo comando `winget` | Devolve a pasta `WindowsApps` ao PATH do processo e ao do usuário. Sem download |
+| 2 | Fontes | O `winget` executa e a fonte oficial não responde | `winget source reset --force` e `winget source update` |
+| 3 | Dependências | Bibliotecas de runtime do App Installer ausentes | Repõe pelo pacote oficial de dependências publicado com o release (ou pelo atalho oficial do VCLibs) |
+| 4 | Registro | O pacote está na máquina e o `winget` não executa | `Add-AppxPackage -Register` pelo manifesto do perfil, da imagem ou pela família do pacote. Sem download |
+| 5 | `Microsoft.WinGet.Client` | O módulo oficial da Microsoft já está instalado na máquina | `Repair-WinGetPackageManager` |
+| 6 | Pacote oficial | Há rede, o *sideload* é permitido e as camadas locais não resolveram | Instala o `.msixbundle` publicado pela Microsoft, conferido antes de instalar |
+| 7 | Microsoft Store | Há operador e a Store é utilizável | Abre a página oficial do App Installer |
+
+A camada 6 é a que torna a preparação **independente da Microsoft Store**: numa máquina
+com a Store removida por política, bloqueada ou com falha, o App Installer continua
+podendo ser instalado pelo pacote oficial.
+
+**Cada fallback é condicionado ao erro anterior, nunca uma segunda tentativa às cegas.**
+Quando o registro falha com `0x80073CF3` (dependência ausente), a camada de dependências
+entra **e só então** o registro é repetido — uma única vez. Depois de cada camada que
+conclui, o ambiente é reconsultado: se o WinGet já ficou funcional, as camadas restantes
+não são executadas.
+
+#### Origem e integridade do pacote
+
+O endereço vem do **release oficial** `github.com/microsoft/winget-cli` (e, se a consulta
+ao release não responder, do atalho oficial `aka.ms/getwinget`). Só há download de
+`https://` e apenas dos domínios `aka.ms`, `microsoft.com`, `github.com` e
+`githubusercontent.com` — qualquer outro endereço é recusado antes da requisição.
+
+Antes de instalar, o arquivo passa por duas conferências independentes: o **SHA256
+publicado pela Microsoft** junto do release e a **assinatura digital** do pacote. Divergiu
+o hash, ou a assinatura é inválida, adulterada ou de outro editor, o pacote é recusado e
+não é instalado. Em máquina com operador, o download é confirmado antes de começar, com a
+origem e o tamanho na tela.
+
+Nenhuma proteção do sistema é desativada para viabilizar a instalação, e nenhuma política
+é alterada.
+
+#### Idempotência, motor e validação
+
+Executar a opção várias vezes não gera instalação duplicada: com o ambiente correto, o
+módulo confirma e sai sem alterar nada; a entrada do PATH só é gravada se não estiver lá
+(a comparação é entre caminhos **expandidos**, porque a entrada costuma estar gravada como
+`%USERPROFILE%\...`); e o pacote oficial não é baixado quando a versão instalada já é a
+publicada.
+
+As operações AppX exigem os cmdlets do Windows PowerShell. Sob PowerShell 7 — o motor que
+o Launcher prefere quando existe — elas são reencaminhadas ao Windows PowerShell 5.1 por
+`Invoke-CompartDiskAppxScript`, com `-EncodedCommand`. **Nenhuma capacidade da opção
+depende exclusivamente do PowerShell 7.**
 
 Depois de agir, `Test-WingetHealth` valida o resultado em seis etapas — pacote,
 executável, versão, `--info`, fontes e uma consulta de teste. Sucesso só é declarado
 quando todas passam.
 
-Em automação, `-Action Status` diagnostica, `-Action Repair` tenta apenas o reparo
-local e `-Action Prepare` faz o ciclo completo. Em execução desassistida o módulo
-**não abre a Microsoft Store** — uma janela esperando o operador não serve para nada
-em máquina sem operador; nesse caso a limitação é declarada e nada é alterado.
+A saída não se resume a "falhou": a **trilha de etapas** — diagnóstico, ação, resultado e
+motivo técnico de cada camada — vai para a tela, para o log e para a seção do relatório da
+sessão.
+
+Em automação, `-Action Status` diagnostica, `-Action Repair` tenta apenas as camadas
+locais (PATH, fontes, dependências e registro — nada de rede) e `-Action Prepare` faz o
+ciclo completo. `-SemDownload` mantém as camadas locais e retira do plano as que dependem
+de download, declarando o motivo. Em execução desassistida o módulo **não abre a Microsoft
+Store** — uma janela esperando o operador não serve para nada em máquina sem operador;
+nesse caso a limitação é declarada e nada é alterado.
 
 ---
 

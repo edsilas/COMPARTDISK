@@ -1,6 +1,6 @@
 # Limitações Conhecidas
 
-**COMPARTDISK 1.5.0** · Desenvolvido por Edsilas
+**COMPARTDISK 1.5.1** · Desenvolvido por Edsilas
 
 Ser honesto sobre o que a ferramenta **não** faz é tão importante quanto documentar o
 que ela faz. Esta página lista os limites reais.
@@ -22,19 +22,30 @@ limites:
   disponibiliza.
 - **Velocidade de ventoinhas e tensões** — não disponível pelas interfaces nativas.
 
-### Não instala nem baixa nada
+### Não baixa software de terceiros
 
 Não atualiza drivers pela internet e não baixa pacotes de reparo do Windows. O backup
-de drivers salva os que já estão instalados; ele não busca versões novas.
+de drivers salva os que já estão instalados; ele não busca versões novas. Os únicos
+downloads que a ferramenta faz por conta própria vêm de servidores da Microsoft, estão
+listados abaixo e são visíveis na interface no momento em que acontecem.
 
-São três os pontos em que a ferramenta contata a rede por conta própria, todos
+São quatro os pontos em que a ferramenta contata a rede por conta própria, todos
 explícitos na interface: o **teste de conectividade** (`[3]` › `[5]`), que consulta os
 servidores de teste da Microsoft e o DNS público `8.8.8.8`; a **atualização de
 definições do Defender** (`[6]` › `[3]`), que baixa as assinaturas dos servidores da
-Microsoft; e o **reparo profundo da imagem** (`[5]` › `[1]`, também executado pelo
+Microsoft; o **reparo profundo da imagem** (`[5]` › `[1]`, também executado pelo
 Reparo Geral Automático), em que o `DISM /RestoreHealth` busca no Windows Update os
-arquivos que faltam no armazenamento local de componentes. Nenhum dado da máquina é
-enviado em nenhum dos três.
+arquivos que faltam no armazenamento local de componentes; e a **preparação do WinGet**
+(`[2]` › `[1]`), que, quando os reparos locais não resolvem, instala o App Installer
+pelo pacote oficial publicado pela Microsoft. Nenhum dado da máquina é enviado em
+nenhum dos quatro.
+
+> O download da preparação do WinGet só acontece depois que as camadas locais falham,
+> vem exclusivamente dos domínios oficiais (`aka.ms`, `microsoft.com`, `github.com` e
+> `githubusercontent.com`, sempre por HTTPS), é **confirmado com você** antes de começar
+> — com origem e tamanho na tela — e o pacote só é instalado após conferência do SHA256
+> publicado pela Microsoft e da assinatura digital. `Winget.ps1 -SemDownload` mantém as
+> camadas locais e desliga as que dependem de rede.
 
 > A atualização de definições do Defender **não** faz parte do Reparo Geral
 > Automático: ela é executada apenas quando você escolhe `[6]` › `[3]`.

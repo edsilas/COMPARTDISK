@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.5.0 - Debloat.ps1
+ COMPARTDISK 1.5.1 - Debloat.ps1
  Desenvolvido por Edsilas
  Acoes: Analyze | Apps | Services | Tasks | Privacy | Tweaks | Components | Full
         Backup | Restore | RestorePoint
@@ -35,6 +35,10 @@
     NaoInstalado  alvo ausente; para Debloat isso e objetivo ja atingido
     NaoSuportado  recurso, cmdlet ou build nao permite a operacao
     Protegido     bloqueado por lista de protecao, mesmo sob -Include
+    Bloqueado     remocao impossivel NO ESTADO ATUAL do sistema - dependencia de
+                  outro pacote ou implantacao em andamento. Nada foi forcado, e
+                  repetir a operacao depois costuma resolver
+    AdiadoReboot  operacao volta a ser possivel depois de reiniciar
     Falhou        tentativa executada e nao confirmada
     Ignorado      nao avaliado (nao deve aparecer em operacao normal)
  E na acao Restore: Restaurado | JaRestaurado | NaoRestauravel | Falhou | Simulado
@@ -106,6 +110,7 @@ function Set-DebloatResultado {
 # altera o proprio objeto consultado.
 $script:CacheCatalogo   = $null
 $script:CacheAppx       = $null
+$script:CacheAppxMotor  = $null
 $script:CacheProv       = $null
 $script:CacheProvSujo   = $true
 $script:CacheServicos   = $null
@@ -1005,6 +1010,64 @@ function Get-DebloatEspacoLivre {
     return $livre
 }
 
+function Get-DebloatEstadoImplantacao {
+    <# A MAQUINA AINDA ESTA SE CONFIGURANDO?
+
+       Esta e a pergunta que faltava. Logo apos a formatacao o Windows continua
+       distribuindo pacotes provisionados para o perfil recem-criado, e o
+       Windows Update segue instalando componentes. Nesse intervalo:
+         - pacotes aparecem e desaparecem entre uma execucao e outra;
+         - a remocao esbarra em recurso em uso;
+         - aplicativos removidos podem ser reimplantados.
+
+       Nada disso e defeito do Debloat, mas tratar tudo como estado estavel
+       fazia o modulo parecer ineficiente exatamente na maquina recem formatada.
+       Detectar a condicao permite explica-la e recomendar a reexecucao.
+
+       ImageState e valor documentado pela Microsoft: IMAGE_STATE_COMPLETE marca
+       o fim da fase de implantacao. Somente leitura. #>
+    [CmdletBinding()] param()
+
+    $out = [pscustomobject]@{
+        EmConfiguracao = $false
+        ImageState     = ''
+        PacotesInstaveis = 0
+        Motivos        = @()
+    }
+    $motivos = New-Object System.Collections.ArrayList
+
+    $st = Get-CompartDiskRegistryValue 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State' 'ImageState'
+    if ($st) {
+        $out.ImageState = "$st"
+        if ("$st" -ne 'IMAGE_STATE_COMPLETE') {
+            $out.EmConfiguracao = $true
+            [void]$motivos.Add("a instalacao do Windows ainda nao concluiu a fase de implantacao (ImageState=$st)")
+        }
+    }
+
+    # Pacote em estado diferente de 'Ok' e sinal de implantacao em curso ou de
+    # pacote a ser reparado - nos dois casos, remover agora tende a esbarrar em
+    # recurso em uso. Reaproveita o inventario ja em cache: sem consulta extra.
+    try {
+        $inv = Get-DebloatAppxInventario
+        if ($inv.Disponivel) {
+            $instaveis = @($inv.Pacotes | Where-Object {
+                $_.PSObject.Properties.Name -contains 'Status' -and "$($_.Status)" -and "$($_.Status)" -ne 'Ok'
+            })
+            $out.PacotesInstaveis = $instaveis.Count
+            if ($instaveis.Count -gt 0) {
+                $out.EmConfiguracao = $true
+                [void]$motivos.Add("$($instaveis.Count) pacote(s) em estado diferente de 'Ok' (implantacao em andamento ou pacote a reparar)")
+            }
+        }
+    } catch {
+        Write-Log DEBUG "Avaliacao de estado dos pacotes indisponivel: $($_.Exception.Message)" -NoConsole
+    }
+
+    $out.Motivos = @($motivos)
+    return $out
+}
+
 function Test-DebloatPreconditions {
     <# Separa impeditivo de aviso. Impeditivo aborta; aviso apenas informa e o
        fluxo segue, porque um reinicio pendente nao invalida, por exemplo,
@@ -1030,10 +1093,36 @@ function Test-DebloatPreconditions {
         [void]$avisos.Add('Ha reinicio pendente. Alteracoes de servico e componente podem nao se consolidar ate reiniciar, e a limpeza de componentes sera pulada.')
     }
 
+    $implant = Get-DebloatEstadoImplantacao
+    if ($implant.EmConfiguracao) {
+        [void]$avisos.Add("O Windows ainda esta se configurando: $($implant.Motivos -join '; '). Aplicativos podem continuar chegando e alguns alvos aparecerao como bloqueados. Isso e esperado numa maquina recem formatada - repita a operacao depois que a configuracao terminar.")
+    }
+
     if (-not (Test-CompartDiskCommand 'Get-AppxPackage')) {
         if (-not (Import-CompartDiskModule 'Appx')) {
             [void]$avisos.Add('Modulo Appx indisponivel: a remocao de aplicativos sera reportada como NaoSuportado.')
         }
+    }
+
+    # Motor de ESCRITA AppX. Sob PowerShell 7 os cmdlets carregam e falham na
+    # execucao; o desvio para o Windows PowerShell 5.1 e o que mantem a remocao
+    # de aplicativos funcional nesse motor. Se nem isso existir, e melhor dizer
+    # antes de comecar do que contabilizar dezenas de falhas depois.
+    $motorAppx = Get-DebloatAppxMotor
+    if ($motorAppx.Descricao -eq 'indisponivel') {
+        [void]$avisos.Add('Nenhum motor com cmdlets Appx utilizaveis: a remocao de aplicativos sera reportada como NaoSuportado.')
+    } elseif ($motorAppx.Auxiliar) {
+        [void]$avisos.Add("Cmdlets Appx nao sao executaveis neste motor; as remocoes usarao $($motorAppx.Descricao).")
+    }
+
+    # PROVISIONAMENTO. Sem ele o aplicativo sai do perfil atual e volta em todo
+    # perfil novo - e era exatamente esse o caso que o modulo reportava como
+    # sucesso. O cmdlet vem do Dism, que nao e o mesmo modulo do Appx.
+    $provPre = Get-DebloatProvInventario
+    if (-not $provPre.Disponivel) {
+        [void]$avisos.Add("Inventario de pacotes provisionados indisponivel ($($provPre.Motivo)). Os aplicativos serao removidos apenas dos perfis existentes e poderao voltar em perfis novos; nenhum item sera reportado como totalmente aplicado.")
+    } else {
+        Write-Log DEBUG "Provisionamento: $($provPre.Lista.Count) pacote(s) provisionado(s) na imagem." -NoConsole
     }
 
     if (-not (Test-CompartDiskCommand 'Get-ScheduledTask')) {
@@ -1110,12 +1199,20 @@ function Get-DebloatAppxInventario {
 
 function Get-DebloatProvInventario {
     <# Reconstruido apenas quando alguma remocao de provisionamento marcou o
-       cache como sujo, e nunca uma vez por item. #>
+       cache como sujo, e nunca uma vez por item.
+
+       O cmdlet vem do modulo Dism, nao do Appx: em maquina recem formatada o
+       Appx carrega e o Dism pode nao ter sido carregado ainda, e sem esta
+       consulta o modulo removia o pacote so do usuario atual e deixava o
+       PROVISIONAMENTO de pe - o aplicativo voltava em cada perfil novo. Por isso
+       a indisponibilidade agora e registrada com motivo, e nao mais em silencio. #>
     param([switch]$Atualizar)
     if ($null -ne $script:CacheProv -and -not $script:CacheProvSujo -and -not $Atualizar) { return $script:CacheProv }
 
-    $inv = [pscustomobject]@{ Disponivel = $false; Lista = @() }
+    $inv = [pscustomobject]@{ Disponivel = $false; Lista = @(); Motivo = '' }
+    if (-not (Test-CompartDiskCommand 'Get-AppxProvisionedPackage')) { $null = Import-CompartDiskModule 'Dism' }
     if (-not (Test-CompartDiskCommand 'Get-AppxProvisionedPackage')) {
+        $inv.Motivo = 'cmdlet Get-AppxProvisionedPackage indisponivel neste motor (modulo Dism nao carregado)'
         $script:CacheProv = $inv; $script:CacheProvSujo = $false
         return $inv
     }
@@ -1123,11 +1220,94 @@ function Get-DebloatProvInventario {
         $inv.Lista      = @(Get-AppxProvisionedPackage -Online -ErrorAction Stop)
         $inv.Disponivel = $true
     } catch {
-        Write-Log WARN "Inventario de pacotes provisionados indisponivel: $($_.Exception.Message)"
+        # A mensagem do provedor vem com quebras de linha; numa linha de tabela
+        # isso trunca o texto no meio e deixa parenteses sem fechar.
+        $inv.Motivo = (("$($_.Exception.Message)" -replace '\s+', ' ')).Trim()
+        Write-Log WARN "Inventario de pacotes provisionados indisponivel: $($inv.Motivo)"
     }
     $script:CacheProv     = $inv
     $script:CacheProvSujo = $false
     return $inv
+}
+
+function Get-DebloatAppxMotor {
+    <# ONDE as escritas AppX podem rodar.
+
+       Os cmdlets Appx sao do Windows PowerShell. Sob PowerShell 7 - motor que o
+       Launcher prefere quando existe na maquina - eles carregam com
+       -SkipEditionCheck e falham na execucao. O Core ja resolve isso para o
+       modulo Winget com Invoke-CompartDiskAppxScript, que reencaminha o comando
+       ao Windows PowerShell 5.1 do proprio Windows; aqui a MESMA funcao e
+       reaproveitada, sem criar um segundo mecanismo. #>
+    if ($null -ne $script:CacheAppxMotor) { return $script:CacheAppxMotor }
+
+    $m = [pscustomobject]@{ EmProcesso = $false; Auxiliar = $false; Descricao = 'indisponivel' }
+    $temCmdlet = Test-CompartDiskCommand 'Remove-AppxPackage'
+
+    if ($temCmdlet -and $PSVersionTable.PSVersion.Major -lt 6) {
+        $m.EmProcesso = $true
+        $m.Descricao  = 'Windows PowerShell (em processo)'
+    } elseif (Test-CompartDiskCommand 'Invoke-CompartDiskAppxScript') {
+        $wps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (Test-Path -LiteralPath $wps) {
+            $m.Auxiliar  = $true
+            $m.Descricao = 'Windows PowerShell 5.1 (processo auxiliar)'
+        }
+    }
+    if (-not $m.EmProcesso -and -not $m.Auxiliar -and $temCmdlet) {
+        # Sem Windows PowerShell na maquina: tentar em processo e o que resta.
+        $m.EmProcesso = $true
+        $m.Descricao  = ('PowerShell {0} (em processo)' -f $PSVersionTable.PSVersion.Major)
+    }
+
+    $script:CacheAppxMotor = $m
+    return $m
+}
+
+function Invoke-DebloatAppxComando {
+    <# Ponto unico de ESCRITA AppX. Nunca lanca: devolve Sucesso/Mensagem/Motor. #>
+    param(
+        [Parameter(Mandatory)][string]$Comando,
+        [string]$Atividade = 'Operacao AppX',
+        [int]$TimeoutSeconds = 600
+    )
+    $motor = Get-DebloatAppxMotor
+    if ($motor.EmProcesso) {
+        $r = Invoke-SafeCommand ([scriptblock]::Create($Comando)) -Activity $Atividade -Silent
+        return [pscustomobject]@{
+            Sucesso  = [bool]$r.Success
+            Mensagem = $(if ($r.Error) { "$($r.Error.Exception.Message)" } else { '' })
+            Motor    = $motor.Descricao
+        }
+    }
+    if ($motor.Auxiliar) {
+        $r = Invoke-CompartDiskAppxScript -Comando $Comando -Activity $Atividade -TimeoutSeconds $TimeoutSeconds
+        return [pscustomobject]@{ Sucesso = [bool]$r.Success; Mensagem = "$($r.Error)"; Motor = "$($r.Engine)" }
+    }
+    return [pscustomobject]@{ Sucesso = $false; Mensagem = 'nenhum motor com cmdlets Appx disponivel nesta sessao'; Motor = 'indisponivel' }
+}
+
+function Test-DebloatErroTransitorio {
+    <# Erro que diz "agora nao da", e nao "nunca vai dar".
+
+       E o caso dominante em maquina recem formatada: o servico de implantacao
+       ainda esta distribuindo pacotes para o perfil, e a remocao esbarra em
+       recurso em uso. Tratar isso como falha definitiva e o que fazia o Debloat
+       parecer ineficiente logo apos a formatacao. Somente codigos e textos
+       comprovados entram aqui - o resto continua sendo falha. #>
+    param([string]$Mensagem)
+    if ([string]::IsNullOrWhiteSpace($Mensagem)) { return $false }
+    # 0x80073D02 = ERROR_INSTALL_RESOURCES_IN_USE (documentado pela Microsoft).
+    return ($Mensagem -match '(?i)0x80073D02|resources.*in use|recursos.*em uso|being (installed|deployed)|another (installation|deployment)')
+}
+
+function Test-DebloatErroDependencia {
+    <# Remocao barrada porque outro pacote depende deste. Nao e falha do Debloat
+       e nao se forca: registra-se a dependencia e segue. #>
+    param([string]$Mensagem)
+    if ([string]::IsNullOrWhiteSpace($Mensagem)) { return $false }
+    # 0x80073CF3 = ERROR_INSTALL_RESOLVE_DEPENDENCY_FAILED (documentado).
+    return ($Mensagem -match '(?i)0x80073CF3|depend')
 }
 
 function Get-DebloatServicosInventario {
@@ -1556,26 +1736,70 @@ function New-DebloatSaida {
 function Test-DebloatAppxAusente {
     <# Reconsulta dirigida a um unico pacote apos a remocao. Devolve $true
        (ausente), $false (ainda presente para algum usuario) ou $null
-       (indeterminado). 'Staged' conta como ausente: nao ha instalacao ativa. #>
+       (indeterminado).
+
+       AUSENCIA NUNCA E INFERIDA DE UM ESTADO ILEGIVEL. Quando a consulta
+       -AllUsers falha - o que acontece sem elevacao e tambem quando o servico de
+       implantacao esta ocupado numa maquina recem formatada -, a consulta de
+       recuo enxerga apenas o usuario atual e devolve PackageUserInformation
+       VAZIO. A versao anterior percorria essa colecao vazia, nao achava nenhum
+       usuario com InstallState=Installed e concluia "ausente": um pacote
+       intacto era reportado como removido, e o item terminava como 'Aplicado'.
+
+       Agora: sem escopo de todos os usuarios, o maximo que se pode afirmar e
+       sobre o usuario atual; e sem estado legivel, o resultado e indeterminado.
+       'Staged' continua contando como ausente - so quando foi possivel LER que
+       o estado e Staged. #>
     param([Parameter(Mandatory)][string]$Nome, [Parameter(Mandatory)][string]$PackageFullName)
-    $restantes = $null
-    try { $restantes = @(Get-AppxPackage -AllUsers -Name $Nome -ErrorAction Stop) }
-    catch {
+
+    $restantes    = $null
+    $todosUsuarios = $false
+    try {
+        $restantes     = @(Get-AppxPackage -AllUsers -Name $Nome -ErrorAction Stop)
+        $todosUsuarios = $true
+    } catch {
         try { $restantes = @(Get-AppxPackage -Name $Nome -ErrorAction Stop) }
         catch {
             Write-Log DEBUG "Reconsulta Appx de $Nome falhou: $($_.Exception.Message)" -NoConsole
             return $null
         }
     }
+
     $iguais = @($restantes | Where-Object { "$($_.PackageFullName)" -eq $PackageFullName })
-    if ($iguais.Count -eq 0) { return $true }
+    if ($iguais.Count -eq 0) {
+        # Sumiu da listagem. So e prova para TODOS os usuarios quando a consulta
+        # teve esse alcance; no escopo do usuario atual, outro perfil ainda pode
+        # te-lo, e afirmar remocao total seria afirmar o que nao se sabe.
+        if ($todosUsuarios) { return $true }
+        Write-Log DEBUG "$Nome ausente no escopo do usuario atual; alcance de todos os usuarios indisponivel." -NoConsole
+        return $null
+    }
+
+    # Estados que PROVAM ausencia para aquele usuario. A verificacao e por lista
+    # branca, e nao por "!= Installed": um InstallState vazio, desconhecido ou
+    # intermediario (o pacote em transicao numa maquina recem formatada) nao
+    # prova coisa alguma, e concluir ausencia a partir dele seria repetir - por
+    # outra porta - o mesmo falso positivo que esta funcao existe para impedir.
+    $provamAusencia = @('NotInstalled', 'Staged')
+
     foreach ($r in $iguais) {
-        try {
-            $ativos = @($r.PackageUserInformation | Where-Object { "$($_.InstallState)" -eq 'Installed' })
-            if ($ativos.Count -gt 0) { return $false }
-        } catch {
+        $estados = @()
+        try { $estados = @($r.PackageUserInformation | ForEach-Object { "$($_.InstallState)" }) }
+        catch {
             Write-Log DEBUG "InstallState indisponivel para $Nome" -NoConsole
-            return $false
+            return $null
+        }
+        if ($estados.Count -eq 0) {
+            # Pacote listado e sem estado legivel: nao ha como afirmar nada.
+            Write-Log DEBUG "$Nome continua listado, sem estado de instalacao legivel." -NoConsole
+            return $null
+        }
+        if (@($estados | Where-Object { $_ -eq 'Installed' }).Count -gt 0) { return $false }
+
+        $obscuros = @($estados | Where-Object { $provamAusencia -notcontains "$_" })
+        if ($obscuros.Count -gt 0) {
+            Write-Log DEBUG ("{0}: estado de instalacao nao conclusivo ({1})." -f $Nome, (($obscuros | ForEach-Object { if ($_) { $_ } else { '<vazio>' } }) -join ', ')) -NoConsole
+            return $null
         }
     }
     return $true
@@ -1672,64 +1896,40 @@ function Invoke-DebloatAppx {
 
     if ($Simular) {
         $saida.Resultado = 'Simulado'
-        $saida.Detalhe   = "$($removiveis.Count) instancia(s), $($prov.Count) provisionamento(s)" +
-                           $(if ($bloqueados.Count -gt 0) { ", $($bloqueados.Count) bloqueado(s)" } else { '' })
+        # A simulacao precisa declarar o que NAO conseguiu avaliar. Dizer
+        # "0 provisionamentos" quando o inventario esta indisponivel e a mesma
+        # afirmacao falsa que a aplicacao fazia: nao ha zero, ha ignorancia.
+        $txtProv = "$($prov.Count) provisionamento(s)"
+        if (-not $provInv.Disponivel) { $txtProv = 'provisionamento NAO avaliado (' + $provInv.Motivo + ')' }
+        $saida.Detalhe = "$($removiveis.Count) instancia(s), $txtProv" +
+                         $(if ($bloqueados.Count -gt 0) { ", $($bloqueados.Count) bloqueado(s)" } else { '' })
         return $saida
     }
 
     $confirmados = 0; $falhas = 0; $indeterminados = 0; $naoRemoviveis = 0
+    $bloqueados  = 0
     $erros = New-Object System.Collections.ArrayList
 
-    foreach ($p in $removiveis) {
-        $pfn = "$($p.PackageFullName)"
-        # Pacote cujo payload ja nao esta no disco continua registrado, mas o
-        # Remove-AppxPackage nao consegue removê-lo: falha com 0x80070002. O
-        # dado ja e coletado acima (ManifestoPresente) e passa a ser usado como
-        # pre-condicao, em vez de servir apenas para descrever a restauracao.
-        $semPayload = $false
-        $det = @($detalhePacotes | Where-Object { "$($_.PackageFullName)" -eq $pfn }) | Select-Object -First 1
-        if ($det -and -not $det.ManifestoPresente) { $semPayload = $true }
-
-        Write-Log DEBUG "Removendo Appx $pfn" -NoConsole
-        $r = Invoke-SafeCommand { Remove-AppxPackage -Package $pfn -AllUsers -ErrorAction Stop } -Activity "Remover $($p.Name)" -Silent
-
-        # 0x80070002 nao e condicao de escopo nem de permissao: repetir no
-        # escopo do usuario falharia de forma identica.
-        $determinista = $false
-        if (-not $r.Success -and $r.Error) {
-            if ($semPayload -or "$($r.Error.Exception.Message)" -match '0x80070002') { $determinista = $true }
-        }
-        if (-not $r.Success -and -not $determinista) {
-            # -AllUsers nao existe/nao e permitido em toda edicao: tenta no
-            # escopo do usuario atual antes de declarar falha.
-            $r = Invoke-SafeCommand { Remove-AppxPackage -Package $pfn -ErrorAction Stop } -Activity "Remover $($p.Name) (usuario atual)" -Silent
-        }
-        $ausente = Test-DebloatAppxAusente -Nome "$($p.Name)" -PackageFullName $pfn
-        if ($ausente -eq $true) {
-            $confirmados++
-        } elseif ($null -eq $ausente) {
-            $indeterminados++
-            [void]$erros.Add("$($p.Name): remocao nao pode ser verificada")
-        } elseif ($determinista) {
-            $falhas++
-            $naoRemoviveis++
-            [void]$erros.Add("$($p.Name): nao removivel por Remove-AppxPackage - os arquivos do pacote nao estao no disco e apenas o registro permanece")
-        } else {
-            $falhas++
-            $msg = 'ainda presente apos a remocao'
-            if ($r -and -not $r.Success -and $r.Error) { $msg = "$($r.Error.Exception.Message)" }
-            [void]$erros.Add("$($p.Name): $msg")
-        }
-    }
-
+    # ---------------------------------------------------------------------
+    # ORDEM: DESPROVISIONAR ANTES DE REMOVER DO USUARIO.
+    #
+    # Numa maquina recem formatada o servico de implantacao ainda esta
+    # distribuindo os pacotes provisionados para o perfil que acabou de fazer
+    # logon. Remover primeiro a instancia do usuario, com o provisionamento
+    # ainda de pe, deixa a porta aberta para o proprio Windows reimplantar o
+    # pacote no meio da operacao - e o resultado e o aplicativo "removido" que
+    # reaparece minutos depois. Tirar o provisionamento primeiro fecha essa
+    # porta antes de mexer no perfil.
+    # ---------------------------------------------------------------------
     $provRemovidos = 0; $provFalhas = 0
     foreach ($p in $prov) {
-        $pn = "$($p.PackageName)"
-        $r = Invoke-SafeCommand { Remove-AppxProvisionedPackage -Online -PackageName $pn -ErrorAction Stop } -Activity "Desprovisionar $($p.DisplayName)" -Silent
+        $pn  = "$($p.PackageName)".Replace("'", "''")
+        $rp  = Invoke-DebloatAppxComando -Comando ("Remove-AppxProvisionedPackage -Online -PackageName '" + $pn + "' -ErrorAction Stop | Out-Null") `
+               -Atividade "Desprovisionar $($p.DisplayName)"
         $script:CacheProvSujo = $true
-        if (-not $r.Success) {
+        if (-not $rp.Sucesso) {
             $provFalhas++
-            [void]$erros.Add("provisionamento $($p.DisplayName): $($r.Error.Exception.Message)")
+            [void]$erros.Add("provisionamento $($p.DisplayName): $($rp.Mensagem)")
         }
     }
     if ($prov.Count -gt 0) {
@@ -1748,6 +1948,86 @@ function Invoke-DebloatAppx {
         }
     }
 
+    foreach ($p in $removiveis) {
+        $pfn = "$($p.PackageFullName)"
+        $det = @($detalhePacotes | Where-Object { "$($_.PackageFullName)" -eq $pfn }) | Select-Object -First 1
+
+        # Pacote cujo payload ja nao esta no disco continua registrado, mas o
+        # Remove-AppxPackage nao consegue removê-lo: falha com 0x80070002.
+        $semPayload = ($det -and -not $det.ManifestoPresente)
+
+        # Pacote apenas PREPARADO (Staged) nao esta instalado para ninguem: com
+        # o provisionamento ja retirado acima, nao ha o que remover do perfil, e
+        # tratar isso como falha seria contar como erro um objetivo atingido.
+        $somenteStaged = $false
+        if ($det -and @($det.Usuarios).Count -gt 0) {
+            $estados = @($det.Usuarios | ForEach-Object { ($_ -split ':')[-1] })
+            $somenteStaged = (@($estados | Where-Object { $_ -eq 'Installed' }).Count -eq 0)
+        }
+
+        $pfnEsc = $pfn.Replace("'", "''")
+        Write-Log DEBUG "Removendo Appx $pfn" -NoConsole
+        $r = Invoke-DebloatAppxComando -Comando ("Remove-AppxPackage -Package '" + $pfnEsc + "' -AllUsers -ErrorAction Stop") `
+             -Atividade "Remover $($p.Name)"
+
+        # 0x80070002 nao e condicao de escopo nem de permissao: repetir no
+        # escopo do usuario falharia de forma identica.
+        $determinista = ($semPayload -or ("$($r.Mensagem)" -match '0x80070002'))
+
+        if (-not $r.Sucesso -and -not $determinista) {
+            # Estado transitorio: a implantacao ainda esta em curso. UMA nova
+            # tentativa, depois de uma pausa curta - repetir sem esperar seria
+            # falhar duas vezes pelo mesmo motivo.
+            if (Test-DebloatErroTransitorio -Mensagem "$($r.Mensagem)") {
+                Write-Log DEBUG "$($p.Name): recurso em uso; nova tentativa em 3s." -NoConsole
+                Start-Sleep -Seconds 3
+                $r = Invoke-DebloatAppxComando -Comando ("Remove-AppxPackage -Package '" + $pfnEsc + "' -AllUsers -ErrorAction Stop") `
+                     -Atividade "Remover $($p.Name) (nova tentativa)"
+            }
+        }
+        if (-not $r.Sucesso -and -not $determinista) {
+            # -AllUsers nao existe/nao e permitido em toda edicao: tenta no
+            # escopo do usuario atual antes de declarar falha.
+            $r = Invoke-DebloatAppxComando -Comando ("Remove-AppxPackage -Package '" + $pfnEsc + "' -ErrorAction Stop") `
+                 -Atividade "Remover $($p.Name) (usuario atual)"
+        }
+
+        $ausente = Test-DebloatAppxAusente -Nome "$($p.Name)" -PackageFullName $pfn
+        if ($ausente -eq $true) {
+            $confirmados++
+        } elseif ($r.Sucesso -eq $false -and (Test-DebloatErroDependencia -Mensagem "$($r.Mensagem)")) {
+            # Outro pacote depende deste. Nao se forca e nao se conta como falha
+            # do processo: o alvo fica registrado como bloqueado, com a causa.
+            $bloqueados++
+            [void]$erros.Add("$($p.Name): bloqueado por dependencia - $($r.Mensagem)")
+        } elseif ($r.Sucesso -eq $false -and (Test-DebloatErroTransitorio -Mensagem "$($r.Mensagem)")) {
+            $bloqueados++
+            [void]$erros.Add("$($p.Name): implantacao em andamento ou recurso em uso - repetir apos concluir a configuracao do Windows")
+        } elseif ($null -eq $ausente) {
+            # Inclui o pacote que estava apenas PREPARADO (Staged). A leitura
+            # anterior a remocao dizia que ninguem o tinha instalado, mas o
+            # estado FINAL nao pode ser lido - e este ramo so e alcancado quando
+            # nao ha prova. Contar como confirmado seria declarar sucesso sem
+            # verificacao, exatamente o que esta funcao deixou de fazer no resto
+            # do fluxo. O provisionamento removido acima continua contabilizado
+            # a parte, entao o alvo termina como Parcial, e nao como falha.
+            if ($somenteStaged) {
+                Write-Log DEBUG "$($p.Name): estava apenas preparado (Staged) e o estado final nao pode ser confirmado." -NoConsole
+            }
+            $indeterminados++
+            [void]$erros.Add("$($p.Name): remocao nao pode ser verificada")
+        } elseif ($determinista) {
+            $falhas++
+            $naoRemoviveis++
+            [void]$erros.Add("$($p.Name): nao removivel por Remove-AppxPackage - os arquivos do pacote nao estao no disco e apenas o registro permanece")
+        } else {
+            $falhas++
+            $msg = 'ainda presente apos a remocao'
+            if (-not $r.Sucesso -and $r.Mensagem) { $msg = "$($r.Mensagem)" }
+            [void]$erros.Add("$($p.Name): $msg")
+        }
+    }
+
     # Cache local coerente com o que acabou de ser confirmado.
     if ($confirmados -gt 0) {
         $inv.Pacotes = @($inv.Pacotes | Where-Object { "$($_.Name)" -notlike $alvo -or (Test-DebloatAppxBloqueado -Pacote $_) })
@@ -1757,19 +2037,36 @@ function Invoke-DebloatAppx {
         PacotesRemovidos         = $confirmados
         ProvisionamentosRemovidos = $provRemovidos
         Falhas                   = $falhas + $provFalhas
+        Bloqueados               = $bloqueados
         Indeterminados           = $indeterminados
         NaoRemoviveis            = $naoRemoviveis
+        ProvisionamentoAvaliado  = [bool]$provInv.Disponivel
     }
     $sufixoNR = $(if ($naoRemoviveis -gt 0) { ", $naoRemoviveis sem arquivos no disco" } else { '' })
     $totalPedido = $removiveis.Count + $prov.Count
     $totalOk     = $confirmados + $provRemovidos
 
     if ($totalOk -eq $totalPedido -and $totalPedido -gt 0) {
-        $saida.Resultado = 'Aplicado'
-        $saida.Detalhe   = "$confirmados pacote(s) e $provRemovidos provisionamento(s) removidos e confirmados"
+        # SUCESSO TOTAL EXIGE TER OLHADO O PROVISIONAMENTO. Sem esse inventario,
+        # o pacote sai do perfil atual e continua provisionado para todo perfil
+        # novo: declarar 'Aplicado' aqui era prometer uma remocao que nao houve.
+        if (-not $provInv.Disponivel) {
+            $saida.Resultado = 'Parcial'
+            $saida.Detalhe   = "$confirmados pacote(s) removido(s) do(s) perfil(is); provisionamento NAO avaliado - o aplicativo pode voltar em perfis novos"
+            $saida.Erro      = "inventario de provisionamento indisponivel: $($provInv.Motivo)"
+        } else {
+            $saida.Resultado = 'Aplicado'
+            $saida.Detalhe   = "$confirmados pacote(s) e $provRemovidos provisionamento(s) removidos e confirmados"
+        }
+    } elseif ($totalOk -eq 0 -and $bloqueados -gt 0 -and $falhas -eq 0 -and $provFalhas -eq 0) {
+        # Nada removido e nada falhou de verdade: o estado do sistema e que nao
+        # permite agora. Bloqueado nao e falha - e um "ainda nao".
+        $saida.Resultado = 'Bloqueado'
+        $saida.Detalhe   = "$bloqueados instancia(s) bloqueada(s) por dependencia ou implantacao em andamento"
+        $saida.Erro      = ($erros -join ' | ')
     } elseif ($totalOk -gt 0) {
         $saida.Resultado = 'Parcial'
-        $saida.Detalhe   = "$totalOk de $totalPedido confirmados; $($falhas + $provFalhas) falha(s)$sufixoNR, $indeterminados nao verificado(s)"
+        $saida.Detalhe   = "$totalOk de $totalPedido confirmados; $($falhas + $provFalhas) falha(s)$sufixoNR, $bloqueados bloqueado(s), $indeterminados nao verificado(s)"
         $saida.Erro      = ($erros -join ' | ')
     } else {
         $saida.Resultado = 'Falhou'
@@ -2132,8 +2429,9 @@ function Invoke-DebloatCategorias {
         # ficou parcial contamina o resultado do modulo a partir daqui.
         if (-not $Simular) {
             switch ($r.Resultado) {
-                'Falhou'  { Set-DebloatResultado 'WARN' | Out-Null }
-                'Parcial' { Set-DebloatResultado 'WARN' | Out-Null }
+                'Falhou'    { Set-DebloatResultado 'WARN' | Out-Null }
+                'Parcial'   { Set-DebloatResultado 'WARN' | Out-Null }
+                'Bloqueado' { Set-DebloatResultado 'WARN' | Out-Null }
             }
         }
 
@@ -2144,6 +2442,7 @@ function Invoke-DebloatCategorias {
             Nivel     = $i.Nivel
             Classe    = $(if ($r.Resultado -eq 'NaoInstalado') { 'INEXISTENTE' }
                           elseif ($r.Resultado -eq 'Falhou')   { 'ERRO' }
+                          elseif ($r.Resultado -eq 'Bloqueado'){ 'DEPENDENCIA' }
                           elseif ($r.Resultado -eq 'Protegido'){ (Get-DebloatClasseProtecao -Item $i -Motivo $r.Detalhe) }
                           else { $i.Classe })
             Resultado = $r.Resultado
@@ -2160,6 +2459,7 @@ function Invoke-DebloatCategorias {
             'NaoSuportado' { 'Yellow' }
             'AdiadoReboot' { 'Yellow' }
             'Protegido'    { 'Yellow' }
+            'Bloqueado'    { 'Yellow' }
             'Falhou'       { 'Red' }
             default        { 'DarkGray' }
         }
@@ -3052,6 +3352,11 @@ function Write-DebloatResumo {
     # Adiado por reinicio nao e "nao suportado" (permanente) nem falha: e uma
     # operacao que volta a ser possivel depois do reboot.
     $adiados    = @($Linhas | Where-Object { $_.Resultado -eq 'AdiadoReboot' }).Count
+    # Bloqueado tampouco e falha: dependencia de outro pacote ou implantacao em
+    # andamento sao estados do SISTEMA, nao erros do Debloat. Contar junto com
+    # falha faria uma maquina recem formatada - onde isso e comum - parecer
+    # quebrada quando o processo funcionou como devia.
+    $bloqueados = @($Linhas | Where-Object { $_.Resultado -eq 'Bloqueado' }).Count
 
     Write-Color ''
     Write-Color "  $Titulo" -Color White
@@ -3065,6 +3370,7 @@ function Write-DebloatResumo {
     if ($protegidos -gt 0) { Write-Color ("    {0} : {1}" -f 'Bloqueados por protecao'.PadRight(26), $protegidos) -Color Yellow }
     if ($naoSup -gt 0)     { Write-Color ("    {0} : {1}" -f 'Nao suportados aqui'.PadRight(26), $naoSup) -Color Yellow }
     if ($adiados -gt 0)    { Write-Color ("    {0} : {1}" -f 'Adiados ate reiniciar'.PadRight(26), $adiados) -Color Yellow }
+    if ($bloqueados -gt 0) { Write-Color ("    {0} : {1}" -f 'Bloqueados pelo estado atual'.PadRight(26), $bloqueados) -Color Yellow }
     if ($falhas -gt 0)     { Write-Color ("    {0} : {1}" -f 'Falhas'.PadRight(26), $falhas) -Color Red }
 
     $porCategoria = $Linhas | Group-Object Categoria | ForEach-Object {
@@ -3078,6 +3384,7 @@ function Write-DebloatResumo {
             NaoSuportado = @($_.Group | Where-Object { $_.Resultado -eq 'NaoSuportado' }).Count
             AdiadoReboot = @($_.Group | Where-Object { $_.Resultado -eq 'AdiadoReboot' }).Count
             Protegidas   = @($_.Group | Where-Object { $_.Resultado -eq 'Protegido' }).Count
+            Bloqueadas   = @($_.Group | Where-Object { $_.Resultado -eq 'Bloqueado' }).Count
             Falhas       = @($_.Group | Where-Object { $_.Resultado -eq 'Falhou' }).Count
         }
     }
@@ -3099,14 +3406,20 @@ function Write-DebloatResumo {
         Write-DebloatTabela -Linhas @($porClasse)
     }
 
-    $status = $(if ($falhas -gt 0 -or $parciais -gt 0) { 'WARN' } else { 'OK' })
+    $status = $(if ($falhas -gt 0 -or $parciais -gt 0 -or $bloqueados -gt 0) { 'WARN' } else { 'OK' })
     Add-CompartDiskSection -Title $Titulo -Status $status -Rows @($Linhas) `
-        -Summary ("Nivel {0} | confirmadas {1} | parciais {2} | previstas {3} | ja conformes {4} | protegidas {5} | nao suportadas {6} | adiadas por reinicio {7} | falhas {8}" -f `
-            $Level, $aplicados, $parciais, $simulados, $jaOk, $protegidos, $naoSup, $adiados, $falhas)
+        -Summary ("Nivel {0} | confirmadas {1} | parciais {2} | previstas {3} | ja conformes {4} | protegidas {5} | nao suportadas {6} | adiadas por reinicio {7} | bloqueadas pelo estado atual {8} | falhas {9}" -f `
+            $Level, $aplicados, $parciais, $simulados, $jaOk, $protegidos, $naoSup, $adiados, $bloqueados, $falhas)
 
     if ($falhas -gt 0 -or $parciais -gt 0) {
         Add-CompartDiskFinding -Severity WARN -Area 'Debloat' -Message "$falhas alteracao(oes) falharam e $parciais foram aplicadas apenas em parte." `
             -Recommendation 'Verificar reinicio pendente, politica corporativa ou pacote em uso no momento da alteracao.'
+        Set-DebloatResultado 'WARN' | Out-Null
+    }
+    if ($bloqueados -gt 0) {
+        Add-CompartDiskFinding -Severity WARN -Area 'Debloat' `
+            -Message "$bloqueados alteracao(oes) bloqueada(s) pelo estado atual do sistema (dependencia de outro pacote ou implantacao em andamento)." `
+            -Recommendation 'Nao e falha: nada foi forcado. Em maquina recem formatada, repetir a operacao depois que o Windows concluir a configuracao costuma resolver.'
         Set-DebloatResultado 'WARN' | Out-Null
     }
     if ($naoSup -gt 0) {

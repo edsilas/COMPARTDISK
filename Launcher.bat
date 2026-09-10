@@ -1,6 +1,6 @@
 @echo off
 :: ==============================================================================
-:: COMPARTDISK 1.5.0 - ASSISTENTE DE REPARO PARA WINDOWS 10 E WINDOWS 11
+:: COMPARTDISK 1.5.1 - ASSISTENTE DE REPARO PARA WINDOWS 10 E WINDOWS 11
 :: DESENVOLVIDO POR EDSILAS
 ::
 :: Arquitetura hibrida: Batch como interface, navegacao, controle de fluxo,
@@ -56,7 +56,7 @@ if errorlevel 1 set "SEM_UTF8=1"
 :: Se o processo morrer de forma abrupta, a ultima linha deste arquivo aponta
 :: exatamente o estagio em que a falha ocorreu.
 :: ==============================================================================
-set "COMPARTDISK_VERSION=1.5.0"
+set "COMPARTDISK_VERSION=1.5.1"
 set "COMPARTDISK_ROOT=%~dp0"
 set "COMPARTDISK_MODULES=%~dp0Modules"
 set "COMPARTDISK_SELF=%~f0"
@@ -1139,7 +1139,20 @@ goto :EOF
 :: Mesma verificacao do pre-flight (estagio 11), reaplicada sob demanda.
 set "HAS_WINGET=0"
 where winget >nul 2>&1
+if not errorlevel 1 goto REDETECTAR_WINGET_TESTE
+:: "winget" nao resolve, e o alias de execucao pode existir mesmo assim: a
+:: entrada WindowsApps sai do PATH do usuario com alguma frequencia, e o modulo
+:: acabou de devolve-la la - mas a variavel DESTE processo continua a de antes.
+:: Expor a pasta no PATH da sessao nao altera nada de forma permanente e e o que
+:: devolve as opcoes [2] e [3] deste menu na mesma execucao. Uma vez so.
+if defined WG_PATH_SESSAO goto REDETECTAR_WINGET_FIM
+if not exist "%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe" goto REDETECTAR_WINGET_FIM
+set "WG_PATH_SESSAO=1"
+set "PATH=%PATH%;%LOCALAPPDATA%\Microsoft\WindowsApps"
+call :LOG_MSG "INFO" "Pasta WindowsApps exposta no PATH desta sessao."
+where winget >nul 2>&1
 if errorlevel 1 goto REDETECTAR_WINGET_FIM
+:REDETECTAR_WINGET_TESTE
 winget --info >nul 2>&1
 if not errorlevel 1 set "HAS_WINGET=1"
 :REDETECTAR_WINGET_FIM
@@ -2199,6 +2212,77 @@ if errorlevel 1 (
 call :LOG_MSG "OK" "Plano de energia de Desempenho ativado com sucesso."
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f >nul 2>&1
 
+:: ------------------------------------------------------------------------
+:: CONFIGURACOES DO PERFIL (linha CA)
+::
+:: Ativar o plano NAO aplica o perfil. Os tempos de tela, suspensao,
+:: hibernacao, USB, PCI Express e disco vivem NAS CONFIGURACOES do plano, e
+:: os planos de fabrica do Windows trazem varios deles ligados - a suspensao
+:: seletiva USB, por exemplo, vem habilitada ate no Alto Desempenho. Sem
+:: gravar configuracao nenhuma, esta rotina entregava um "plano de
+:: desempenho" que continuava apagando a tela e suspendendo a maquina.
+::
+:: Cada valor e gravado e RELIDO do registro do proprio plano: o codigo de
+:: retorno do powercfg nao e aceito como prova de que a configuracao valeu.
+:: ------------------------------------------------------------------------
+set "FBP_APL=0"
+set "FBP_JA=0"
+set "FBP_NS=0"
+set "FBP_ERR=0"
+set "FBP_BASE=HKLM\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes\%TARGET_GUID%"
+call :LOG_MSG "INFO" "[Batch] Aplicando as configuracoes do perfil na linha CA (na tomada)..."
+
+call :FB_PERF_SET "54533251-82be-4824-96c1-47b60b740d00" "893dee8e-2bef-41e0-89c6-b55d0929964c" "100" "0x64" "Estado minimo do processador"
+call :FB_PERF_SET "54533251-82be-4824-96c1-47b60b740d00" "bc5038f7-23e0-4960-96da-33abaf5935ec" "100" "0x64" "Estado maximo do processador"
+call :FB_PERF_SET "54533251-82be-4824-96c1-47b60b740d00" "be337238-0d82-4146-a960-4f3749d470c7" "2" "0x2" "Modo de boost do processador"
+call :FB_PERF_SET "54533251-82be-4824-96c1-47b60b740d00" "94d3a615-a899-4ac5-ae2b-e4d8f634367f" "1" "0x1" "Politica de resfriamento do sistema"
+call :FB_PERF_SET "54533251-82be-4824-96c1-47b60b740d00" "0cc5b647-c1df-4637-891a-dec35c318583" "100" "0x64" "Nucleos minimos do processador"
+call :FB_PERF_SET "7516b95f-f776-4464-8c53-06167f40cc99" "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e" "0" "0x0" "Desligar video apos"
+call :FB_PERF_SET "7516b95f-f776-4464-8c53-06167f40cc99" "8ec4b3a5-6868-48c2-be75-4f3044be88a7" "0" "0x0" "Desligar video na tela de bloqueio"
+call :FB_PERF_SET "238c9fa8-0aad-41ed-83f4-97be242c8f20" "29f6c1db-86da-48c5-9fdb-f2b67b1f44da" "0" "0x0" "Suspender apos"
+call :FB_PERF_SET "238c9fa8-0aad-41ed-83f4-97be242c8f20" "9d7815a6-7ee4-497e-8888-515a05f02364" "0" "0x0" "Hibernar apos"
+call :FB_PERF_SET "238c9fa8-0aad-41ed-83f4-97be242c8f20" "7bc4a2f9-d8fc-4469-b07b-33eb785aaca0" "0" "0x0" "Suspensao nao assistida"
+call :FB_PERF_SET "2a737441-1930-4402-8d77-b2bebba308a3" "48e6b7a6-50f5-4782-a5d4-53bb8f07e226" "0" "0x0" "Suspensao seletiva USB"
+call :FB_PERF_SET "2a737441-1930-4402-8d77-b2bebba308a3" "d4e98f31-5ffe-4ce1-be31-1b38b384c009" "0" "0x0" "Energia do link USB 3"
+call :FB_PERF_SET "2a737441-1930-4402-8d77-b2bebba308a3" "0853a681-27c8-4100-a2fd-82013e970683" "0" "0x0" "Suspensao de hubs USB"
+call :FB_PERF_SET "501a4d13-42af-4429-9fd1-a8218c268e20" "ee12f906-d277-404b-b6da-e5fa1a576df5" "0" "0x0" "PCI Express - energia do link"
+call :FB_PERF_SET "0012ee47-9041-4b5d-9b77-535fba8b1442" "6738e2c4-e8a5-4a42-b16a-e040e769756e" "0" "0x0" "Desligar disco rigido apos"
+call :FB_PERF_SET "0012ee47-9041-4b5d-9b77-535fba8b1442" "0b2d69d7-a2a1-449c-9680-f91c70521c60" "0" "0x0" "AHCI - energia do link"
+
+:: Alteracao em plano EM USO so vale depois de reativa-lo.
+powercfg -setactive %TARGET_GUID% >nul 2>&1
+call :LOG_MSG "INFO" "[Batch] Configuracoes na linha CA: %FBP_APL% aplicada(s), %FBP_JA% ja conforme, %FBP_NS% nao suportada(s), %FBP_ERR% sem confirmacao."
+if not "%FBP_ERR%"=="0" call :LOG_MSG "WARN" "[Batch] %FBP_ERR% configuracao(oes) foram aceitas e nao confirmaram o valor efetivo - possivel diretiva de grupo."
+call :LOG_MSG "INFO" "[Batch] Configuracoes em bateria preservadas e bloqueio de sessao nao avaliado: essas etapas dependem do modulo PowerShell."
+goto FB_PERF_FIM
+
+:FB_PERF_SET
+:: %1=subgrupo  %2=configuracao  %3=valor decimal  %4=valor esperado em hex  %5=rotulo
+:: Idempotente: nao escreve quando o valor gravado no plano ja e o desejado.
+set "FBP_ANT="
+for /f "tokens=3" %%A in ('reg query "%FBP_BASE%\%~1\%~2" /v ACSettingIndex 2^>nul ^| findstr /i ACSettingIndex') do set "FBP_ANT=%%A"
+if /i "%FBP_ANT%"=="%~4" (
+    set /a FBP_JA+=1
+    goto :EOF
+)
+powercfg -setacvalueindex %TARGET_GUID% %~1 %~2 %~3 >nul 2>&1
+if errorlevel 1 (
+    set /a FBP_NS+=1
+    call :LOG_MSG "INFO" "[Batch] %~5 - nao existe neste plano/hardware. Nenhuma escrita foi feita."
+    goto :EOF
+)
+:: RELEITURA: o powercfg grava o indice sob o GUID do plano, inclusive para as
+:: configuracoes ocultas, entao o registro responde por todas elas.
+set "FBP_DEP="
+for /f "tokens=3" %%A in ('reg query "%FBP_BASE%\%~1\%~2" /v ACSettingIndex 2^>nul ^| findstr /i ACSettingIndex') do set "FBP_DEP=%%A"
+if /i "%FBP_DEP%"=="%~4" (
+    set /a FBP_APL+=1
+) else (
+    set /a FBP_ERR+=1
+    call :LOG_MSG "WARN" "[Batch] %~5 - comando aceito, porem o valor efetivo nao confere."
+)
+goto :EOF
+
 :FB_PERF_FIM
 set "FBP_ULT="
 set "FBP_ALTO="
@@ -2207,6 +2291,13 @@ set "FBP_ACHADO="
 set "FBP_IGNORAR="
 set "FBP_CAND="
 set "FBP_ALVO="
+set "FBP_BASE="
+set "FBP_ANT="
+set "FBP_DEP="
+set "FBP_APL="
+set "FBP_JA="
+set "FBP_NS="
+set "FBP_ERR="
 goto :EOF
 
 :FB_PERF_NOME
@@ -3531,19 +3622,46 @@ where winget >nul 2>&1
 if not errorlevel 1 set "FB_WG_EXE=1"
 set "FB_WG_ALIAS=0"
 if exist "%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe" set "FB_WG_ALIAS=1"
+
+:: Alias presente e "winget" que nao resolve: e PATH, nao e pacote. Expor a
+:: pasta WindowsApps no PATH DESTA SESSAO nao altera nada de forma permanente e
+:: e o unico reparo que o Batch consegue aplicar sozinho - registrar o pacote
+:: AppX e gravar o PATH do usuario exigem os cmdlets do PowerShell. Uma vez so.
+if "%FB_WG_EXE%"=="1" goto FB_WINGET_PROBE
+if "%FB_WG_ALIAS%"=="0" goto FB_WINGET_PROBE
+if defined FB_WG_PATHFIX goto FB_WINGET_PROBE
+set "FB_WG_PATHFIX=1"
+set "PATH=%PATH%;%LOCALAPPDATA%\Microsoft\WindowsApps"
+call :LOG_MSG "INFO" "[Batch] Alias fora do PATH: pasta WindowsApps exposta no PATH desta sessao."
+where winget >nul 2>&1
+if not errorlevel 1 set "FB_WG_EXE=1"
+
+:FB_WINGET_PROBE
 set "FB_WG_OK=0"
 if "%FB_WG_EXE%"=="1" winget --info >nul 2>&1
 if "%FB_WG_EXE%"=="1" if not errorlevel 1 set "FB_WG_OK=1"
+
+:: O executavel roda direto da pasta do pacote mesmo sem alias e sem PATH.
+:: E o que separa "o WinGet nao existe" de "o WinGet nao esta alcancavel" -
+:: dois estados com reparos completamente diferentes.
+set "FB_WG_PKG="
+for /d %%d in ("%ProgramFiles%\WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe") do if exist "%%d\winget.exe" set "FB_WG_PKG=%%d\winget.exe"
+set "FB_WG_PKGOK=0"
+if defined FB_WG_PKG "%FB_WG_PKG%" --info >nul 2>&1
+if defined FB_WG_PKG if not errorlevel 1 set "FB_WG_PKGOK=1"
+
 set "FB_WG_LOJA=1"
 reg query "HKLM\SOFTWARE\Policies\Microsoft\WindowsStore" /v RemoveWindowsStore 2>nul | find "0x1" >nul 2>&1
 if not errorlevel 1 set "FB_WG_LOJA=0"
 
-echo   %C_CINZA%winget.exe        %C_RESET%%C_TEXTO%%FB_WG_EXE%%C_RESET%   %C_CINZA%1=encontrado 0=ausente%C_RESET%
+echo   %C_CINZA%winget.exe        %C_RESET%%C_TEXTO%%FB_WG_EXE%%C_RESET%   %C_CINZA%1=alcancavel pelo PATH 0=nao%C_RESET%
 echo   %C_CINZA%Alias de execucao %C_RESET%%C_TEXTO%%FB_WG_ALIAS%%C_RESET%   %C_CINZA%(WindowsApps)%C_RESET%
+echo   %C_CINZA%Pacote na imagem  %C_RESET%%C_TEXTO%%FB_WG_PKGOK%%C_RESET%   %C_CINZA%1=executa pela pasta do pacote%C_RESET%
 echo   %C_CINZA%winget --info     %C_RESET%%C_TEXTO%%FB_WG_OK%%C_RESET%   %C_CINZA%1=responde 0=nao responde%C_RESET%
 echo   %C_CINZA%Microsoft Store   %C_RESET%%C_TEXTO%%FB_WG_LOJA%%C_RESET%   %C_CINZA%0=removida por politica%C_RESET%
 echo.
 if "%FB_WG_OK%"=="1" goto FB_WINGET_PRONTO
+if "%FB_WG_PKGOK%"=="1" goto FB_WINGET_SO_PATH
 if "%FB_WG_LOJA%"=="0" goto FB_WINGET_BLOQUEADO
 
 echo   %C_AMARELO%WinGet nao esta funcional neste ambiente.%C_RESET%
@@ -3559,6 +3677,32 @@ echo.
 choice /c 120 /n /m "  Opcao: "
 if errorlevel 3 goto :EOF
 if errorlevel 2 goto FB_WINGET_LOOP
+goto FB_WINGET_STORE
+
+:: O WinGet existe e executa - so nao esta alcancavel como "winget". Instalar de
+:: novo nao resolveria nada aqui: o que falta e o alias/PATH, e devolver isso de
+:: forma permanente exige os cmdlets do PowerShell, que este fallback nao tem.
+:FB_WINGET_SO_PATH
+call :LOG_MSG "WARN" "[Batch] WinGet executa pela pasta do pacote, porem nao esta alcancavel pelo PATH."
+echo   %C_AMARELO%O WinGet existe nesta maquina e executa pela pasta do pacote,%C_RESET%
+echo   %C_AMARELO%mas nao esta alcancavel pelo comando "winget".%C_RESET%
+echo.
+echo   %C_TEXTO%Nao falta pacote: falta o alias de execucao / a entrada WindowsApps%C_RESET%
+echo   %C_TEXTO%no PATH do usuario. Reinstalar o App Installer nao corrige isso.%C_RESET%
+echo   %C_TEXTO%Com o PowerShell disponivel, a opcao [1] deste menu registra o pacote%C_RESET%
+echo   %C_TEXTO%e devolve o PATH do usuario automaticamente.%C_RESET%
+echo.
+if "%FB_WG_LOJA%"=="0" goto FB_WINGET_BLOQUEADO
+echo    %C_CIANO%[1]%C_RESET%  %C_TEXTO%Abrir o App Installer na Microsoft Store%C_RESET%
+echo    %C_CIANO%[2]%C_RESET%  %C_TEXTO%Verificar novamente%C_RESET%
+echo    %C_CINZA%[0]%C_RESET%  %C_TEXTO%Voltar%C_RESET%
+echo.
+choice /c 120 /n /m "  Opcao: "
+if errorlevel 3 goto :EOF
+if errorlevel 2 goto FB_WINGET_LOOP
+
+:: Ponto unico de abertura da Store: as duas telas de falha chegam aqui.
+:FB_WINGET_STORE
 call :LOG_MSG "INFO" "Abrindo a pagina oficial do App Installer na Microsoft Store..."
 start "" "ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1"
 echo.

@@ -1,5 +1,5 @@
 ﻿<#
- COMPARTDISK 1.5.0 - Security.ps1
+ COMPARTDISK 1.5.1 - Security.ps1
  Desenvolvido por Edsilas
  Acoes: Status | GpoReset | Takeown | Firewall | Uac
 #>
